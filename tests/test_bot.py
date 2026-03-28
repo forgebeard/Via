@@ -255,12 +255,12 @@ class TestDetectStatusChange:
     """Тесты определения смены статуса."""
 
     def test_status_changed(self, simple_issue):
-        sent = {"1001": {"status": "В работе", "notified_at": "2026-03-27T12:00:00"}}
+        sent = {"7777": {"status": "В работе", "notified_at": "2026-03-27T12:00:00"}}
         result = bot.detect_status_change(simple_issue, sent)
         assert result == "В работе"  # старый статус
 
     def test_status_same(self, simple_issue):
-        sent = {"1001": {"status": "Новая", "notified_at": "2026-03-27T12:00:00"}}
+        sent = {"7777": {"status": "Новая", "notified_at": "2026-03-27T12:00:00"}}
         result = bot.detect_status_change(simple_issue, sent)
         assert result is None
 
@@ -513,8 +513,8 @@ class TestSendMatrixMessage:
         call_args = mock_matrix_client.room_send.call_args
         content = call_args[1]["content"] if "content" in call_args[1] else call_args.kwargs["content"]
         html = content["formatted_body"]
-        assert "#1001" in html
-        assert "redmine.test/issues/1001" in html
+        assert "#7777" in html
+        assert "redmine.test/issues/7777" in html
 
     @pytest.mark.asyncio
     async def test_html_contains_status(self, mock_matrix_client, simple_issue):
@@ -560,25 +560,20 @@ class TestSendMatrixMessage:
     @pytest.mark.asyncio
     async def test_room_send_error_raises(self, simple_issue):
         """FIX-1: RoomSendError → RuntimeError."""
-        from nio import RoomSendError
+        from nio.responses import RoomSendError
+
+        mock_error = RoomSendError.from_dict(
+            {"error": "Rate limited", "errcode": "M_LIMIT_EXCEEDED"},
+            "xroom:server",
+        )
 
         client = AsyncMock()
-        error_resp = MagicMock(spec=RoomSendError)
-        error_resp.message = "Rate limited"
-        error_resp.status_code = "429"
-        # isinstance проверяет spec, поэтому делаем через тип
-        client.room_send = AsyncMock(return_value=error_resp)
-
-        with patch("bot.isinstance", side_effect=lambda obj, cls: cls == RoomSendError):
-            # Проще — создадим настоящий RoomSendError-подобный объект
-            pass
-
-        # Прямой подход: подменяем проверку через реальный тип
-        mock_error = RoomSendError(message="Rate limited")
         client.room_send = AsyncMock(return_value=mock_error)
 
         with pytest.raises(RuntimeError, match="Matrix room_send error"):
-            await bot.send_matrix_message(client, simple_issue, "!room:server", "new")
+            await bot.send_matrix_message(
+                client, simple_issue, "xroom:server", "new"
+            )
 
 
 class TestSendSafe:
