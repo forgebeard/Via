@@ -2,14 +2,21 @@
 Matrix-клиент: подключение, отправка сообщений.
 
 Обёртка над nio.AsyncClient с retry-логикой и форматированием HTML.
+Использует access_token (без пароля).
 """
 
 import asyncio
 import logging
+import re
 
-from nio import AsyncClient, LoginResponse, RoomSendError
+from nio import AsyncClient, RoomSendError
 
-from config import MATRIX_SERVER, MATRIX_USER, MATRIX_PASSWORD
+from config import (
+    MATRIX_HOMESERVER,
+    MATRIX_ACCESS_TOKEN,
+    MATRIX_USER_ID,
+    MATRIX_DEVICE_ID,
+)
 
 logger = logging.getLogger("redmine_bot")
 
@@ -31,22 +38,21 @@ _client: AsyncClient | None = None
 async def get_client() -> AsyncClient:
     """
     Возвращает подключённый Matrix-клиент (singleton).
-    При первом вызове — логинится.
+    Использует access_token — логин не нужен.
     """
     global _client
 
     if _client is not None:
         return _client
 
-    client = AsyncClient(MATRIX_SERVER, MATRIX_USER)
-    resp = await client.login(MATRIX_PASSWORD)
+    client = AsyncClient(MATRIX_HOMESERVER, MATRIX_USER_ID)
+    client.access_token = MATRIX_ACCESS_TOKEN
+    client.device_id = MATRIX_DEVICE_ID or "BOT"
+    client.user_id = MATRIX_USER_ID
 
-    if isinstance(resp, LoginResponse):
-        logger.info(f"✅ Matrix: залогинен как {MATRIX_USER}")
-        _client = client
-        return _client
-    else:
-        raise ConnectionError(f"Matrix login failed: {resp}")
+    logger.info(f"✅ Matrix: клиент создан для {MATRIX_USER_ID}")
+    _client = client
+    return _client
 
 
 async def close_client():
@@ -71,8 +77,6 @@ async def send_message(room_id: str, html: str, text: str = "") -> bool:
         True при успехе, False при ошибке.
     """
     if not text:
-        # Простой strip тегов для fallback
-        import re
         text = re.sub(r"<[^>]+>", "", html)
 
     client = await get_client()
