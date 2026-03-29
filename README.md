@@ -11,6 +11,7 @@
 | State | JSON **`data/state_<redmine_id>_*.json`** (каталог `data/` рядом с `bot.py`; при обновлении бота старые `state_*.json` из корня переносятся автоматически) |
 | Интервал опроса Redmine | По умолчанию **90 с** (`CHECK_INTERVAL` в `bot.py`) |
 | Matrix | Отправка через **`src/matrix_send.py`** (`room_send_with_retry`): до **3** попыток, паузы **1 с** и **2 с** |
+| PostgreSQL (Docker) | Сервис в **`docker-compose.yml`**; **текущий код бота БД не использует** — подготовка под админку и миграцию state |
 | `src/preferences.py` (DND / рабочие часы) | Модуль есть; **в `bot.py` не вызывается** — уведомления без этого фильтра |
 
 Разделы ниже про **`config.yaml`**, **91 тест** и пути вроде `data/` относятся к целевой/альтернативной схеме и постепенно приводятся к виду выше.
@@ -35,22 +36,35 @@
 
 ## Архитектура
 
+### Логика бота (как сейчас)
+
 ```
 ┌──────────┐   REST API (~каждые 90с)   ┌──────────────┐  Matrix C-S API   ┌──────────┐
 │  Redmine │ ◄───────────────────────── │   bot.py     │ ────────────────► │  Matrix  │
 │  (задачи)│                            │ APScheduler  │                   │  (чат)   │
 └──────────┘                            └──────┬───────┘                   └──────────┘
                                                │
-                                        ┌──────▼───────┐
-                                        │ state_*.json │
-                                        │ (корень)     │
-                                        └──────────────┘
+                                        ┌──────▼──────────┐
+                                        │ data/state_*.json│  ← персистентный state
+                                        └──────────────────┘
+```
+
+### Docker / будущее (админка, state в БД)
+
+```
+┌──────────┐                     ┌─────────────┐
+│  bot     │ ─── DATABASE_URL ─► │ PostgreSQL  │   (сейчас бот не подключается;
+│  (контейнер)                  │  (volume)   │    переменная зарезервирована)
+└──────────┘                     └─────────────┘
+       │ volume: ./data
+       ▼
+  data/state_*.json
 ```
 
 **Цикл работы:**
 1. Планировщик вызывает проверку каждые `CHECK_INTERVAL` секунд (по умолчанию 90).
 2. Для каждого пользователя загружаются открытые назначенные задачи из Redmine.
-3. Текущее состояние сравнивается с сохранённым в `state_<uid>_*.json`.
+3. Текущее состояние сравнивается с сохранённым в `data/state_<uid>_*.json`.
 4. При обнаружении изменений — HTML-уведомление собирается и отправляется в Matrix (с повторами при сбое).
 5. Новое состояние сохраняется атомарно в JSON.
 
@@ -66,7 +80,9 @@
 | Планировщик | `APScheduler` | Периодические проверки |
 | Конфигурация | `python-dotenv` | Секреты и JSON-маппинги из `.env` |
 | Тестирование | `pytest` + `pytest-asyncio` | ~190+ тестов (`tests/`) |
-| Процесс-менеджер | systemd | Автозапуск, перезапуск при сбоях |
+| Прод-запуск | Docker Compose | Том `./data`, логи: `docker compose logs -f bot` |
+| Контейнеризация | Dockerfile + Compose | См. раздел «Docker / Production запуск» |
+| БД (резерв) | PostgreSQL 16 | В compose; приложение пока не использует |
 
 ---
 
@@ -75,16 +91,23 @@
 ```
 matrix_bot_firebeard/
 ├── bot.py                 # Точка входа: Redmine + Matrix + APScheduler
-├── bot.log                # Лог (ротация в коде)
+├── Dockerfile             # Многоступенчатая сборка образа бота (Python 3.11)
+├── docker-compose.yml     # Сервисы: bot + postgres + тома
+├── .dockerignore          # Исключения из контекста docker build
 ├── data/
+│   ├── bot.log            # Лог (ротация в коде)
 │   └── state_<uid>_*.json # Состояние по пользователям Redmine (основное хранилище)
 ├── requirements.txt
+├── requirements-test.txt
+├── requirements-lock.txt
 ├── README.md
 ├── .env                   # Секреты — не коммитить
+├── .cursorrules           # Правила для ассистента в Cursor
 ├── src/                   # Общие модули и задел под рефакторинг
 │   ├── config.py
 │   ├── utils.py           # в т.ч. safe_html()
 │   ├── matrix_client.py
+│   ├── matrix_send.py
 │   ├── state.py
 │   ├── preferences.py
 │   └── ...
@@ -100,7 +123,8 @@ matrix_bot_firebeard/
 | `utils.py` | `now()`, `safe_html()`, `truncate_text()`, timezone | 25 |
 | `state.py` | `load_state()` / `save_state()` — JSON с атомарной записью | 14 |
 | `preferences.py` | Рабочие часы, DND, `can_notify()` с Emergency bypass | 27 |
-| `matrix_client.py` | Singleton `AsyncClient`, access_token, retry × 3, `send_message()` | 10 |
+| `matrix_client.py` | Singleton `AsyncClient`, access_token, `send_message()` → `matrix_send` | 10 |
+| `matrix_send.py` | Общая отправка в Matrix с retry (использует и `bot.py`, и `matrix_client`) | — |
 | `redmine_checks.py` | Основная логика проверки задач | — |
 | `routing.py` | Выбор комнаты Matrix по статусу/версии задачи | — |
 | `commands.py` | Интерактивные команды бота | — |
@@ -153,16 +177,67 @@ python3 bot.py
 
 Если в логе видно `✅ Matrix: ...` и `✅ Redmine: ...` — бот работает. Остановить — `Ctrl+C`.
 
-### 7. Установка как systemd-сервис
+Постоянный запуск на сервере — через **Docker Compose** (следующий раздел).
+
+---
+
+## Docker / Production запуск
+
+### Что входит в compose
+
+| Сервис | Назначение |
+|--------|------------|
+| **bot** | Образ из `Dockerfile` (корневой `bot.py` + `src/`), том `./data` → `/app/data`, `.env` только для чтения; healthcheck: `python -c "import bot"` |
+| **postgres** | PostgreSQL 16, данные в именованном томе `postgres_data`; **текущий код бота к БД не подключается** — строка `DATABASE_URL` уже передаётся для будущей админки и миграции state |
+
+### Подготовка `.env`
+
+Сначала добавьте переменные для PostgreSQL (используются и `docker compose`, и подстановка `DATABASE_URL` в контейнере бота):
+
+```env
+POSTGRES_USER=bot
+POSTGRES_PASSWORD=сгенерируйте_надёжный_пароль
+POSTGRES_DB=redmine_matrix
+```
+
+Остальные переменные — как в разделе «Настройка .env» ниже (`MATRIX_*`, `REDMINE_*`, `USERS`, …).
+
+> ⚠️ Если в пароле есть символы `@ : / ? #` — для `DATABASE_URL` может понадобиться URL-кодирование или упрощённый пароль для dev.
+
+### Сборка и запуск
+
+Из корня репозитория (где лежат `Dockerfile` и `docker-compose.yml`):
 
 ```bash
-nano redmine-matrix-bot.service   # указать пути и пользователя
+# Создать каталог data при необходимости (том смонтируется пустым)
+mkdir -p data
 
-sudo cp redmine-matrix-bot.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable redmine-matrix-bot
-sudo systemctl start redmine-matrix-bot
+# Сборка образа и запуск в фоне
+docker compose up --build -d
+
+# Логи бота
+docker compose logs -f bot
+
+# Остановка
+docker compose down
 ```
+
+Данные **Postgres** сохраняются в томе `postgres_data`; **JSON state** — в примонтированной папке `./data` на хосте.
+
+### Только пересборка образа бота
+
+```bash
+docker compose build bot
+docker compose up -d bot
+```
+
+### Права на каталог `data/`
+
+Том `./data` на хосте должен быть **доступен на запись** пользователю процесса в контейнере (по умолчанию uid **1000** / пользователь `bot` в образе). Если каталог создал root или другой uid, возможны `PermissionError` при записи state и лога — выставьте владельца, например: `sudo chown -R 1000:1000 data` (подставьте нужный uid), либо см. [user namespace](https://docs.docker.com/engine/security/userns-remap/) в документации Docker. При отказе записи в файл лога бот продолжит работу и писать только в stdout (`docker compose logs`).
+
+### Миграция со systemd на Docker
+
+Если раньше бот шёл как `redmine-matrix-bot.service`, остановите и отключите юнит (`systemctl stop …`, при необходимости `disable`), удалите файл юнита из `/etc/systemd/system/` и выполните `systemctl daemon-reload`. Дальше один экземпляр — через Compose (см. выше), иначе возможны дубли уведомлений.
 
 ---
 
@@ -192,6 +267,13 @@ REDMINE_API_KEY=your_redmine_api_key
 > ⚠️ **Важно:** Бот использует `access_token` (не пароль) для авторизации в Matrix — это безопаснее и не требует login-flow.
 
 > ⚠️ **Важно:** API-ключ Redmine определяет, чьи задачи бот может видеть. Рекомендуется использовать ключ с правами администратора, если бот обслуживает нескольких пользователей.
+
+### Логи (опционально)
+
+| Переменная | По умолчанию | Описание |
+|------------|--------------|----------|
+| `LOG_TO_FILE` | `1` | `0`, `false`, `no`, `off` — не открывать файл, только stdout (удобно вместе с `docker logs`). |
+| `LOG_PATH` | *(пусто)* | Файл лога: не задано → `data/bot.log`; иначе путь **от корня репозитория** или абсолютный. |
 
 ---
 
@@ -290,11 +372,11 @@ https://redmine.example.com/users/1972
 ```bash
 # Полный сброс — бот заново запомнит состояние (без спама при первом цикле)
 rm -f data/state_*.json
-sudo systemctl restart redmine-matrix-bot
+docker compose restart bot   # при запуске через Compose; иначе перезапустите процесс вручную
 
 # Сброс только journals — при следующем цикле обработает все журналы как новые
 rm -f data/state_*_journals.json
-sudo systemctl restart redmine-matrix-bot
+docker compose restart bot
 ```
 
 ---
@@ -403,7 +485,7 @@ sudo systemctl restart redmine-matrix-bot
 
 ## Тестирование
 
-В проекте **сотни тестов** в `tests/` (корневой `test_bot.py` и модули `src/`).
+В проекте **сотни тестов** в `tests/` (корневой `test_bot.py` и модули `src/`). В CI (`.github/workflows/ci.yml`) на push и pull request запускаются **pytest** и **сборка Docker-образа** с проверкой `python -c "import bot"`.
 
 ```bash
 # Все тесты
@@ -423,51 +505,17 @@ python -m pytest tests/ --cov=src --cov-report=term-missing
 
 ---
 
-## Systemd-сервис
-
-### Установка
-
-Отредактируйте файл `redmine-matrix-bot.service` — укажите правильные пути и имя пользователя:
-
-```ini
-[Unit]
-Description=Redmine Matrix Notification Bot
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=your_user
-Group=your_user
-WorkingDirectory=/path/to/redmine-matrix-bot
-ExecStart=/path/to/matrix_bot_firebeard/venv/bin/python3 bot.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### Управление
-
-```bash
-sudo systemctl start redmine-matrix-bot     # Запуск
-sudo systemctl stop redmine-matrix-bot      # Остановка
-sudo systemctl restart redmine-matrix-bot   # Перезапуск
-sudo systemctl status redmine-matrix-bot    # Статус
-sudo systemctl enable redmine-matrix-bot    # Автозапуск при загрузке ОС
-```
-
----
-
 ## Мониторинг
 
 ```bash
-# Лог в реальном времени
-tail -f bot.log
+# Лог контейнера (Docker)
+docker compose logs -f bot
 
-# Последние 50 строк
-tail -50 bot.log
+# Лог в файл на хосте (если пишется в data/bot.log)
+tail -f data/bot.log
+
+# Последние 50 строк файла
+tail -50 data/bot.log
 
 # Посмотреть state-файлы
 python3 -m json.tool data/state_*_sent.json | head -30
@@ -498,7 +546,7 @@ cd src && python3 -c "from config import validate_config; print(validate_config(
 | Запись файлов | Атомарная (`tempfile` + `os.replace`) |
 | Логи | Не содержат токенов и API-ключей |
 | HTML-инъекции | `safe_html()` экранирует данные из Redmine |
-| Systemd | Запуск от непривилегированного пользователя |
+| Docker | В образе процесс под непривилегированным пользователем (`USER bot`) |
 | Redmine API | Только чтение (`assigned_to_id=me`) |
 
 ---
@@ -516,7 +564,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # Запустить вручную и посмотреть ошибки
-python3 src/bot.py 2>&1 | head -30
+python3 bot.py 2>&1 | head -30
 ```
 
 ### Бот не отправляет уведомления
@@ -525,7 +573,7 @@ python3 src/bot.py 2>&1 | head -30
 2. Проверьте, что бот присоединён к комнатам Matrix (пригласите его)
 3. Проверьте `REDMINE_API_KEY` — ключ должен иметь доступ к задачам
 4. Проверьте Redmine user ID в `config.yaml` — ID в URL профиля
-5. Посмотрите лог: `tail -50 bot.log`
+5. Посмотрите лог: `tail -50 data/bot.log`
 
 ### Бот спамит старыми уведомлениями после перезапуска
 
@@ -533,7 +581,7 @@ python3 src/bot.py 2>&1 | head -30
 
 ```bash
 rm -f data/state_*.json
-sudo systemctl restart redmine-matrix-bot
+docker compose restart bot
 ```
 
 ### Matrix: «не удалось отправить»

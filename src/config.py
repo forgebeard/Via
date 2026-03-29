@@ -27,7 +27,27 @@ logger = logging.getLogger("redmine_bot")
 
 BASE_DIR = Path(__file__).resolve().parent.parent  # Корень проекта
 DATA_DIR = BASE_DIR / "data"                       # State-файлы JSON
-LOG_FILE = BASE_DIR / "bot.log"
+
+
+def want_log_file() -> bool:
+    """Писать ли лог в файл (stdout всегда). Отключение: LOG_TO_FILE=0|false|no|off."""
+    v = os.getenv("LOG_TO_FILE", "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
+def resolved_log_file() -> Path:
+    """
+    Путь к файлу лога. LOG_PATH — абсолютный или относительно корня проекта (BASE_DIR).
+    По умолчанию: data/bot.log.
+    """
+    raw = os.getenv("LOG_PATH", "").strip()
+    if raw:
+        p = Path(os.path.expanduser(raw))
+        return p if p.is_absolute() else BASE_DIR / p
+    return DATA_DIR / "bot.log"
+
+
+LOG_FILE = resolved_log_file()
 
 # ═══════════════════════════════════════════════════════════════
 # MATRIX

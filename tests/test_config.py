@@ -108,3 +108,33 @@ class TestShouldNotify:
         cfg = {"notify": ["new", "daily_report"]}
         assert should_notify(cfg, "daily_report") is True
         assert should_notify(cfg, "overdue") is False
+
+
+# ═══════════════════════════════════════════════════════════════
+# Логи: LOG_TO_FILE, LOG_PATH
+# ═══════════════════════════════════════════════════════════════
+
+class TestLogPaths:
+    def test_want_log_file_default(self, monkeypatch):
+        monkeypatch.delenv("LOG_TO_FILE", raising=False)
+        from config import want_log_file
+
+        assert want_log_file() is True
+
+    def test_want_log_file_disabled(self, monkeypatch):
+        monkeypatch.setenv("LOG_TO_FILE", "0")
+        from config import want_log_file
+
+        assert want_log_file() is False
+
+    def test_resolved_log_file_default(self, monkeypatch):
+        monkeypatch.delenv("LOG_PATH", raising=False)
+        from config import resolved_log_file, BASE_DIR
+
+        assert resolved_log_file() == BASE_DIR / "data" / "bot.log"
+
+    def test_resolved_log_file_relative(self, monkeypatch):
+        monkeypatch.setenv("LOG_PATH", "logs/app.log")
+        from config import resolved_log_file, BASE_DIR
+
+        assert resolved_log_file() == BASE_DIR / "logs" / "app.log"

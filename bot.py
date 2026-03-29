@@ -23,6 +23,7 @@ Redmine → Matrix бот уведомлений.
 """
 
 import asyncio
+import errno
 import json
 import re
 import logging
@@ -39,6 +40,7 @@ if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 from utils import safe_html
 from matrix_send import room_send_with_retry, MAX_RETRIES
+from config import LOG_FILE, want_log_file
 
 from dotenv import load_dotenv
 from nio import AsyncClient
@@ -92,7 +94,16 @@ except (json.JSONDecodeError, TypeError):
 
 # Пути к файлам
 BASE_DIR = Path(__file__).resolve().parent
-LOG_FILE = BASE_DIR / "bot.log"
+
+
+def data_dir() -> Path:
+    """
+    Каталог для JSON state и bot.log (data/ рядом с bot.py).
+
+    Функция, а не константа: в тестах подменяют bot.BASE_DIR — путь остаётся согласованным.
+    """
+    return BASE_DIR / "data"
+
 
 # Интервал проверки Redmine (секунды)
 CHECK_INTERVAL = 90  # FIX-4: увеличен с 30 (цикл занимает ~58с)
@@ -126,12 +137,27 @@ STATUSES_TRANSFERRED = {
 logger = logging.getLogger("redmine_bot")
 logger.setLevel(logging.INFO)
 
-# Файл (ротация 5 МБ × 5 копий)
-_fh = logging.handlers.RotatingFileHandler(
-    LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
-)
-_fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-logger.addHandler(_fh)
+# Файл (ротация 5 МБ × 5 копий), если LOG_TO_FILE не отключён; иначе только stdout
+if want_log_file():
+    try:
+        data_dir().mkdir(parents=True, exist_ok=True)
+        _log_path = LOG_FILE
+        _log_path.parent.mkdir(parents=True, exist_ok=True)
+        _fh = logging.handlers.RotatingFileHandler(
+            _log_path, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
+        )
+        _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        logger.addHandler(_fh)
+    except PermissionError as e:
+        print(f"Файловый лог недоступен (нет прав): {e}", file=sys.stderr)
+    except OSError as e:
+        if e.errno in (errno.EACCES, errno.EPERM):
+            print(
+                f"Файловый лог недоступен (errno={e.errno}): {e}",
+                file=sys.stderr,
+            )
+        else:
+            raise
 
 # Консоль
 _ch = logging.StreamHandler()
@@ -141,15 +167,6 @@ logger.addHandler(_ch)
 # ═══════════════════════════════════════════════════════════════════════════
 # УТИЛИТЫ
 # ═══════════════════════════════════════════════════════════════════════════
-
-
-def data_dir() -> Path:
-    """
-    Каталог для JSON state (data/ рядом с bot.py, не корень репозитория).
-
-    Функция, а не константа: в тестах подменяют bot.BASE_DIR — путь остаётся согласованным.
-    """
-    return BASE_DIR / "data"
 
 
 def state_file(user_id, name):

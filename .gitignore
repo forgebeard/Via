@@ -13,6 +13,8 @@ journals.json
 # Логи
 bot.log
 bot.log.*
+data/bot.log
+data/bot.log.*
 
 # Python
 __pycache__/
@@ -29,7 +31,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 state_*.json
-bot.log
 
 # State-файлы (JSON)
 data/*.json

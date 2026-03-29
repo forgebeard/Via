@@ -1,0 +1,29 @@
+# pytest + сборка Docker-образа и smoke-import (без реального Matrix/Redmine).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt -r requirements-test.txt
+      - name: pytest
+        run: python -m pytest tests/ -q --tb=short
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker build
+        run: docker build -t matrix-bot-ci .
+      - name: Import smoke test
+        run: docker run --rm matrix-bot-ci python -c "import bot; print('ok')"
