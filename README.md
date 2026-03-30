@@ -7,12 +7,12 @@
 | Что | Как сейчас |
 |-----|------------|
 | Запуск | **`python bot.py`** из корня репозитория (файл **`bot.py`**, не `src/bot.py`) |
-| Пользователи и маршруты | JSON в **`.env`** или таблицы в Postgres при **`USE_DB_CONFIG=1`** (редактирование через сервис **admin**) |
-| State | JSON **`data/state_<redmine_id>_*.json`** (каталог `data/` рядом с `bot.py`; при обновлении бота старые `state_*.json` из корня переносятся автоматически) |
+| Пользователи и маршруты | Postgres таблицы (`bot_users` + routes) с редактированием через сервис **admin** |
+| State | Postgres **`bot_issue_state`** (дедупликация и таймеры уведомлений) + lease по пользователю **`bot_user_leases`** |
 | Интервал опроса Redmine | По умолчанию **90 с**; переопределение переменной **`CHECK_INTERVAL`** в `.env` (не ниже 15 с) |
 | Matrix | Отправка через **`src/matrix_send.py`** (`room_send_with_retry`): до **3** попыток, паузы **1 с** и **2 с** |
-| PostgreSQL (Docker) | Сервис в **`docker-compose.yml`**; конфиг пользователей/маршрутов — через **админку** и `USE_DB_CONFIG=1`; **state задач** пока в JSON в `data/` |
-| `src/preferences.py` (DND / рабочие часы) | **`can_notify()`** вызывается из **`send_safe`** и для утреннего отчёта: поля в объекте пользователя в **`USERS`**: `work_hours`, `work_days`, `dnd`; приоритет «Аварийный» пробивает ограничения |
+| PostgreSQL (Docker) | Сервис в **`docker-compose.yml`**; конфиг пользователей/маршрутов и **state** — в Postgres через **админку** |
+| `src/preferences.py` (DND / рабочие часы) | **`can_notify()`** вызывается из **`send_safe`** и для утреннего отчёта: поля в объекте пользователя в памяти (загружаются из Postgres); приоритет «Аварийный» пробивает ограничения |
 
 Разделы ниже про **`config.yaml`**, **91 тест** и пути вроде `data/` относятся к целевой/альтернативной схеме и постепенно приводятся к виду выше.
 
@@ -44,29 +44,28 @@
 │  (задачи)│                            │ APScheduler  │                   │  (чат)   │
 └──────────┘                            └──────┬───────┘                   └──────────┘
                                                │
-                                        ┌──────▼──────────┐
-                                        │ data/state_*.json│  ← персистентный state
-                                        └──────────────────┘
+                                        ┌──────▼─────────────────────┐
+                                        │ Postgres: bot_issue_state  │
+                                        │ + bot_user_leases (lease)  │
+                                        └────────────────────────────┘
 ```
 
-### Docker / будущее (админка, state в БД)
+### Docker / Production (admin + state в БД)
 
 ```
 ┌──────────┐                     ┌─────────────┐
-│  bot     │ ─── DATABASE_URL ─► │ PostgreSQL  │   (сейчас бот не подключается;
-│  (контейнер)                  │  (volume)   │    переменная зарезервирована)
+│  bot     │ ─── DATABASE_URL ─► │ PostgreSQL  │
+│  (контейнер)                  │  (volume)   │    bot_issue_state + lease
 └──────────┘                     └─────────────┘
-       │ volume: ./data
-       ▼
-  data/state_*.json
+       │ (только данные/логи)
 ```
 
 **Цикл работы:**
 1. Планировщик вызывает проверку каждые `CHECK_INTERVAL` секунд (по умолчанию 90).
 2. Для каждого пользователя загружаются открытые назначенные задачи из Redmine.
-3. Текущее состояние сравнивается с сохранённым в `data/state_<uid>_*.json`.
+3. Текущее состояние сравнивается с сохранённым в **Postgres** (`bot_issue_state`).
 4. При обнаружении изменений — HTML-уведомление собирается и отправляется в Matrix (с повторами при сбое).
-5. Новое состояние сохраняется атомарно в JSON.
+5. Новое состояние upsert-ится в Postgres (и/или lease ограничивает дубль отправок).
 
 ---
 
@@ -78,7 +77,7 @@
 | Matrix API | `matrix-nio` | Async-отправка HTML-сообщений в чат |
 | Redmine API | `python-redmine` | Получение задач, журналов, статусов |
 | Планировщик | `APScheduler` | Периодические проверки |
-| Конфигурация | `python-dotenv` | Секреты и JSON-маппинги из `.env` |
+| Конфигурация | `python-dotenv` | Секреты из `.env` |
 | Тестирование | `pytest` + `pytest-asyncio` | ~190+ тестов (`tests/`) |
 | Прод-запуск | Docker Compose | Том `./data`, логи: `docker compose logs -f bot` |
 | Контейнеризация | Dockerfile + Compose | См. раздел «Docker / Production запуск» |
@@ -96,7 +95,6 @@ matrix_bot_firebeard/
 ├── .dockerignore          # Исключения из контекста docker build
 ├── data/
 │   ├── bot.log            # Лог (ротация в коде)
-│   └── state_<uid>_*.json # Состояние по пользователям Redmine (основное хранилище)
 ├── requirements.txt
 ├── requirements-test.txt
 ├── requirements-lock.txt
@@ -108,7 +106,6 @@ matrix_bot_firebeard/
 │   ├── utils.py           # в т.ч. safe_html()
 │   ├── matrix_client.py
 │   ├── matrix_send.py
-│   ├── state.py
 │   ├── preferences.py
 │   └── ...
 └── tests/                 # pytest: test_bot.py + модули src/
@@ -121,7 +118,6 @@ matrix_bot_firebeard/
 |--------|-----------|:-----:|
 | `config.py` | Загрузка `.env`, пути, приоритеты, статусы Redmine, `validate_config()` | 15 |
 | `utils.py` | `now()`, `safe_html()`, `truncate_text()`, timezone | 25 |
-| `state.py` | `load_state()` / `save_state()` — JSON с атомарной записью | 14 |
 | `preferences.py` | Рабочие часы, DND, `can_notify()` с Emergency bypass | 27 |
 | `matrix_client.py` | Singleton `AsyncClient`, access_token, `send_message()` → `matrix_send` | 10 |
 | `matrix_send.py` | Общая отправка в Matrix с retry (использует и `bot.py`, и `matrix_client`) | — |
@@ -155,7 +151,7 @@ nano .env   # заполнить все переменные (см. раздел
 
 ### 3. Настройка пользователей и маршрутизации
 
-Задайте JSON в **`.env`** (переменные `USERS`, при необходимости `STATUS_ROOM_MAP`, `VERSION_ROOM_MAP`). Пример см. в разделе «Настройка пользователей» ниже.
+Пользователи и маршрутизация хранятся в Postgres. Заполните таблицы через admin UI: `bot_users` (пользователи) + `status_room_routes` / `version_room_routes` (доп. комнаты).
 
 ### 4. Проверка конфигурации (модуль `src/`)
 
@@ -201,7 +197,7 @@ POSTGRES_PASSWORD=сгенерируйте_надёжный_пароль
 POSTGRES_DB=redmine_matrix
 ```
 
-Остальные переменные — как в разделе «Настройка .env» ниже (`MATRIX_*`, `REDMINE_*`, `USERS`, …).
+Остальные переменные — как в разделе «Настройка .env» ниже (`MATRIX_*`, `REDMINE_*` и параметры admin).
 
 > ⚠️ Если в пароле есть символы `@ : / ? #` — для `DATABASE_URL` может понадобиться URL-кодирование или упрощённый пароль для dev.
 
@@ -223,16 +219,17 @@ docker compose logs -f bot
 docker compose down
 ```
 
-Данные **Postgres** сохраняются в томе `postgres_data`; **JSON state** — в примонтированной папке `./data` на хосте.
+Данные **Postgres** сохраняются в томе `postgres_data` (конфиг + `bot_issue_state`/lease). State больше не пишется в JSON.
 
 ### Админка и конфиг в БД
 
-1. Задайте в `.env` **`ADMIN_TOKEN`** (длинная случайная строка) — вход в веб-интерфейс.
-2. После `docker compose up` откройте `http://<хост>:8080/login` (или порт из **`ADMIN_PORT`**), введите токен.
-3. Заполните пользователей и при необходимости маршруты «статус → комната» и «версия → комната».
-4. Включите **`USE_DB_CONFIG=1`** в `.env` и перезапустите сервис **`bot`**, чтобы он читал `USERS` / `STATUS_ROOM_MAP` / `VERSION_ROOM_MAP` из Postgres (секреты Matrix/Redmine по-прежнему из `.env`).
+1. После `docker compose up` откройте `http://<хост>:8080/login` (или порт из **`ADMIN_PORT`**) и введите email.
+2. На следующем шаге откройте magic-link (в dev/CI может быть редирект сразу на подтверждение).
+3. Заполните пользователей и при необходимости маршруты «статус → комната» и «версия → комната». Доступ к CRUD имеет admin-роль.
+4. Заполните пользователей и маршруты в admin UI, затем перезапустите сервис **`bot`** (бот читает конфиг при старте).
+5. Для дедупликации на нескольких инстансах используется lease по пользователю (`bot_user_leases`) и state в `bot_issue_state` — дополнительных флагов не требуется.
 
-Пока **`USE_DB_CONFIG=0`** (по умолчанию), бот использует только JSON в `.env`, как раньше. Миграции схемы БД: **`alembic upgrade head`** (входит в команду запуска контейнера **admin**).
+Миграции схемы БД выполняются при старте сервиса **admin**: `alembic upgrade head`.
 
 ### Только пересборка образа бота
 
@@ -245,9 +242,7 @@ docker compose up -d bot
 
 Том `./data` на хосте должен быть **доступен на запись** пользователю процесса в контейнере (по умолчанию uid **1000** / пользователь `bot` в образе). Если каталог создал root или другой uid, возможны `PermissionError` при записи state и лога — выставьте владельца, например: `sudo chown -R 1000:1000 data` (подставьте нужный uid), либо см. [user namespace](https://docs.docker.com/engine/security/userns-remap/) в документации Docker. При отказе записи в файл лога бот продолжит работу и писать только в stdout (`docker compose logs`).
 
-### Миграция со systemd на Docker
-
-Если раньше бот шёл как `redmine-matrix-bot.service`, остановите и отключите юнит (`systemctl stop …`, при необходимости `disable`), удалите файл юнита из `/etc/systemd/system/` и выполните `systemctl daemon-reload`. Дальше один экземпляр — через Compose (см. выше), иначе возможны дубли уведомлений.
+<!-- Убрано упоминание systemd: теперь только Docker Compose -->
 
 ---
 
@@ -286,7 +281,7 @@ REDMINE_API_KEY=your_redmine_api_key
 | `LOG_PATH` | *(пусто)* | Файл лога: не задано → `data/bot.log`; иначе путь **от корня репозитория** или абсолютный. |
 | `CHECK_INTERVAL` | `90` | Интервал опроса Redmine в секундах (15–86400). Если цикл дольше интервала, в лог пишется предупреждение — для SLA «до нескольких минут» это нормально. |
 
-### Расписание и DND (в JSON каждого пользователя в `USERS`)
+### Расписание и DND (из Postgres)
 
 | Поле | Пример | Описание |
 |------|--------|----------|
@@ -298,7 +293,7 @@ REDMINE_API_KEY=your_redmine_api_key
 
 ## Настройка пользователей (YAML-пример для справки)
 
-> **Сейчас бот читает пользователей из JSON в `.env` (`USERS`), а не из файла `config.yaml`.** Ниже — ориентир по полям; при необходимости тот же смысл переносится в JSON в `USERS`.
+> Настройки пользователей и маршрутизации читаются из Postgres (таблицы `bot_users` и routes) и редактируются через admin UI.
 
 Фрагмент ниже иллюстрирует **пользователей**, **типы уведомлений** и **маршрутизацию** в комнаты Matrix (целевая схема).
 
@@ -369,34 +364,17 @@ https://redmine.example.com/users/1972
 
 ---
 
-## State-файлы
+## State в Postgres
 
-Бот хранит состояние в JSON-файлах в директории `data/` (вместо БД — для простоты и переносимости):
+Состояние дедупликации и таймеры уведомлений хранится в Postgres:
 
-| Файл | Назначение |
-|------|-----------|
-| `data/state_{uid}_sent.json` | Задачи, о которых уже уведомили + их текущий статус |
-| `data/state_{uid}_journals.json` | Последний `journal_id` — для отслеживания новых изменений |
-| `data/state_{uid}_overdue.json` | Дата последнего уведомления о просрочке |
-| `data/state_{uid}_reminders.json` | Дата последнего напоминания о дедлайне |
+- `bot_user_leases` — lease по `user_redmine_id`, чтобы 3–5 параллельных инстансов бота не отправляли дубликаты.
+- `bot_issue_state` — по `(user_redmine_id, issue_id)` хранит:
+  - `last_status` и `sent_notified_at`
+  - `last_journal_id` (детект новых журналов)
+  - `last_reminder_at` и `last_overdue_notified_at`
 
-`{uid}` — Redmine user ID из `config.yaml`.
-
-Директория `data/` создаётся автоматически при первом запуске. Запись файлов — **атомарная** (через temp-файл + rename), что предотвращает повреждение данных при внезапном отключении.
-
-> 💡 При **первом запуске** бот НЕ отправляет уведомления — только запоминает текущее состояние всех задач. Это предотвращает спам при начальной инициализации.
-
-### Сброс состояния
-
-```bash
-# Полный сброс — бот заново запомнит состояние (без спама при первом цикле)
-rm -f data/state_*.json
-docker compose restart bot   # при запуске через Compose; иначе перезапустите процесс вручную
-
-# Сброс только journals — при следующем цикле обработает все журналы как новые
-rm -f data/state_*_journals.json
-docker compose restart bot
-```
+> 💡 При первом запуске бот НЕ шлёт уведомления для задач — он заполняет состояние (baseline), чтобы не устроить спам после деплоя.
 
 ---
 
@@ -536,8 +514,8 @@ tail -f data/bot.log
 # Последние 50 строк файла
 tail -50 data/bot.log
 
-# Посмотреть state-файлы
-python3 -m json.tool data/state_*_sent.json | head -30
+# Проверить состояние в Postgres
+docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select count(*) from bot_issue_state;"
 
 # Проверка конфигурации
 cd src && python3 -c "from config import validate_config; print(validate_config())"
@@ -596,10 +574,10 @@ python3 bot.py 2>&1 | head -30
 
 ### Бот спамит старыми уведомлениями после перезапуска
 
-Удалите state-файлы — бот заново проинициализирует состояние:
+Очистите state в Postgres — бот заново проинициализирует дедупликацию:
 
 ```bash
-rm -f data/state_*.json
+docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "delete from bot_issue_state;"
 docker compose restart bot
 ```
 

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Мои настройки{% endblock %}
+{% block content %}
+<h1>Мои настройки</h1>
+
+<div class="card" style="margin-top:1rem;">
+  <p class="muted" style="margin-top:0;">
+    Редактируйте расписание DND и правила уведомлений для вашей Redmine-учётки.
+  </p>
+  <form method="post" action="/me/settings">
+    <label for="room">Комната Matrix</label>
+    <input type="text" id="room" name="room" readonly value="{{ room or '' }}" {% if not room %}placeholder="Не привязана"{% endif %} />
+
+    <label for="notify_json">notify (JSON-массив)</label>
+    <textarea id="notify_json" name="notify_json" rows="3">{{ notify_json }}</textarea>
+
+    <label for="work_hours">work_hours (опционально)</label>
+    <input type="text" id="work_hours" name="work_hours"
+      value="{{ work_hours or '' }}" placeholder="09:00-18:00"/>
+
+    <label for="work_days_json">work_days (JSON-массив дней 0=Пн…6=Вс, опционально)</label>
+    <textarea id="work_days_json" name="work_days_json" rows="2"
+      placeholder='[0,1,2,3,4]'>{{ work_days_json }}</textarea>
+
+    <label style="display:flex; align-items:center; gap:0.5rem; margin-top:1rem;">
+      <input type="checkbox" name="dnd" value="on" {% if dnd %}checked{% endif %}/>
+      DND (не беспокоить)
+    </label>
+
+    <p style="margin-top:1rem;">
+      <button type="submit" class="btn btn-primary">Сохранить</button>
+      <a class="btn btn-ghost" href="/matrix/bind">Привязать/пере-привязать комнату</a>
+    </p>
+  </form>
+</div>
+{% endblock %}
+

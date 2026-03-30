@@ -27,7 +27,6 @@ __pycache__
 !.env.example
 
 # State и логи с хоста не должны попасть в immutable-слой (и раздувают контекст)
-data/*.json
 data/*.log
 *.log
 bot.log*

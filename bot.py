@@ -19,19 +19,19 @@ Redmine → Matrix бот уведомлений.
   - Статусные комнаты:  по точному совпадению статуса
   - Командная комната:  новые задачи определённого проекта
 
-Конфигурация — через .env и/или Postgres (USE_DB_CONFIG, см. README).
+Конфигурация — через Postgres (админка заполняет `bot_users` и маппинги роутинга).
 """
 
 import asyncio
 import errno
-import json
 import re
 import logging
 import logging.handlers
 import os
 import sys
+import uuid
 import time  # FIX-4: метрика времени цикла
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -68,27 +68,11 @@ REDMINE_KEY = os.getenv("REDMINE_API_KEY")
 # --- Таймзона ---
 BOT_TZ = ZoneInfo(os.getenv("BOT_TIMEZONE", "Europe/Moscow"))
 
-# --- Пользователи ---
-# Формат: [{"redmine_id": 1972, "room": "!...", "notify": ["all"]}, ...]
-_users_raw = os.getenv("USERS", "[]")
-try:
-    USERS = json.loads(_users_raw)
-except (json.JSONDecodeError, TypeError):
-    USERS = []
-
-# --- Роутинг по статусу → доп. комната ---
-_status_room_raw = os.getenv("STATUS_ROOM_MAP", "{}")
-try:
-    STATUS_ROOM_MAP = json.loads(_status_room_raw)
-except (json.JSONDecodeError, TypeError):
-    STATUS_ROOM_MAP = {}
-
-# --- Роутинг по версии → доп. комната ---
-_version_room_raw = os.getenv("VERSION_ROOM_MAP", "{}")
-try:
-    VERSION_ROOM_MAP = json.loads(_version_room_raw)
-except (json.JSONDecodeError, TypeError):
-    VERSION_ROOM_MAP = {}
+# --- Настройки пользователей / роутинга ---
+# Clean-code режим: всё это хранится в Postgres и загружается в `main()`.
+USERS = []
+STATUS_ROOM_MAP = {}
+VERSION_ROOM_MAP = {}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # КОНСТАНТЫ
@@ -100,7 +84,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 def data_dir() -> Path:
     """
-    Каталог для JSON state и bot.log (data/ рядом с bot.py).
+    Каталог для bot.log (data/ рядом с bot.py).
 
     Функция, а не константа: в тестах подменяют bot.BASE_DIR — путь остаётся согласованным.
     """
@@ -118,6 +102,21 @@ def _parse_check_interval() -> int:
 
 
 CHECK_INTERVAL = _parse_check_interval()
+
+# --- DB state (Postgres) ---
+def _parse_bool(raw: str, default: bool = False) -> bool:
+    v = (raw or "").strip().lower()
+    if not v:
+        return default
+    return v in ("1", "true", "yes", "on")
+
+
+BOT_LEASE_TTL_SECONDS = int(os.getenv("BOT_LEASE_TTL_SECONDS", "300").strip() or "300")
+BOT_LEASE_TTL_SECONDS = max(15, min(BOT_LEASE_TTL_SECONDS, 3600))
+
+# Идентификатор инстанса бота для lease (если не задан — генерируем при старте).
+_BOT_INSTANCE_ID_RAW = (os.getenv("BOT_INSTANCE_ID") or "").strip()
+BOT_INSTANCE_ID_UUID = uuid.UUID(_BOT_INSTANCE_ID_RAW) if _BOT_INSTANCE_ID_RAW else uuid.uuid4()
 
 # Через сколько секунд напоминать о «Информация предоставлена»
 REMINDER_AFTER = 3600
@@ -178,45 +177,6 @@ logger.addHandler(_ch)
 # ═══════════════════════════════════════════════════════════════════════════
 # УТИЛИТЫ
 # ═══════════════════════════════════════════════════════════════════════════
-
-
-def state_file(user_id, name):
-    """
-    Путь к state-файлу пользователя.
-
-    Имена: state_<redmine_id>_sent.json, state_<id>_journals.json и т.д.
-    """
-    return data_dir() / f"state_{user_id}_{name}.json"
-
-
-def load_json(filepath, default=None):
-    """Загрузка JSON из файла. При ошибке — возвращает default."""
-    filepath = Path(filepath)
-    if filepath.exists():
-        try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            logger.error(f"❌ Ошибка чтения {filepath.name}: {e}")
-    return default if default is not None else {}
-
-
-def save_json(filepath, data):
-    """Атомарная запись JSON (через tmp-файл, потом rename)."""
-    filepath = Path(filepath)
-    filepath.parent.mkdir(parents=True, exist_ok=True)
-    tmp = filepath.with_suffix(".tmp")
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        tmp.replace(filepath)
-    except IOError as e:
-        logger.error(f"❌ Ошибка записи {filepath.name}: {e}")
-        # FIX-3: убираем мусорный tmp-файл при ошибке записи
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
 
 
 def plural_days(n):
@@ -612,13 +572,10 @@ def describe_journal(journal, skip_status=False):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-async def check_user_issues(client, redmine, user_cfg):
+async def check_user_issues(client, redmine, user_cfg, db_session):
     """
     Проверяет все открытые задачи одного пользователя.
     Определяет что изменилось и рассылает уведомления.
-
-    Состояние между циклами — JSON в data/ (state_file): иначе после рестарта
-    пришлось бы заново «проглатывать» историю или слать дубликаты.
     """
     uid  = user_cfg["redmine_id"]
     room = user_cfg["room"]
@@ -634,14 +591,17 @@ async def check_user_issues(client, redmine, user_cfg):
 
     logger.info(f"👤 User {uid}: {len(issues)} задач")
 
-    # --- Загружаем state-файлы ---
-    sent      = load_json(state_file(uid, "sent"))
-    reminders = load_json(state_file(uid, "reminders"))
-    overdue_n = load_json(state_file(uid, "overdue"))
-    journals  = load_json(state_file(uid, "journals"))
+    # --- Загружаем state (Postgres) ---
+    from database.state_repo import load_user_issue_state
 
-    # Флаги: были ли изменения
+    sent, reminders, overdue_n, journals = await load_user_issue_state(db_session, uid)
+
+    # Флаги и наборы для upsert в DB
     sent_ch = rem_ch = over_ch = jour_ch = False
+    changed_sent: set[str] = set()
+    changed_reminders: set[str] = set()
+    changed_overdue: set[str] = set()
+    changed_journals: set[str] = set()
 
     now   = now_tz()
     today = now.date()
@@ -662,6 +622,7 @@ async def check_user_issues(client, redmine, user_cfg):
                     )
                     await send_safe(client, issue, user_cfg, room, "status_change", extra_text=extra)
                 sent[iid]["status"] = issue.status.name
+                changed_sent.add(iid)
                 sent_ch = True
 
             # ══════════════════════════════════════════════════════
@@ -673,6 +634,7 @@ async def check_user_issues(client, redmine, user_cfg):
                     for extra_room in get_extra_rooms_for_new(issue):
                         await send_safe(client, issue, user_cfg, extra_room, "new")
                 sent[iid] = {"notified_at": now.isoformat(), "status": STATUS_NEW}
+                changed_sent.add(iid)
                 sent_ch = True
 
             # ══════════════════════════════════════════════════════
@@ -684,6 +646,7 @@ async def check_user_issues(client, redmine, user_cfg):
                     for extra_room in get_extra_rooms_for_rv(issue):
                         await send_safe(client, issue, user_cfg, extra_room, "new")
                 sent[iid] = {"notified_at": now.isoformat(), "status": STATUS_RV}
+                changed_sent.add(iid)
                 sent_ch = True
 
             # ══════════════════════════════════════════════════════
@@ -694,6 +657,7 @@ async def check_user_issues(client, redmine, user_cfg):
                     if should_notify(user_cfg, "info"):
                         await send_safe(client, issue, user_cfg, room, "info")
                     sent[iid] = {"notified_at": now.isoformat(), "status": STATUS_INFO_PROVIDED}
+                    changed_sent.add(iid)
                     sent_ch = True
                 else:
                     # Напоминание каждый час
@@ -708,6 +672,7 @@ async def check_user_issues(client, redmine, user_cfg):
                         if time_since >= REMINDER_AFTER:
                             await send_safe(client, issue, user_cfg, room, "reminder")
                             reminders[iid] = {"last_reminder": now.isoformat()}
+                            changed_reminders.add(iid)
                             rem_ch = True
 
             # ══════════════════════════════════════════════════════
@@ -717,6 +682,7 @@ async def check_user_issues(client, redmine, user_cfg):
                 if should_notify(user_cfg, "reopened"):
                     await send_safe(client, issue, user_cfg, room, "reopened")
                 sent[iid] = {"notified_at": now.isoformat(), "status": STATUS_REOPENED}
+                changed_sent.add(iid)
                 sent_ch = True
 
             # ══════════════════════════════════════════════════════
@@ -724,6 +690,7 @@ async def check_user_issues(client, redmine, user_cfg):
             # ══════════════════════════════════════════════════════
             elif iid not in sent:
                 sent[iid] = {"notified_at": now.isoformat(), "status": issue.status.name}
+                changed_sent.add(iid)
                 sent_ch = True
 
                         # ══════════════════════════════════════════════════════
@@ -738,6 +705,7 @@ async def check_user_issues(client, redmine, user_cfg):
                     if not last_n or ensure_tz(datetime.fromisoformat(last_n)).date() < today:
                         await send_safe(client, issue, user_cfg, room, "overdue")
                         overdue_n[iid] = {"last_notified": now.isoformat()}
+                        changed_overdue.add(iid)
                         over_ch = True
 
             # ══════════════════════════════════════════════════════
@@ -750,6 +718,7 @@ async def check_user_issues(client, redmine, user_cfg):
             if iid not in journals:
                 if max_id > 0:
                     journals[iid] = {"last_journal_id": max_id}
+                    changed_journals.add(iid)
                     jour_ch = True
                     logger.debug(f"📝 #{iid}: инициализация journal_id={max_id} (пропуск)")
             elif new_jrnls and iid in sent and should_notify(user_cfg, "issue_updated"):
@@ -764,25 +733,37 @@ async def check_user_issues(client, redmine, user_cfg):
 
                 if max_id > journals.get(iid, {}).get("last_journal_id", 0):
                     journals[iid] = {"last_journal_id": max_id}
+                    changed_journals.add(iid)
                     jour_ch = True
             else:
                 if max_id > journals.get(iid, {}).get("last_journal_id", 0):
                     journals[iid] = {"last_journal_id": max_id}
+                    changed_journals.add(iid)
                     jour_ch = True
 
         except Exception as e:
             logger.error(f"❌ Ошибка обработки #{issue.id} (user {uid}): {e}", exc_info=True)
             continue
 
-    # --- Сохраняем state-файлы (только если были изменения) ---
-    if sent_ch:
-        save_json(state_file(uid, "sent"), sent)
-    if rem_ch:
-        save_json(state_file(uid, "reminders"), reminders)
-    if over_ch:
-        save_json(state_file(uid, "overdue"), overdue_n)
-    if jour_ch:
-        save_json(state_file(uid, "journals"), journals)
+    # --- Сохраняем state (Postgres) ---
+    from database.state_repo import upsert_user_issue_state
+
+    issue_ids_changed = (
+        changed_sent
+        | changed_reminders
+        | changed_overdue
+        | changed_journals
+    )
+    if issue_ids_changed:
+        await upsert_user_issue_state(
+            db_session,
+            uid,
+            issue_ids_changed,
+            sent,
+            reminders,
+            overdue_n,
+            journals,
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -796,12 +777,37 @@ async def check_all_users(client, redmine):
     start = time.monotonic()
     logger.info(f"🔍 Проверка в {now_tz().strftime('%H:%M:%S')}...")
 
-    for user_cfg in USERS:
-        uid = user_cfg.get("redmine_id")
-        try:
-            await check_user_issues(client, redmine, user_cfg)
-        except Exception as e:
-            logger.error("❌ Цикл проверки user %s: %s", uid, e, exc_info=True)
+    # DB-only: lease + upsert в `bot_issue_state`.
+    from database.session import get_session_factory
+    from database.state_repo import try_acquire_user_lease
+
+    session_factory = get_session_factory()
+    lease_owner_id = BOT_INSTANCE_ID_UUID
+    lease_ttl = BOT_LEASE_TTL_SECONDS
+
+    async with session_factory() as session:
+        for user_cfg in USERS:
+            uid = user_cfg.get("redmine_id")
+            lease_until = datetime.now(timezone.utc) + timedelta(seconds=lease_ttl)
+            try:
+                acquired = await try_acquire_user_lease(
+                    session,
+                    uid,
+                    lease_owner_id=lease_owner_id,
+                    lease_until=lease_until,
+                )
+                if not acquired:
+                    continue
+
+                await session.commit()
+                await check_user_issues(client, redmine, user_cfg, db_session=session)
+                await session.commit()
+            except Exception as e:
+                logger.error("❌ DB-state цикл проверки user %s: %s", uid, e, exc_info=True)
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
 
     elapsed = time.monotonic() - start
     logger.info(f"✅ Проверка завершена за {elapsed:.1f}с")
@@ -884,89 +890,35 @@ async def daily_report(client, redmine):
 
 async def cleanup_state_files(redmine):
     """
-    Очистка state-файлов от закрытых задач (03:00).
+    Очистка state в Postgres для закрытых задач (03:00).
     Удаляет записи о задачах, которых больше нет в открытых.
     """
-    logger.info("🧹 Очистка state-файлов...")
+    from database.session import get_session_factory
+    from database.state_repo import delete_state_rows_not_in_open
 
-    for user_cfg in USERS:
-        uid = user_cfg["redmine_id"]
-        try:
-            open_issues = list(redmine.issue.filter(assigned_to_id=uid, status_id="open"))
-        except Exception as e:
-            _log_redmine_list_error(uid, e, "очистка state")
-            continue
+    logger.info("🧹 Очистка state в Postgres для закрытых задач (03:00)...")
+    session_factory = get_session_factory()
 
-        open_ids = {str(i.id) for i in open_issues}
+    async with session_factory() as session:
+        for user_cfg in USERS:
+            uid = user_cfg["redmine_id"]
+            try:
+                open_issues = list(
+                    redmine.issue.filter(assigned_to_id=uid, status_id="open")
+                )
+            except Exception as e:
+                _log_redmine_list_error(uid, e, "очистка state (db)")
+                continue
 
-        for name in ["sent", "reminders", "overdue", "journals"]:
-            fp = state_file(uid, name)
-            data = load_json(fp)
-            cleaned = {k: v for k, v in data.items() if k in open_ids}
-            if len(cleaned) != len(data):
-                save_json(fp, cleaned)
-                logger.info(f"🧹 User {uid}/{name}: удалено {len(data) - len(cleaned)}")
+            open_ids = {str(i.id) for i in open_issues}
+            try:
+                await delete_state_rows_not_in_open(session, uid, open_ids)
+            except Exception as e:
+                logger.error("❌ DB cleanup user %s: %s", uid, e, exc_info=True)
 
-    logger.info("🧹 Очистка завершена")
+        await session.commit()
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# МИГРАЦИЯ СТАРЫХ STATE-ФАЙЛОВ
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-def migrate_state_from_root_to_data():
-    """
-    Переносит state_*.json из корня репозитория в data/ (если в data/ ещё нет такого файла).
-
-    Нужна при переходе с хранения state в корне на каталог data/. Дубликаты в корне
-    при уже существующем файле в data/ только логируются — не удаляем автоматически.
-    """
-    data_dir().mkdir(parents=True, exist_ok=True)
-    for p in sorted(BASE_DIR.glob("state_*.json")):
-        dest = data_dir() / p.name
-        if dest.exists():
-            logger.warning(
-                "⚠️ %s уже есть в data/ — файл в корне не трогаем (%s). При необходимости удалите дубликат вручную.",
-                p.name,
-                p,
-            )
-            continue
-        try:
-            p.rename(dest)
-            logger.info("📦 State перенесён в data/: %s", p.name)
-        except OSError as e:
-            logger.error("❌ Не удалось перенести %s в data/: %s", p.name, e)
-
-
-def migrate_old_state():
-    """
-    Переносит старые state-файлы (до мультипользовательской версии)
-    в новый формат state_<uid>_<name>.json для первого пользователя.
-    """
-    if not USERS:
-        return
-
-    first_uid = USERS[0]["redmine_id"]
-    old_files = {
-        "sent_issues.json":    "sent",
-        "reminders.json":      "reminders",
-        "overdue_issues.json": "overdue",
-        "journals.json":       "journals",
-    }
-
-    data_dir().mkdir(parents=True, exist_ok=True)
-    for old_name, new_name in old_files.items():
-        # Старые имена могли лежать в корне или уже в data/
-        old_path = BASE_DIR / old_name
-        if not old_path.exists():
-            old_path = data_dir() / old_name
-        new_path = state_file(first_uid, new_name)
-        if old_path.exists() and not new_path.exists():
-            data = load_json(old_path)
-            if data:
-                save_json(new_path, data)
-                logger.info(f"📦 Миграция: {old_name} → {new_path.name}")
+    logger.info("🧹 Очистка state в Postgres завершена")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -984,30 +936,22 @@ async def main():
         logger.error("❌ Не заданы обязательные переменные в .env")
         return
 
-    use_db = os.getenv("USE_DB_CONFIG", "0").strip().lower() in ("1", "true", "yes")
-    if use_db:
-        try:
-            from database.load_config import fetch_runtime_config
+    # Бот всегда стартует в DB-only режиме: конфиг берём из Postgres.
+    try:
+        from database.load_config import fetch_runtime_config
 
-            u, sm, vm = await fetch_runtime_config()
-            if u:
-                USERS = u
-                logger.info("📥 Конфиг: пользователи из БД (%d)", len(u))
-            else:
-                logger.warning("📥 В БД нет пользователей — используется USERS из .env")
-            if sm:
-                STATUS_ROOM_MAP = sm
-                logger.info("📥 STATUS_ROOM_MAP из БД (%d ключей)", len(sm))
-            if vm:
-                VERSION_ROOM_MAP = vm
-                logger.info("📥 VERSION_ROOM_MAP из БД (%d ключей)", len(vm))
-        except Exception as e:
-            logger.error("❌ Не удалось загрузить конфиг из БД: %s", e, exc_info=True)
-            return
-
-    if not USERS:
-        logger.error("❌ USERS пуст: задайте USERS в .env или заполните таблицу bot_users и USE_DB_CONFIG=1")
+        u, sm, vm = await fetch_runtime_config()
+    except Exception as e:
+        logger.error("❌ Не удалось загрузить конфиг из БД: %s", e, exc_info=True)
         return
+
+    if not u:
+        logger.error("❌ В БД нет пользователей (bot_users пуст). Заполните через admin UI.")
+        return
+
+    USERS = u
+    STATUS_ROOM_MAP = sm or {}
+    VERSION_ROOM_MAP = vm or {}
 
     # FIX-4: валидация структуры USERS
     valid, errors = validate_users(USERS)
@@ -1026,10 +970,6 @@ async def main():
     if VERSION_ROOM_MAP:
         for k, r in VERSION_ROOM_MAP.items():
             logger.info(f"   📦 Версия «{k}» → {r[:30]}...")
-
-    # --- Миграции state: корень → data/, затем старые имена sent_issues.json → state_<uid>_*.json ---
-    migrate_state_from_root_to_data()
-    migrate_old_state()
 
     # --- Подключение к Matrix ---
     client = AsyncClient(HOMESERVER)
@@ -1055,29 +995,6 @@ async def main():
         await client.close()
         return
 
-    # --- Инициализация journals для новых пользователей ---
-    for user_cfg in USERS:
-        uid = user_cfg["redmine_id"]
-        jf = state_file(uid, "journals")
-        if not load_json(jf):
-            logger.info(f"📝 Инициализация journals для user {uid}...")
-            try:
-                init_issues = list(redmine.issue.filter(
-                    assigned_to_id=uid, status_id="open", include=["journals"]
-                ))
-                js = {}
-                for issue in init_issues:
-                    try:
-                        all_j = list(issue.journals)
-                        if all_j:
-                            js[str(issue.id)] = {"last_journal_id": max(j.id for j in all_j)}
-                    except Exception:
-                        pass
-                save_json(jf, js)
-                logger.info(f"📝 User {uid}: journals для {len(js)} задач")
-            except Exception as e:
-                _log_redmine_list_error(uid, e, "init journals")
-
     # --- Планировщик ---
     scheduler = AsyncIOScheduler(timezone=BOT_TZ)
 
@@ -1096,7 +1013,7 @@ async def main():
     scheduler.add_job(daily_report, "cron", hour=9, minute=0,
                       args=[client, redmine])
 
-    # Очистка state-файлов — 03:00
+    # Очистка state в Postgres — 03:00
     scheduler.add_job(cleanup_state_files, "cron", hour=3, minute=0,
                       args=[redmine])
 

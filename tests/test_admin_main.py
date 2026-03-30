@@ -5,12 +5,10 @@ from fastapi.testclient import TestClient
 import pytest
 
 
-# Должно быть выставлено до импортов/создания TestClient,
-# чтобы middleware по ADMIN_TOKEN работал предсказуемо.
-os.environ.setdefault("ADMIN_TOKEN", "test_admin_token")
+# Для auth по magic-link требуется Postgres (DATABASE_URL).
+# Эндпоинты без cookie редиректят на /login без попыток подключаться к БД.
 
-# На тесты страниц, где не используется БД (login/health/search без Redmine),
-# DATABASE_URL не требуется.
+os.environ.setdefault("ADMIN_BOOTSTRAP_FIRST_ADMIN", "1")
 
 import admin_main  # noqa: E402
 
@@ -29,12 +27,8 @@ def test_health_ok(client: TestClient):
 def test_login_page_ok(client: TestClient):
     r = client.get("/login")
     assert r.status_code == 200
-    assert "Админка бота" in r.text
-
-
-def test_login_post_wrong_token_returns_401(client: TestClient):
-    r = client.post("/login", data={"token": "wrong"})
-    assert r.status_code == 401
+    assert "Панель управления" in r.text
+    assert "Email" in r.text
 
 
 def test_users_redirects_to_login_without_auth(client: TestClient):
@@ -44,10 +38,17 @@ def test_users_redirects_to_login_without_auth(client: TestClient):
 
 
 def test_redmine_search_without_redmine_creds_returns_empty(client: TestClient):
-    r = client.get(
-        "/redmine/users/search?q=ivan",
-        headers={"X-Admin-Token": os.environ["ADMIN_TOKEN"]},
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url or not db_url.startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL) для magic-link auth")
+
+    # В MVP без SMTP редиректит сразу на /magic и выставляет cookie.
+    client.post(
+        "/login",
+        data={"email": "test_admin@example.com"},
+        follow_redirects=True,
     )
+    r = client.get("/redmine/users/search?q=ivan")
     assert r.status_code == 200
     assert r.text == ""
 

@@ -4,12 +4,6 @@
 # Виртуальное окружение
 venv/
 
-# State-файлы бота (генерируются автоматически)
-sent_issues.json
-reminders.json
-overdue_issues.json
-journals.json
-
 # Логи
 bot.log
 bot.log.*
@@ -30,8 +24,3 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
-state_*.json
-
-# State-файлы (JSON)
-data/*.json
-!data/.gitkeep

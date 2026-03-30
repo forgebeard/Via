@@ -1,11 +1,9 @@
 # =============================================================================
 # Оркестрация: бот + PostgreSQL + постоянные тома.
 #
-# Зачем Postgres сейчас, если state в JSON:
-#   - единая БД для будущей админки, пользователей, миграции state с файлов;
-#   - переменная DATABASE_URL уже прокидывается в контейнер бота.
+# Postgres используется для хранения конфигурации и state бота.
 #
-# Бот при USE_DB_CONFIG=1 и сервис admin читают конфиг из Postgres.
+# Конфигурация читается из Postgres (таблицы `bot_users` и маппинги роутинга).
 #
 # Запуск (из корня репозитория, после копирования и заполнения .env):
 #   docker compose up --build -d
@@ -34,9 +32,9 @@ services:
       retries: 10
       start_period: 10s
     # Порт наружу не пробрасываем по умолчанию (БД только для сети compose).
-    # Для отладки с хоста раскомментируйте:
-    # ports:
-    #   - "5432:5432"
+    # Для отладки с хоста публикуем только на localhost (DBeaver на ноуте).
+    ports:
+      - "127.0.0.1:5433:5432"
 
   # ---------------------------------------------------------------------------
   # Бот: собирается из Dockerfile в этом репозитории.
@@ -52,11 +50,13 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-redmine_matrix}
-      # USE_DB_CONFIG=1 — USERS и маршруты из БД (см. README, сервис admin).
-      USE_DB_CONFIG: ${USE_DB_CONFIG:-0}
+      # Важно: пароль может содержать зарезервированные URL-символы (например `]`, `/`, `+`),
+      # поэтому используем URL-encoded версию, чтобы asyncpg/SQLAlchemy корректно распарсили DSN.
+      # Если POSTGRES_PASSWORD_URLENC не задан — откат на raw.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD_URLENC:-${POSTGRES_PASSWORD}}@postgres:5432/${POSTGRES_DB:-redmine_matrix}
+      # В clean-code режиме бот всегда читает конфиг и state из Postgres.
     volumes:
-      # State JSON (см. bot.py: data_dir) — переживает обновления образа.
+      # Логи bot.log (см. bot.py: data_dir) — переживают обновления образа.
       - ./data:/app/data
       # Явная подстановка .env в рабочий каталог для python-dotenv (load_dotenv).
       - ./.env:/app/.env:ro
@@ -83,7 +83,8 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-redmine_matrix}
+      # См. комментарий выше про URL-encoded пароль.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD_URLENC:-${POSTGRES_PASSWORD}}@postgres:5432/${POSTGRES_DB:-redmine_matrix}
     command:
       [
         "sh",

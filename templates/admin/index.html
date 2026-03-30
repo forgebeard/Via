@@ -2,7 +2,7 @@
 {% block title %}Обзор{% endblock %}
 {% block content %}
 <h1>Обзор</h1>
-<p class="muted">Конфигурация хранится в PostgreSQL. После изменений перезапустите контейнер <code>bot</code>, если включён <code>USE_DB_CONFIG=1</code>.</p>
+<p class="muted">Конфигурация хранится в PostgreSQL. После изменений перезапустите контейнер <code>bot</code>, т.к. он читает конфиг при старте.</p>
 <div class="card" style="margin-top:1rem;">
   <ul style="margin:0; padding-left:1.25rem;">
     <li>Пользователи: <strong>{{ users_count }}</strong></li>

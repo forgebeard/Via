@@ -12,7 +12,6 @@
   python -m pytest tests/ -v
 """
 
-import json
 import os
 import asyncio
 from datetime import datetime, date, timedelta
@@ -203,62 +202,6 @@ class TestValidateUsers:
     def test_empty_users_list(self):
         ok, errors = bot.validate_users([])
         assert ok is True  # Пустой список — валидный (проверка на пустоту в main)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 3. STATE-ФАЙЛЫ
-# ═══════════════════════════════════════════════════════════════════════════
-# load_json/save_json в bot.py; пути теперь через data/ (см. test_state_file_path).
-
-class TestStateFiles:
-    """Тесты чтения/записи JSON state-файлов."""
-
-    def test_save_and_load(self, tmp_path):
-        fp = tmp_path / "test.json"
-        data = {"1001": {"status": "Новая", "notified_at": "2026-03-27T12:00:00"}}
-        bot.save_json(fp, data)
-        loaded = bot.load_json(fp)
-        assert loaded == data
-
-    def test_load_nonexistent_returns_default(self, tmp_path):
-        fp = tmp_path / "missing.json"
-        assert bot.load_json(fp) == {}
-        assert bot.load_json(fp, default={"x": 1}) == {"x": 1}
-
-    def test_load_corrupted_json(self, tmp_path):
-        """Битый JSON → возвращает default, не падает."""
-        fp = tmp_path / "broken.json"
-        fp.write_text("{{{invalid json!!!", encoding="utf-8")
-        result = bot.load_json(fp)
-        assert result == {}
-
-    def test_save_atomic_no_partial_write(self, tmp_path):
-        """Проверяем, что .tmp файл не остаётся после успешной записи."""
-        fp = tmp_path / "atomic.json"
-        bot.save_json(fp, {"key": "value"})
-        assert fp.exists()
-        assert not fp.with_suffix(".tmp").exists()
-
-    def test_save_preserves_unicode(self, tmp_path):
-        """Кириллица и эмодзи сохраняются корректно."""
-        fp = tmp_path / "unicode.json"
-        data = {"задача": "Тест 🔥", "статус": "Новая"}
-        bot.save_json(fp, data)
-        loaded = bot.load_json(fp)
-        assert loaded["задача"] == "Тест 🔥"
-
-    def test_state_file_path(self):
-        """State лежит в data/, не в корне репозитория."""
-        path = bot.state_file(1972, "sent")
-        assert path.name == "state_1972_sent.json"
-        assert path.parent == bot.data_dir()
-
-    def test_load_empty_file(self, tmp_path):
-        """Пустой файл → default."""
-        fp = tmp_path / "empty.json"
-        fp.write_text("", encoding="utf-8")
-        result = bot.load_json(fp)
-        assert result == {}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -794,15 +737,6 @@ class TestEdgeCases:
         assert bot.plural_days(1001) == "1001 день"
         assert bot.plural_days(1002) == "1002 дня"
 
-    def test_save_json_deeply_nested(self, tmp_path):
-        """Глубоко вложенный JSON."""
-        fp = tmp_path / "deep.json"
-        data = {"a": {"b": {"c": {"d": [1, 2, {"e": "ё"}]}}}}
-        bot.save_json(fp, data)
-        loaded = bot.load_json(fp)
-        assert loaded["a"]["b"]["c"]["d"][2]["e"] == "ё"
-
-
 # ═══════════════════════════════════════════════════════════════════════════
 # 11. OVERDUE FIX-2: СРАВНЕНИЕ ПО ДАТЕ
 # ═══════════════════════════════════════════════════════════════════════════
@@ -851,56 +785,3 @@ class TestOverdueDateComparison:
         assert not last_n  # Условие `not last_n` → True → отправляем
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 12. МИГРАЦИЯ СТАРЫХ STATE-ФАЙЛОВ
-# ═══════════════════════════════════════════════════════════════════════════
-# Старые имена файлов и перенос state_*.json из корня в data/.
-
-class TestMigration:
-    """Тесты миграции старых state-файлов и переноса state_*.json в data/."""
-
-    def test_migrate_state_from_root_to_data(self, tmp_path):
-        """state_*.json из корня (tmp) переносится в tmp/data/."""
-        root_state = tmp_path / "state_1972_sent.json"
-        root_state.write_text('{"1": {}}', encoding="utf-8")
-        with patch.object(bot, "BASE_DIR", tmp_path):
-            bot.migrate_state_from_root_to_data()
-        dest = tmp_path / "data" / "state_1972_sent.json"
-        assert dest.exists()
-        assert not root_state.exists()
-
-    def test_migrate_old_files(self, tmp_path):
-        """Старые sent_issues.json переносятся в data/state_<uid>_sent.json."""
-        with patch.object(bot, "BASE_DIR", tmp_path):
-            with patch.object(bot, "USERS", [{"redmine_id": 1972, "room": "!r:s"}]):
-                old_file = tmp_path / "sent_issues.json"
-                old_data = {"100": {"status": "Новая"}}
-                old_file.write_text(json.dumps(old_data), encoding="utf-8")
-
-                bot.migrate_old_state()
-
-                new_file = tmp_path / "data" / "state_1972_sent.json"
-                assert new_file.exists()
-                loaded = json.loads(new_file.read_text(encoding="utf-8"))
-                assert loaded == old_data
-
-    def test_no_migration_if_new_exists(self, tmp_path):
-        """Если новый файл уже есть в data/ — не перезаписываем."""
-        with patch.object(bot, "BASE_DIR", tmp_path):
-            with patch.object(bot, "USERS", [{"redmine_id": 1972, "room": "!r:s"}]):
-                old_file = tmp_path / "sent_issues.json"
-                old_file.write_text('{"old": true}', encoding="utf-8")
-
-                (tmp_path / "data").mkdir(parents=True, exist_ok=True)
-                new_file = tmp_path / "data" / "state_1972_sent.json"
-                new_file.write_text('{"new": true}', encoding="utf-8")
-
-                bot.migrate_old_state()
-
-                loaded = json.loads(new_file.read_text(encoding="utf-8"))
-                assert loaded == {"new": True}  # Не перезаписан!
-
-    def test_no_migration_without_users(self):
-        """Без пользователей — миграция не запускается."""
-        with patch.object(bot, "USERS", []):
-            bot.migrate_old_state()  # Не должен падать

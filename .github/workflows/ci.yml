@@ -8,6 +8,22 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: bot
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: redmine_matrix
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U bot -d redmine_matrix"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://bot:postgres@localhost:5432/redmine_matrix
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -17,7 +33,9 @@ jobs:
         run: |
           pip install -r requirements.txt -r requirements-test.txt
       - name: pytest
-        run: python -m pytest tests/ -q --tb=short
+        run: |
+          alembic upgrade head
+          python -m pytest tests/ -q --tb=short
 
   docker:
     runs-on: ubuntu-latest
