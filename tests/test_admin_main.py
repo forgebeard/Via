@@ -33,7 +33,7 @@ def test_health_smtp_ok_in_mock_mode(client: TestClient):
 def test_login_page_ok(client: TestClient):
     r = client.get("/login")
     assert r.status_code == 200
-    assert "Панель управления" in r.text
+    assert "Вход в панель" in r.text
     assert "Email" in r.text
     assert "Пароль" in r.text
     assert "Забыли пароль?" in r.text

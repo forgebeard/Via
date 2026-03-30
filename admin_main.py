@@ -144,9 +144,13 @@ def _ensure_csrf(request: Request) -> tuple[str, bool]:
     return secrets.token_urlsafe(24), True
 
 
-def _verify_csrf(request: Request, form_token: str) -> None:
+def _verify_csrf(request: Request, form_token: str = "") -> None:
+    """Проверка double-submit CSRF: поле формы или заголовок X-CSRF-Token (для HTMX)."""
+    token = (form_token or "").strip()
+    if not token:
+        token = request.headers.get("X-CSRF-Token", "").strip()
     cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
-    if not cookie_token or not form_token or form_token != cookie_token:
+    if not cookie_token or not token or token != cookie_token:
         raise HTTPException(status_code=400, detail="Некорректный CSRF токен")
 
 
@@ -321,7 +325,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         except Exception:
             return RedirectResponse("/login", status_code=303)
 
-        return await call_next(request)
+        csrf_token, set_csrf_cookie = _ensure_csrf(request)
+        request.state.csrf_token = csrf_token
+        response = await call_next(request)
+        if set_csrf_cookie:
+            response.set_cookie(
+                CSRF_COOKIE_NAME,
+                csrf_token,
+                httponly=True,
+                secure=COOKIE_SECURE,
+                samesite="lax",
+                path="/",
+            )
+        return response
 
 
 REDMINE_URL = (os.getenv("REDMINE_URL") or "").strip()
@@ -439,7 +455,7 @@ async def setup_post(
     request: Request,
     email: Annotated[str, Form()],
     password: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
@@ -491,7 +507,7 @@ async def login_post(
     request: Request,
     email: Annotated[str, Form()],
     password: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
@@ -565,7 +581,7 @@ async def onboarding_page(request: Request, session: AsyncSession = Depends(get_
 @app.post("/onboarding/save")
 async def onboarding_save(
     request: Request,
-    csrf_token: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
@@ -599,7 +615,7 @@ async def onboarding_save(
 @app.post("/onboarding/skip")
 async def onboarding_skip(
     request: Request,
-    csrf_token: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
@@ -633,7 +649,7 @@ async def forgot_password_page(request: Request):
 async def forgot_password_post(
     request: Request,
     email: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
@@ -708,7 +724,7 @@ async def reset_password_post(
     request: Request,
     token: Annotated[str, Form()],
     password: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
@@ -818,7 +834,7 @@ async def secrets_save(
     request: Request,
     name: Annotated[str, Form()],
     value: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
@@ -876,7 +892,7 @@ async def app_user_reset_password_admin(
     request: Request,
     user_id: str,
     new_password: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)

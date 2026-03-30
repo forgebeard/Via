@@ -327,6 +327,7 @@ python scripts/reset_admin_password.py --email admin@example.com --password 'New
 
 Полный регламент отката: `docs/rollback-runbook.md`.
 Smoke-чеклист UI перед merge: `docs/ui-smoke-checklist.md`.
+План глобального редизайна админ-панели: `docs/ui-global-overhaul-plan.md`.
 
 ### Расписание и DND (из Postgres)
 
