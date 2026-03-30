@@ -19,7 +19,7 @@ Redmine → Matrix бот уведомлений.
   - Статусные комнаты:  по точному совпадению статуса
   - Командная комната:  новые задачи определённого проекта
 
-Конфигурация — через .env (см. README.md).
+Конфигурация — через .env и/или Postgres (USE_DB_CONFIG, см. README).
 """
 
 import asyncio
@@ -41,6 +41,8 @@ if str(_SRC_DIR) not in sys.path:
 from utils import safe_html
 from matrix_send import room_send_with_retry, MAX_RETRIES
 from config import LOG_FILE, want_log_file
+from preferences import can_notify
+from redminelib.exceptions import AuthError, BaseRedmineError, ForbiddenError
 
 from dotenv import load_dotenv
 from nio import AsyncClient
@@ -105,8 +107,17 @@ def data_dir() -> Path:
     return BASE_DIR / "data"
 
 
-# Интервал проверки Redmine (секунды)
-CHECK_INTERVAL = 90  # FIX-4: увеличен с 30 (цикл занимает ~58с)
+# Интервал проверки Redmine (секунды); переопределение: CHECK_INTERVAL в .env
+def _parse_check_interval() -> int:
+    raw = os.getenv("CHECK_INTERVAL", "90").strip()
+    try:
+        v = int(raw)
+    except ValueError:
+        return 90
+    return max(15, min(v, 86400))
+
+
+CHECK_INTERVAL = _parse_check_interval()
 
 # Через сколько секунд напоминать о «Информация предоставлена»
 REMINDER_AFTER = 3600
@@ -250,6 +261,23 @@ def should_notify(user_cfg, notification_type):
     """
     notify_list = user_cfg.get("notify", ["all"])
     return "all" in notify_list or notification_type in notify_list
+
+
+def _issue_priority_name(issue):
+    try:
+        return issue.priority.name
+    except Exception:
+        return ""
+
+
+def _log_redmine_list_error(uid: int, err: Exception, where: str) -> None:
+    """Логирует сбой Redmine при issue.filter и т.п.; неожиданные — с traceback."""
+    if isinstance(err, (AuthError, ForbiddenError)):
+        logger.error("❌ Redmine доступ (%s, user %s): %s", where, uid, err)
+    elif isinstance(err, BaseRedmineError):
+        logger.error("❌ Redmine API (%s, user %s): %s", where, uid, err)
+    else:
+        logger.error("❌ Redmine (%s, user %s): %s", where, uid, err, exc_info=True)
 
 
 # FIX-4: валидация конфигурации пользователей
@@ -405,8 +433,18 @@ async def send_matrix_message(client, issue, room_id, notification_type="info", 
     logger.info(f"📨 #{issue.id} → {room_id[:20]}... ({notification_type})")
 
 
-async def send_safe(client, issue, room_id, notification_type, extra_text=""):
-    """Обёртка send_matrix_message с перехватом ошибок."""
+async def send_safe(client, issue, user_cfg, room_id, notification_type, extra_text=""):
+    """
+    Обёртка send_matrix_message: DND/рабочие часы (can_notify), затем перехват ошибок Matrix.
+    """
+    if not can_notify(user_cfg, priority=_issue_priority_name(issue)):
+        logger.debug(
+            "Пропуск уведомления (время/DND): user %s, #%s, %s",
+            user_cfg.get("redmine_id"),
+            issue.id,
+            notification_type,
+        )
+        return
     try:
         await send_matrix_message(client, issue, room_id, notification_type, extra_text)
     except Exception as e:
@@ -591,7 +629,7 @@ async def check_user_issues(client, redmine, user_cfg):
             assigned_to_id=uid, status_id="open", include=["journals"]
         ))
     except Exception as e:
-        logger.error(f"❌ Redmine API (user {uid}): {e}")
+        _log_redmine_list_error(uid, e, "загрузка задач")
         return
 
     logger.info(f"👤 User {uid}: {len(issues)} задач")
@@ -622,7 +660,7 @@ async def check_user_issues(client, redmine, user_cfg):
                         f"Статус: <strong>{safe_html(old_status)}</strong> "
                         f"→ <strong>{safe_html(issue.status.name)}</strong>"
                     )
-                    await send_safe(client, issue, room, "status_change", extra_text=extra)
+                    await send_safe(client, issue, user_cfg, room, "status_change", extra_text=extra)
                 sent[iid]["status"] = issue.status.name
                 sent_ch = True
 
@@ -631,9 +669,9 @@ async def check_user_issues(client, redmine, user_cfg):
             # ══════════════════════════════════════════════════════
             if issue.status.name == STATUS_NEW and iid not in sent:
                 if should_notify(user_cfg, "new"):
-                    await send_safe(client, issue, room, "new")
+                    await send_safe(client, issue, user_cfg, room, "new")
                     for extra_room in get_extra_rooms_for_new(issue):
-                        await send_safe(client, issue, extra_room, "new")
+                        await send_safe(client, issue, user_cfg, extra_room, "new")
                 sent[iid] = {"notified_at": now.isoformat(), "status": STATUS_NEW}
                 sent_ch = True
 
@@ -642,9 +680,9 @@ async def check_user_issues(client, redmine, user_cfg):
             # ══════════════════════════════════════════════════════
             elif issue.status.name == STATUS_RV and iid not in sent:
                 if should_notify(user_cfg, "new"):
-                    await send_safe(client, issue, room, "new")
+                    await send_safe(client, issue, user_cfg, room, "new")
                     for extra_room in get_extra_rooms_for_rv(issue):
-                        await send_safe(client, issue, extra_room, "new")
+                        await send_safe(client, issue, user_cfg, extra_room, "new")
                 sent[iid] = {"notified_at": now.isoformat(), "status": STATUS_RV}
                 sent_ch = True
 
@@ -654,7 +692,7 @@ async def check_user_issues(client, redmine, user_cfg):
             elif issue.status.name == STATUS_INFO_PROVIDED:
                 if iid not in sent:
                     if should_notify(user_cfg, "info"):
-                        await send_safe(client, issue, room, "info")
+                        await send_safe(client, issue, user_cfg, room, "info")
                     sent[iid] = {"notified_at": now.isoformat(), "status": STATUS_INFO_PROVIDED}
                     sent_ch = True
                 else:
@@ -668,7 +706,7 @@ async def check_user_issues(client, redmine, user_cfg):
                             time_since = (now - notified_at).total_seconds()
 
                         if time_since >= REMINDER_AFTER:
-                            await send_safe(client, issue, room, "reminder")
+                            await send_safe(client, issue, user_cfg, room, "reminder")
                             reminders[iid] = {"last_reminder": now.isoformat()}
                             rem_ch = True
 
@@ -677,7 +715,7 @@ async def check_user_issues(client, redmine, user_cfg):
             # ══════════════════════════════════════════════════════
             elif issue.status.name == STATUS_REOPENED and iid not in sent:
                 if should_notify(user_cfg, "reopened"):
-                    await send_safe(client, issue, room, "reopened")
+                    await send_safe(client, issue, user_cfg, room, "reopened")
                 sent[iid] = {"notified_at": now.isoformat(), "status": STATUS_REOPENED}
                 sent_ch = True
 
@@ -698,7 +736,7 @@ async def check_user_issues(client, redmine, user_cfg):
                 if should_notify(user_cfg, "overdue"):
                     last_n = overdue_n.get(iid, {}).get("last_notified")
                     if not last_n or ensure_tz(datetime.fromisoformat(last_n)).date() < today:
-                        await send_safe(client, issue, room, "overdue")
+                        await send_safe(client, issue, user_cfg, room, "overdue")
                         overdue_n[iid] = {"last_notified": now.isoformat()}
                         over_ch = True
 
@@ -722,7 +760,7 @@ async def check_user_issues(client, redmine, user_cfg):
                     combined = "<br/>".join(safe_html(d) for d in tail)
                     if len(descs) > 5:
                         combined = f"<em>...и ещё {len(descs) - 5}</em><br/>" + combined
-                    await send_safe(client, issue, room, "issue_updated", extra_text=combined)
+                    await send_safe(client, issue, user_cfg, room, "issue_updated", extra_text=combined)
 
                 if max_id > journals.get(iid, {}).get("last_journal_id", 0):
                     journals[iid] = {"last_journal_id": max_id}
@@ -759,14 +797,20 @@ async def check_all_users(client, redmine):
     logger.info(f"🔍 Проверка в {now_tz().strftime('%H:%M:%S')}...")
 
     for user_cfg in USERS:
-        await check_user_issues(client, redmine, user_cfg)
+        uid = user_cfg.get("redmine_id")
+        try:
+            await check_user_issues(client, redmine, user_cfg)
+        except Exception as e:
+            logger.error("❌ Цикл проверки user %s: %s", uid, e, exc_info=True)
 
     elapsed = time.monotonic() - start
     logger.info(f"✅ Проверка завершена за {elapsed:.1f}с")
     if elapsed > CHECK_INTERVAL * 0.8:
         logger.warning(
-            f"⚠️ Цикл ({elapsed:.0f}с) приближается к интервалу ({CHECK_INTERVAL}с)! "
-            f"Рассмотрите увеличение CHECK_INTERVAL или оптимизацию API-запросов."
+            "⚠️ Цикл (%dс) > 0.8×интервала (%dс). Увеличьте CHECK_INTERVAL в .env или "
+            "сократите число пользователей/API на цикл. Для SLA «до нескольких минут» это допустимо.",
+            int(elapsed),
+            CHECK_INTERVAL,
         )
 
 
@@ -780,6 +824,9 @@ async def daily_report(client, redmine):
     for user_cfg in USERS:
         if not should_notify(user_cfg, "all"):
             continue
+        if not can_notify(user_cfg, priority="", dt=now_tz()):
+            logger.debug("Утренний отчёт: пропуск (время/DND), user %s", user_cfg.get("redmine_id"))
+            continue
 
         uid  = user_cfg["redmine_id"]
         room = user_cfg["room"]
@@ -787,7 +834,7 @@ async def daily_report(client, redmine):
         try:
             issues = list(redmine.issue.filter(assigned_to_id=uid, status_id="open"))
         except Exception as e:
-            logger.error(f"❌ Отчёт user {uid}: {e}")
+            _log_redmine_list_error(uid, e, "утренний отчёт")
             continue
 
         today = today_tz()
@@ -847,7 +894,7 @@ async def cleanup_state_files(redmine):
         try:
             open_issues = list(redmine.issue.filter(assigned_to_id=uid, status_id="open"))
         except Exception as e:
-            logger.error(f"❌ Очистка user {uid}: {e}")
+            _log_redmine_list_error(uid, e, "очистка state")
             continue
 
         open_ids = {str(i.id) for i in open_issues}
@@ -928,6 +975,8 @@ def migrate_old_state():
 
 
 async def main():
+    global USERS, STATUS_ROOM_MAP, VERSION_ROOM_MAP
+
     logger.info("🚀 Бот запущен")
 
     # --- Проверка обязательных настроек ---
@@ -935,8 +984,29 @@ async def main():
         logger.error("❌ Не заданы обязательные переменные в .env")
         return
 
+    use_db = os.getenv("USE_DB_CONFIG", "0").strip().lower() in ("1", "true", "yes")
+    if use_db:
+        try:
+            from database.load_config import fetch_runtime_config
+
+            u, sm, vm = await fetch_runtime_config()
+            if u:
+                USERS = u
+                logger.info("📥 Конфиг: пользователи из БД (%d)", len(u))
+            else:
+                logger.warning("📥 В БД нет пользователей — используется USERS из .env")
+            if sm:
+                STATUS_ROOM_MAP = sm
+                logger.info("📥 STATUS_ROOM_MAP из БД (%d ключей)", len(sm))
+            if vm:
+                VERSION_ROOM_MAP = vm
+                logger.info("📥 VERSION_ROOM_MAP из БД (%d ключей)", len(vm))
+        except Exception as e:
+            logger.error("❌ Не удалось загрузить конфиг из БД: %s", e, exc_info=True)
+            return
+
     if not USERS:
-        logger.error("❌ USERS не настроен в .env")
+        logger.error("❌ USERS пуст: задайте USERS в .env или заполните таблицу bot_users и USE_DB_CONFIG=1")
         return
 
     # FIX-4: валидация структуры USERS
@@ -1006,7 +1076,7 @@ async def main():
                 save_json(jf, js)
                 logger.info(f"📝 User {uid}: journals для {len(js)} задач")
             except Exception as e:
-                logger.error(f"❌ Init journals user {uid}: {e}")
+                _log_redmine_list_error(uid, e, "init journals")
 
     # --- Планировщик ---
     scheduler = AsyncIOScheduler(timezone=BOT_TZ)

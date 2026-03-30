@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Версии → комнаты{% endblock %}
+{% block content %}
+<h1>VERSION_ROOM_MAP</h1>
+<p class="muted">Ключ версии (как в конфиге) → ID комнаты Matrix.</p>
+<table>
+  <thead><tr><th>Версия (ключ)</th><th>Комната</th><th></th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.version_key }}</td>
+      <td><code>{{ r.room_id[:50] }}{% if r.room_id|length > 50 %}…{% endif %}</code></td>
+      <td>
+        <form method="post" action="/routes/version/{{ r.id }}/delete" style="display:inline;" hx-confirm="Удалить?">
+          <button type="submit" class="btn btn-danger">Удалить</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3" class="muted">Нет записей</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<div class="card" style="margin-top:1.5rem;">
+  <h2 style="margin-top:0;">Добавить</h2>
+  <form method="post" action="/routes/version">
+    <label for="version_key">Ключ версии</label>
+    <input type="text" id="version_key" name="version_key" required placeholder="РЕД ОС"/>
+    <label for="room_id">Room ID</label>
+    <input type="text" id="room_id" name="room_id" required/>
+    <p style="margin-top:1rem;"><button type="submit" class="btn btn-primary">Добавить</button></p>
+  </form>
+</div>
+{% endblock %}

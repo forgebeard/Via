@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Пользователи{% endblock %}
+{% block content %}
+<h1>Пользователи</h1>
+<p><a class="btn btn-primary" href="/users/new">Добавить</a></p>
+<table>
+  <thead>
+    <tr>
+      <th>Redmine ID</th>
+      <th>Комната</th>
+      <th>notify</th>
+      <th>DND</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for u in users %}
+    <tr>
+      <td>{{ u.redmine_id }}</td>
+      <td><code>{{ u.room[:40] }}{% if u.room|length > 40 %}…{% endif %}</code></td>
+      <td><code>{{ u.notify }}</code></td>
+      <td>{{ "да" if u.dnd else "нет" }}</td>
+      <td>
+        <a class="btn btn-ghost" href="/users/{{ u.id }}/edit">Изменить</a>
+        <form method="post" action="/users/{{ u.id }}/delete" style="display:inline;" hx-confirm="Удалить пользователя?">
+          <button type="submit" class="btn btn-danger">Удалить</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="muted">Нет записей</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
