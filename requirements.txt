@@ -6,3 +6,13 @@ matrix-nio>=0.25.0          # Matrix API — отправка сообщений
 python-redmine>=2.5.0       # Redmine API — получение задач и журналов
 python-dotenv>=1.0.0        # Загрузка переменных из .env файла
 APScheduler>=3.10.0         # Планировщик периодических задач
+
+# Админка и Postgres (конфиг в БД; state пока в JSON)
+sqlalchemy[asyncio]>=2.0.36
+asyncpg>=0.30.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+jinja2>=3.1.4
+python-multipart>=0.0.17
+alembic>=1.14.0
+psycopg[binary]>=3.2.0      # sync Alembic миграции

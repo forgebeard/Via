@@ -5,8 +5,7 @@
 #   - единая БД для будущей админки, пользователей, миграции state с файлов;
 #   - переменная DATABASE_URL уже прокидывается в контейнер бота.
 #
-# Бот на текущем коде PostgreSQL не использует — сервис postgres поднимается
-# заранее, чтобы не менять compose при появлении первого SQL-запроса.
+# Бот при USE_DB_CONFIG=1 и сервис admin читают конфиг из Postgres.
 #
 # Запуск (из корня репозитория, после копирования и заполнения .env):
 #   docker compose up --build -d
@@ -53,9 +52,9 @@ services:
     env_file:
       - .env
     environment:
-      # Строка подключения для будущего кода (asyncpg/SQLAlchemy и т.д.).
-      # Пароль и имя БД должны совпадать с сервисом postgres выше.
       DATABASE_URL: postgresql://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-redmine_matrix}
+      # USE_DB_CONFIG=1 — USERS и маршруты из БД (см. README, сервис admin).
+      USE_DB_CONFIG: ${USE_DB_CONFIG:-0}
     volumes:
       # State JSON (см. bot.py: data_dir) — переживает обновления образа.
       - ./data:/app/data
@@ -69,6 +68,32 @@ services:
       timeout: 15s
       retries: 3
       start_period: 45s
+
+  # ---------------------------------------------------------------------------
+  # Админка (FastAPI): таблицы bot_users, маршруты; миграции Alembic при старте.
+  # ---------------------------------------------------------------------------
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-redmine_matrix}
+    command:
+      [
+        "sh",
+        "-c",
+        "alembic upgrade head && exec uvicorn admin_main:app --host 0.0.0.0 --port 8080",
+      ]
+    ports:
+      - "${ADMIN_PORT:-8080}:8080"
+    working_dir: /app
+    user: bot
 
 volumes:
   postgres_data:

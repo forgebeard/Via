@@ -49,7 +49,11 @@ COPY --from=builder /opt/venv /opt/venv
 
 # Код приложения: корневой bot.py и пакет src/ (импорты matrix_send, utils и т.д.).
 COPY --chown=bot:bot bot.py .
+COPY --chown=bot:bot admin_main.py .
 COPY --chown=bot:bot src/ ./src/
+COPY --chown=bot:bot templates/ ./templates/
+COPY --chown=bot:bot alembic.ini .
+COPY --chown=bot:bot alembic/ ./alembic/
 
 # /app должен принадлежать bot: иначе не создать data/bot.log на томе при первом запуске
 # и нет прав на запись в каталог приложения.

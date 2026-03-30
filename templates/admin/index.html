@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Обзор{% endblock %}
+{% block content %}
+<h1>Обзор</h1>
+<p class="muted">Конфигурация хранится в PostgreSQL. После изменений перезапустите контейнер <code>bot</code>, если включён <code>USE_DB_CONFIG=1</code>.</p>
+<div class="card" style="margin-top:1rem;">
+  <ul style="margin:0; padding-left:1.25rem;">
+    <li>Пользователи: <strong>{{ users_count }}</strong></li>
+    <li>Маршруты по статусу: <strong>{{ status_routes_count }}</strong></li>
+    <li>Маршруты по версии: <strong>{{ version_routes_count }}</strong></li>
+  </ul>
+  <p style="margin-top:1rem;"><a class="btn btn-primary" href="/users">Управление пользователями</a></p>
+</div>
+{% endblock %}

@@ -25,5 +25,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Docker build
         run: docker build -t matrix-bot-ci .
-      - name: Import smoke test
-        run: docker run --rm matrix-bot-ci python -c "import bot; print('ok')"
+      - name: Import smoke test (bot + admin)
+        run: |
+          docker run --rm matrix-bot-ci python -c "import bot; print('bot ok')"
+          docker run --rm matrix-bot-ci python -c "import admin_main; print('admin ok')"

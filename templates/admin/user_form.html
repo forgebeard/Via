@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<h1>{{ title }}</h1>
+<form method="post" action="{% if u %}/users/{{ u.id }}{% else %}/users{% endif %}">
+  <label for="redmine_id">Redmine user ID</label>
+  <input type="number" id="redmine_id" name="redmine_id" required
+    value="{{ u.redmine_id if u else '' }}"/>
+  <label for="room">Matrix room ID</label>
+  <input type="text" id="room" name="room" required
+    value="{{ u.room if u else '' }}" placeholder="!xxx:server"/>
+  <label for="notify_json">notify (JSON-массив)</label>
+  <textarea id="notify_json" name="notify_json" rows="3">{{ notify_json }}</textarea>
+  <label for="work_hours">work_hours (опционально)</label>
+  <input type="text" id="work_hours" name="work_hours"
+    value="{{ u.work_hours if u and u.work_hours else '' }}" placeholder="09:00-18:00"/>
+  <label for="work_days_json">work_days (JSON-массив дней 0=Пн…6=Вс, опционально)</label>
+  <textarea id="work_days_json" name="work_days_json" rows="2"
+    placeholder='[0,1,2,3,4]'>{% if u and u.work_days is not none %}{{ u.work_days }}{% endif %}</textarea>
+  <label style="display:flex; align-items:center; gap:0.5rem; margin-top:1rem;">
+    <input type="checkbox" name="dnd" value="on" {% if u and u.dnd %}checked{% endif %}/>
+    DND (не беспокоить)
+  </label>
+  <p style="margin-top:1rem;">
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+    <a class="btn btn-ghost" href="/users">Отмена</a>
+  </p>
+</form>
+{% endblock %}

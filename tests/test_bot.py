@@ -36,6 +36,14 @@ import bot
 import matrix_send
 from tests.conftest import MockIssue, MockJournal
 
+# can_notify: круглосуточно и все дни недели — тесты не зависят от времени CI
+USER_CFG_FOR_SEND = {
+    "redmine_id": 1,
+    "room": "!room:server",
+    "notify": ["all"],
+    "work_hours": "00:00-23:59",
+    "work_days": [0, 1, 2, 3, 4, 5, 6],
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 1. УТИЛИТЫ
@@ -669,14 +677,21 @@ class TestSendSafe:
         client.room_send = AsyncMock(side_effect=Exception("Network error"))
         with patch("matrix_send.asyncio.sleep", new_callable=AsyncMock):
             # Не должен кинуть исключение (несколько попыток room_send)
-            await bot.send_safe(client, simple_issue, "!room:server", "new")
+            await bot.send_safe(client, simple_issue, USER_CFG_FOR_SEND, "!room:server", "new")
         assert client.room_send.call_count == matrix_send.MAX_RETRIES
 
     @pytest.mark.asyncio
     async def test_send_safe_success(self, mock_matrix_client, simple_issue):
         """send_safe при успехе — просто работает."""
-        await bot.send_safe(mock_matrix_client, simple_issue, "!room:server", "new")
+        await bot.send_safe(mock_matrix_client, simple_issue, USER_CFG_FOR_SEND, "!room:server", "new")
         mock_matrix_client.room_send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_safe_skipped_when_dnd(self, mock_matrix_client, simple_issue):
+        """При DND сообщение не отправляется."""
+        cfg = {**USER_CFG_FOR_SEND, "dnd": True}
+        await bot.send_safe(mock_matrix_client, simple_issue, cfg, "!room:server", "new")
+        mock_matrix_client.room_send.assert_not_called()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
