@@ -7,7 +7,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from html import escape as html_escape
 import os
 import sys
 from pathlib import Path
@@ -28,6 +30,9 @@ from database.load_config import row_counts
 from database.models import BotUser, StatusRoomRoute, VersionRoomRoute
 from database.session import get_session
 
+from redminelib import Redmine
+from redminelib.exceptions import BaseRedmineError
+
 _templates_dir = str(_ROOT / "templates" / "admin")
 # В некоторых наборах версий Jinja2/Starlette кэш шаблонов может приводить к TypeError
 # (unhashable type: 'dict'). Отключаем кэш, чтобы /login работал стабильно.
@@ -43,6 +48,16 @@ app = FastAPI(title="Redmine→Matrix admin", version="0.1.0")
 
 def _admin_token() -> str:
     return (os.getenv("ADMIN_TOKEN") or "").strip()
+
+
+REDMINE_URL = (os.getenv("REDMINE_URL") or "").strip()
+REDMINE_API_KEY = (os.getenv("REDMINE_API_KEY") or "").strip()
+
+
+def _redmine_client() -> Redmine | None:
+    if not REDMINE_URL or not REDMINE_API_KEY:
+        return None
+    return Redmine(REDMINE_URL, key=REDMINE_API_KEY)
 
 
 class AdminAuthMiddleware(BaseHTTPMiddleware):
@@ -256,6 +271,63 @@ async def users_delete(
     if row:
         await session.delete(row)
     return RedirectResponse("/users", status_code=303)
+
+
+# --- Redmine: поиск users по имени/логину ---
+
+
+@app.get("/redmine/users/search", response_class=HTMLResponse)
+async def redmine_users_search(q: str = "", limit: int = 20):
+    """
+    Возвращает HTML-параметры <option> для автозаполнения редмине_id.
+
+    Важно: endpoint может быть использован даже без доступной Redmine-конфигурации —
+    тогда просто вернёт пустой ответ.
+    """
+    q = (q or "").strip()
+    try:
+        limit_i = int(limit)
+    except ValueError:
+        limit_i = 20
+    limit_i = max(1, min(limit_i, 50))
+
+    if not q or not _redmine_client():
+        return HTMLResponse("")
+
+    redmine = _redmine_client()
+
+    def _do_search() -> list[dict]:
+        # python-redmine: redmine.user.filter(...params...) прокидывает фильтры в REST
+        # (для Redmine ожидается параметр `name` для поиска по логину/имени).
+        users = []
+        try:
+            res = redmine.user.filter(name=q, limit=limit_i)
+            users = list(res)
+        except BaseRedmineError:
+            users = []
+        except Exception:
+            users = []
+        return users
+
+    users = await asyncio.to_thread(_do_search)
+
+    opts: list[str] = []
+    for u in users:
+        uid = getattr(u, "id", None)
+        if uid is None:
+            continue
+        firstname = getattr(u, "firstname", "") or ""
+        lastname = getattr(u, "lastname", "") or ""
+        login = getattr(u, "login", "") or ""
+        label = " ".join([s for s in (firstname, lastname) if s]).strip()
+        if not label:
+            label = login or str(uid)
+        # value должен быть числом redmine_id
+        opts.append(
+            f'<option value="{int(uid)}">{html_escape(label)}'
+            f'{(" (" + html_escape(login) + ")") if login else ""}</option>'
+        )
+    return HTMLResponse("".join(opts))
 
 
 # --- Маршруты по статусу ---

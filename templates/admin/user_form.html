@@ -6,6 +6,35 @@
   <label for="redmine_id">Redmine user ID</label>
   <input type="number" id="redmine_id" name="redmine_id" required
     value="{{ u.redmine_id if u else '' }}"/>
+
+  <label for="redmine_search_q">Поиск в Redmine (имя/логин)</label>
+  <input
+    type="text"
+    id="redmine_search_q"
+    name="q"
+    placeholder="Начните ввод…"
+    hx-get="/redmine/users/search"
+    hx-trigger="keyup changed delay:400ms"
+    hx-target="#redmine_search_select"
+    hx-swap="innerHTML"
+    autocomplete="off"
+  />
+  <select id="redmine_search_select" size="6">
+    <option value="">Введите запрос</option>
+  </select>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      const sel = document.getElementById('redmine_search_select');
+      const inp = document.getElementById('redmine_id');
+      if (!sel || !inp) return;
+      sel.addEventListener('change', function () {
+        const v = sel.value;
+        if (v) inp.value = v;
+      });
+    });
+  </script>
+
   <label for="room">Matrix room ID</label>
   <input type="text" id="room" name="room" required
     value="{{ u.room if u else '' }}" placeholder="!xxx:server"/>
