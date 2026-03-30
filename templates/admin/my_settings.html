@@ -8,6 +8,7 @@
     Редактируйте расписание DND и правила уведомлений для вашей Redmine-учётки.
   </p>
   <form method="post" action="/me/settings">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
     <label for="room">Комната Matrix</label>
     <input type="text" id="room" name="room" readonly value="{{ room or '' }}" {% if not room %}placeholder="Не привязана"{% endif %} />
 

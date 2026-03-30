@@ -2,7 +2,7 @@
 Веб-админка: пользователи бота и маршруты Matrix (Postgres).
 
 Запуск: uvicorn admin_main:app --host 0.0.0.0 --port 8080
-Требуется DATABASE_URL (доступ к UI — через email magic-link).
+Требуется DATABASE_URL (доступ к UI — через email/password).
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import os
 import sys
 import secrets
 import uuid
+from collections import defaultdict, deque
 from pathlib import Path
 from typing import Annotated
 from datetime import datetime, timedelta, timezone
@@ -34,15 +35,27 @@ from nio import AsyncClient
 
 from database.load_config import row_counts
 from database.models import (
-    BotMagicToken,
+    AppSecret,
     BotSession,
     BotAppUser,
     BotUser,
+    PasswordResetToken,
     MatrixRoomBinding,
     StatusRoomRoute,
     VersionRoomRoute,
 )
 from database.session import get_session, get_session_factory
+from security import (
+    SecurityError,
+    decrypt_secret,
+    encrypt_secret,
+    hash_password,
+    load_master_key,
+    make_reset_token,
+    token_hash,
+    validate_password_policy,
+    verify_password,
+)
 
 from redminelib import Redmine
 from redminelib.exceptions import BaseRedmineError
@@ -62,10 +75,16 @@ templates = Jinja2Templates(env=_jinja_env)
 app = FastAPI(title="Matrix bot control panel", version="0.1.0")
 
 SESSION_COOKIE_NAME = os.getenv("ADMIN_SESSION_COOKIE", "admin_session")
+CSRF_COOKIE_NAME = os.getenv("ADMIN_CSRF_COOKIE", "admin_csrf")
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0").strip().lower() in ("1", "true", "yes", "on")
+SETUP_PATH = "/setup"
 
 AUTH_TOKEN_SALT = os.getenv("AUTH_TOKEN_SALT", "dev-token-salt")
-MAGIC_TOKEN_TTL_SECONDS = int(os.getenv("MAGIC_TOKEN_TTL_SECONDS", "900"))
 SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "86400"))
+RESET_TOKEN_TTL_SECONDS = int(os.getenv("RESET_TOKEN_TTL_SECONDS", "1800"))
+RESET_COOLDOWN_SECONDS = int(os.getenv("RESET_COOLDOWN_SECONDS", "90"))
+
+APP_MASTER_KEY_FILE = os.getenv("APP_MASTER_KEY_FILE", "/run/secrets/app_master_key")
 
 _ADMIN_EMAILS = {
     e.strip().lower()
@@ -84,18 +103,84 @@ def _token_hash(value: str) -> str:
     return hashlib.sha256((value + AUTH_TOKEN_SALT).encode("utf-8")).hexdigest()
 
 
+def _generic_login_error() -> str:
+    return "Неверный email или пароль"
+
+
+def _client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for", "").strip()
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _ensure_csrf(request: Request) -> tuple[str, bool]:
+    token = request.cookies.get(CSRF_COOKIE_NAME)
+    if token:
+        return token, False
+    return secrets.token_urlsafe(24), True
+
+
+def _verify_csrf(request: Request, form_token: str) -> None:
+    cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
+    if not cookie_token or not form_token or form_token != cookie_token:
+        raise HTTPException(status_code=400, detail="Некорректный CSRF токен")
+
+
+class _SimpleRateLimiter:
+    """In-memory rate limiter (per process)."""
+
+    def __init__(self):
+        self._buckets: dict[str, deque[float]] = defaultdict(deque)
+
+    def hit(self, key: str, limit: int, window_seconds: int) -> bool:
+        now = datetime.now().timestamp()
+        q = self._buckets[key]
+        while q and now - q[0] > window_seconds:
+            q.popleft()
+        if len(q) >= limit:
+            return False
+        q.append(now)
+        return True
+
+
+_rate_limiter = _SimpleRateLimiter()
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     """
-    Auth для админки через DB-сессии, которые выдаются после email magic-link.
+    Auth для админки через DB-сессии после login по email/password.
     """
 
     async def dispatch(self, request: Request, call_next):
         p = request.url.path
-        if p in ("/login", "/magic", "/health") or p.startswith("/docs") or p in (
+        if p in (
+            "/login",
+            "/forgot-password",
+            "/reset-password",
+            "/health",
+            "/health/live",
+            "/health/ready",
+            SETUP_PATH,
+        ) or p.startswith("/docs") or p in (
             "/openapi.json",
             "/redoc",
         ):
             return await call_next(request)
+
+        try:
+            factory = get_session_factory()
+            async with factory() as session:
+                any_admin = await session.execute(
+                    select(BotAppUser.id).where(BotAppUser.role == "admin").limit(1)
+                )
+                has_admin = any_admin.scalar_one_or_none() is not None
+        except Exception:
+            # Если БД недоступна/не настроена, не падаем на middleware для публичных редиректов.
+            return RedirectResponse("/login", status_code=303)
+
+        if not has_admin and p != SETUP_PATH:
+            return RedirectResponse(SETUP_PATH, status_code=303)
 
         token_raw = request.cookies.get(SESSION_COOKIE_NAME, "")
         if not token_raw:
@@ -126,6 +211,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 user = u.scalar_one_or_none()
                 if not user:
                     return RedirectResponse("/login", status_code=303)
+                if sess.session_version != getattr(user, "session_version", 1):
+                    return RedirectResponse("/login", status_code=303)
 
                 request.state.current_user = user
         except Exception:
@@ -147,138 +234,300 @@ def _redmine_client() -> Redmine | None:
 app.add_middleware(AuthMiddleware)
 
 
+@app.on_event("startup")
+async def startup_checks():
+    # Fail-fast: без master key нельзя безопасно работать с encrypted secrets.
+    try:
+        load_master_key()
+    except SecurityError as e:
+        raise RuntimeError(f"startup failed: {e}") from e
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
 
 
+@app.get("/health/live")
+async def health_live():
+    return {"status": "live"}
+
+
+@app.get("/health/ready")
+async def health_ready(session: AsyncSession = Depends(get_session)):
+    try:
+        await session.execute(select(BotAppUser.id).limit(1))
+        load_master_key()
+    except SecurityError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=503, detail="service not ready")
+    return {"status": "ready"}
+
+
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    return templates.TemplateResponse(
+    csrf_token, set_cookie = _ensure_csrf(request)
+    resp = templates.TemplateResponse(
         request,
         "login.html",
-        {"error": None},
+        {"error": None, "csrf_token": csrf_token},
     )
+    if set_cookie:
+        resp.set_cookie(
+            CSRF_COOKIE_NAME,
+            csrf_token,
+            httponly=True,
+            secure=COOKIE_SECURE,
+            samesite="lax",
+        )
+    return resp
+
+
+@app.get(SETUP_PATH, response_class=HTMLResponse)
+async def setup_page(request: Request, session: AsyncSession = Depends(get_session)):
+    any_admin = await session.execute(select(BotAppUser.id).where(BotAppUser.role == "admin").limit(1))
+    if any_admin.scalar_one_or_none() is not None:
+        return RedirectResponse("/login", status_code=303)
+    csrf_token, set_cookie = _ensure_csrf(request)
+    resp = templates.TemplateResponse(
+        request,
+        "setup.html",
+        {"error": None, "csrf_token": csrf_token},
+    )
+    if set_cookie:
+        resp.set_cookie(
+            CSRF_COOKIE_NAME,
+            csrf_token,
+            httponly=True,
+            secure=COOKIE_SECURE,
+            samesite="lax",
+        )
+    return resp
+
+
+@app.post(SETUP_PATH)
+async def setup_post(
+    request: Request,
+    email: Annotated[str, Form()],
+    password: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()],
+    session: AsyncSession = Depends(get_session),
+):
+    _verify_csrf(request, csrf_token)
+    email = (email or "").strip().lower()
+    if not email or "@" not in email:
+        return templates.TemplateResponse(
+            request,
+            "setup.html",
+            {"error": "Введите корректный email", "csrf_token": csrf_token},
+            status_code=400,
+        )
+    ok, reason = validate_password_policy(password, email=email)
+    if not ok:
+        return templates.TemplateResponse(
+            request,
+            "setup.html",
+            {"error": reason, "csrf_token": csrf_token},
+            status_code=400,
+        )
+    # Protect from race: lock admin rows.
+    await session.execute(select(BotAppUser.id).where(BotAppUser.role == "admin").with_for_update())
+    any_admin = await session.execute(select(BotAppUser.id).where(BotAppUser.role == "admin").limit(1))
+    if any_admin.scalar_one_or_none() is not None:
+        return RedirectResponse("/login", status_code=303)
+    user = BotAppUser(
+        id=uuid.uuid4(),
+        email=email,
+        role="admin",
+        verified_at=_now_utc(),
+        password_hash=hash_password(password),
+        session_version=1,
+    )
+    session.add(user)
+    return RedirectResponse("/login", status_code=303)
 
 
 @app.post("/login")
 async def login_post(
     request: Request,
     email: Annotated[str, Form()],
+    password: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()],
     session: AsyncSession = Depends(get_session),
 ):
+    _verify_csrf(request, csrf_token)
+    ip = _client_ip(request)
+    if not _rate_limiter.hit(f"login:ip:{ip}", limit=5, window_seconds=60):
+        raise HTTPException(429, "Слишком много попыток, попробуйте позже")
+
     email = (email or "").strip().lower()
-    if not email or "@" not in email:
+    if not email or not password:
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"error": "Введите email"},
-            status_code=400,
-        )
-
-    token = secrets.token_urlsafe(32)
-    token_hash = _token_hash(token)
-    expires_at = _now_utc() + timedelta(seconds=MAGIC_TOKEN_TTL_SECONDS)
-
-    # Magic token одноразовый (used_at будет выставлен в /magic).
-    mt = BotMagicToken(
-        id=uuid.uuid4(),
-        email=email,
-        token_hash=token_hash,
-        expires_at=expires_at,
-        used_at=None,
-    )
-    session.add(mt)
-    await session.flush()
-
-    # SMTP в MVP не форсируем: если нет SMTP-конфига — сразу редиректим на /magic.
-    resp = RedirectResponse(f"/magic?token={token}", status_code=303)
-    return resp
-
-
-@app.get("/magic")
-async def magic_get(
-    request: Request,
-    token: str,
-    session: AsyncSession = Depends(get_session),
-):
-    token = (token or "").strip()
-    if not token:
-        return RedirectResponse("/login", status_code=303)
-
-    token_hash = _token_hash(token)
-    now = _now_utc()
-
-    r = await session.execute(
-        select(BotMagicToken).where(
-            BotMagicToken.token_hash == token_hash,
-            BotMagicToken.used_at.is_(None),
-            BotMagicToken.expires_at > now,
-        )
-    )
-    mt = r.scalar_one_or_none()
-    if not mt:
-        return templates.TemplateResponse(
-            request,
-            "login.html",
-            {"error": "Magic-link истёк или недействителен"},
+            {"error": _generic_login_error(), "csrf_token": csrf_token},
             status_code=401,
         )
-
-    mt.used_at = now
-
-    # Создаём app-user (1-й verified станет admin).
-    rr = await session.execute(select(BotAppUser).where(BotAppUser.email == mt.email))
-    existing_user = rr.scalar_one_or_none()
-
-    if existing_user is None:
-        # Проверяем: есть ли уже хотя бы один verified user.
-        any_verified_q = await session.execute(
-            select(BotAppUser).where(BotAppUser.verified_at.is_not(None)).limit(1)
+    r = await session.execute(select(BotAppUser).where(BotAppUser.email == email))
+    user = r.scalar_one_or_none()
+    if not user or not user.password_hash or not verify_password(user.password_hash, password):
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"error": _generic_login_error(), "csrf_token": csrf_token},
+            status_code=401,
         )
-        has_any = any_verified_q.scalar_one_or_none() is not None
-        # Если задан allow-list ADMIN_EMAILS — роль admin выдаём только по ней.
-        # Если allow-list не задана:
-        #   - ADMIN_BOOTSTRAP_FIRST_ADMIN=1 разрешает dev/bootstrap: первый verified → admin
-        #   - иначе все создаются как user (чтобы "левый email" не получил доступ)
-        if _ADMIN_EMAILS:
-            role = "admin" if mt.email.lower() in _ADMIN_EMAILS else "user"
-        else:
-            if ADMIN_BOOTSTRAP_FIRST_ADMIN and not has_any:
-                role = "admin"
-            else:
-                role = "user"
-
-        user = BotAppUser(
-            id=uuid.uuid4(),
-            email=mt.email,
-            role=role,
-            verified_at=now,
-            redmine_id=None,
-        )
-        session.add(user)
-        await session.flush()
-    else:
-        user = existing_user
-        user.verified_at = user.verified_at or now
-
+    now = _now_utc()
     st = BotSession(
         session_token=uuid.uuid4(),
         user_id=user.id,
         expires_at=now + timedelta(seconds=SESSION_TTL_SECONDS),
+        session_version=user.session_version,
     )
     session.add(st)
     await session.flush()
-
     resp = RedirectResponse("/", status_code=303)
     resp.set_cookie(
         SESSION_COOKIE_NAME,
         str(st.session_token),
         httponly=True,
+        secure=COOKIE_SECURE,
         samesite="lax",
         max_age=SESSION_TTL_SECONDS,
+        path="/",
     )
     return resp
+
+
+@app.get("/forgot-password", response_class=HTMLResponse)
+async def forgot_password_page(request: Request):
+    csrf_token, set_cookie = _ensure_csrf(request)
+    resp = templates.TemplateResponse(
+        request,
+        "forgot_password.html",
+        {"error": None, "ok": None, "csrf_token": csrf_token},
+    )
+    if set_cookie:
+        resp.set_cookie(CSRF_COOKIE_NAME, csrf_token, httponly=True, secure=COOKIE_SECURE, samesite="lax")
+    return resp
+
+
+@app.post("/forgot-password", response_class=HTMLResponse)
+async def forgot_password_post(
+    request: Request,
+    email: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()],
+    session: AsyncSession = Depends(get_session),
+):
+    _verify_csrf(request, csrf_token)
+    email = (email or "").strip().lower()
+    ip = _client_ip(request)
+    if not _rate_limiter.hit(f"forgot:ip:{ip}", limit=5, window_seconds=60):
+        raise HTTPException(429, "Слишком много попыток, попробуйте позже")
+    if not _rate_limiter.hit(f"forgot:email:{email}", limit=3, window_seconds=3600):
+        return templates.TemplateResponse(
+            request,
+            "forgot_password.html",
+            {"error": "Слишком много запросов сброса, попробуйте позже", "ok": None, "csrf_token": csrf_token},
+            status_code=429,
+        )
+    r = await session.execute(select(BotAppUser).where(BotAppUser.email == email))
+    user = r.scalar_one_or_none()
+    # Response must be generic.
+    if user:
+        token = make_reset_token()
+        row = PasswordResetToken(
+            id=uuid.uuid4(),
+            user_id=user.id,
+            token_hash=token_hash(token, AUTH_TOKEN_SALT),
+            requested_email=email,
+            expires_at=_now_utc() + timedelta(seconds=RESET_TOKEN_TTL_SECONDS),
+            used_at=None,
+        )
+        session.add(row)
+        await session.flush()
+        # MVP/dev: show token directly in UI. Production should send email.
+        return templates.TemplateResponse(
+            request,
+            "forgot_password.html",
+            {
+                "error": None,
+                "ok": "Если email существует, ссылка на сброс отправлена.",
+                "dev_token": token,
+                "csrf_token": csrf_token,
+            },
+        )
+    return templates.TemplateResponse(
+        request,
+        "forgot_password.html",
+        {"error": None, "ok": "Если email существует, ссылка на сброс отправлена.", "csrf_token": csrf_token},
+    )
+
+
+@app.get("/reset-password", response_class=HTMLResponse)
+async def reset_password_page(request: Request, token: str = ""):
+    csrf_token, set_cookie = _ensure_csrf(request)
+    resp = templates.TemplateResponse(
+        request,
+        "reset_password.html",
+        {"error": None, "token": token, "csrf_token": csrf_token},
+    )
+    if set_cookie:
+        resp.set_cookie(CSRF_COOKIE_NAME, csrf_token, httponly=True, secure=COOKIE_SECURE, samesite="lax")
+    return resp
+
+
+@app.post("/reset-password")
+async def reset_password_post(
+    request: Request,
+    token: Annotated[str, Form()],
+    password: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()],
+    session: AsyncSession = Depends(get_session),
+):
+    _verify_csrf(request, csrf_token)
+    token = (token or "").strip()
+    if not token or not password:
+        return templates.TemplateResponse(
+            request,
+            "reset_password.html",
+            {"error": "Неверный или просроченный токен", "token": token, "csrf_token": csrf_token},
+            status_code=401,
+        )
+    now = _now_utc()
+    r = await session.execute(
+        select(PasswordResetToken).where(
+            PasswordResetToken.token_hash == token_hash(token, AUTH_TOKEN_SALT),
+            PasswordResetToken.used_at.is_(None),
+            PasswordResetToken.expires_at > now,
+        )
+    )
+    rt = r.scalar_one_or_none()
+    if not rt:
+        return templates.TemplateResponse(
+            request,
+            "reset_password.html",
+            {"error": "Неверный или просроченный токен", "token": token, "csrf_token": csrf_token},
+            status_code=401,
+        )
+    u = await session.execute(select(BotAppUser).where(BotAppUser.id == rt.user_id))
+    user = u.scalar_one_or_none()
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    ok, reason = validate_password_policy(password, email=user.email)
+    if not ok:
+        return templates.TemplateResponse(
+            request,
+            "reset_password.html",
+            {"error": reason, "token": token, "csrf_token": csrf_token},
+            status_code=400,
+        )
+    user.password_hash = hash_password(password)
+    user.session_version = (user.session_version or 1) + 1
+    rt.used_at = now
+    await session.execute(delete(BotSession).where(BotSession.user_id == user.id))
+    return RedirectResponse("/login", status_code=303)
 
 
 @app.get("/logout")
@@ -294,7 +543,7 @@ async def logout(request: Request, session: AsyncSession = Depends(get_session))
             pass
 
     resp = RedirectResponse("/login", status_code=303)
-    resp.delete_cookie(SESSION_COOKIE_NAME)
+    resp.delete_cookie(SESSION_COOKIE_NAME, path="/")
     return resp
 
 
@@ -316,6 +565,57 @@ async def index(
             "version_routes_count": nv,
         },
     )
+
+
+@app.get("/secrets", response_class=HTMLResponse)
+async def secrets_page(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    user = getattr(request.state, "current_user", None)
+    if not user or getattr(user, "role", "") != "admin":
+        raise HTTPException(403, "Только admin")
+    rows = await session.execute(select(AppSecret).order_by(AppSecret.name))
+    items = list(rows.scalars().all())
+    csrf_token, set_cookie = _ensure_csrf(request)
+    resp = templates.TemplateResponse(
+        request,
+        "secrets.html",
+        {"items": items, "error": None, "csrf_token": csrf_token},
+    )
+    if set_cookie:
+        resp.set_cookie(CSRF_COOKIE_NAME, csrf_token, httponly=True, secure=COOKIE_SECURE, samesite="lax")
+    return resp
+
+
+@app.post("/secrets")
+async def secrets_save(
+    request: Request,
+    name: Annotated[str, Form()],
+    value: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()],
+    session: AsyncSession = Depends(get_session),
+):
+    _verify_csrf(request, csrf_token)
+    user = getattr(request.state, "current_user", None)
+    if not user or getattr(user, "role", "") != "admin":
+        raise HTTPException(403, "Только admin")
+    name = (name or "").strip()
+    value = (value or "").strip()
+    if not name or not value:
+        raise HTTPException(400, "Имя и значение обязательны")
+    key = load_master_key()
+    enc = encrypt_secret(value, key=key)
+    r = await session.execute(select(AppSecret).where(AppSecret.name == name))
+    row = r.scalar_one_or_none()
+    if row is None:
+        row = AppSecret(name=name, ciphertext=enc.ciphertext, nonce=enc.nonce, key_version=enc.key_version)
+        session.add(row)
+    else:
+        row.ciphertext = enc.ciphertext
+        row.nonce = enc.nonce
+        row.key_version = enc.key_version
+    return RedirectResponse("/secrets", status_code=303)
 
 
 # --- Пользователи ---
@@ -809,8 +1109,9 @@ async def me_settings_get(
         return RedirectResponse("/login", status_code=303)
 
     redmine_id = getattr(user, "redmine_id", None)
+    csrf_token, set_cookie = _ensure_csrf(request)
     if redmine_id is None:
-        return templates.TemplateResponse(
+        resp = templates.TemplateResponse(
             request,
             "my_settings.html",
             {
@@ -820,16 +1121,20 @@ async def me_settings_get(
                 "work_days_json": "",
                 "dnd": False,
                 "error": "Сначала привяжите комнату через Matrix binding.",
+                "csrf_token": csrf_token,
             },
             status_code=400,
         )
+        if set_cookie:
+            resp.set_cookie(CSRF_COOKIE_NAME, csrf_token, httponly=True, secure=COOKIE_SECURE, samesite="lax")
+        return resp
 
     r = await session.execute(select(BotUser).where(BotUser.redmine_id == redmine_id))
     bot_user = r.scalar_one_or_none()
     if not bot_user:
         raise HTTPException(404, "BotUser не найден")
 
-    return templates.TemplateResponse(
+    resp = templates.TemplateResponse(
         request,
         "my_settings.html",
         {
@@ -843,8 +1148,12 @@ async def me_settings_get(
             else "",
             "dnd": bool(bot_user.dnd),
             "error": None,
+            "csrf_token": csrf_token,
         },
     )
+    if set_cookie:
+        resp.set_cookie(CSRF_COOKIE_NAME, csrf_token, httponly=True, secure=COOKIE_SECURE, samesite="lax")
+    return resp
 
 
 @app.post("/me/settings")
@@ -854,8 +1163,10 @@ async def me_settings_post(
     work_hours: Annotated[str, Form()] = "",
     work_days_json: Annotated[str, Form()] = "",
     dnd: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
     session: AsyncSession = Depends(get_session),
 ):
+    _verify_csrf(request, csrf_token)
     user = getattr(request.state, "current_user", None)
     if not user:
         return RedirectResponse("/login", status_code=303)

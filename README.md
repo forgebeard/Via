@@ -146,8 +146,11 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
+./scripts/generate_master_key.sh master_key.txt
 nano .env   # заполнить все переменные (см. раздел «Настройка .env»)
 ```
+
+`master_key.txt` монтируется в контейнер `admin` как `/run/secrets/app_master_key` и используется для AES-GCM шифрования секретов в БД.
 
 ### 3. Настройка пользователей и маршрутизации
 
@@ -185,7 +188,7 @@ python3 bot.py
 |--------|------------|
 | **bot** | Образ из `Dockerfile` (корневой `bot.py` + `src/`), том `./data` → `/app/data`, `.env` только для чтения; healthcheck: `python -c "import bot"` |
 | **postgres** | PostgreSQL 16, том `postgres_data`; `DATABASE_URL` в **bot** и **admin** |
-| **admin** | Веб-интерфейс (`admin_main.py`, FastAPI + HTMX): таблицы пользователей и маршрутов; при старте `alembic upgrade head`. Порт: **`ADMIN_PORT`** (по умолчанию 8080) |
+| **admin** | Веб-интерфейс (`admin_main.py`, FastAPI + HTMX): password auth, reset password, setup-first-run, CRUD секретов в зашифрованном виде; при старте `alembic upgrade head`. Порт: **`ADMIN_PORT`** (по умолчанию 8080) |
 
 ### Подготовка `.env`
 
@@ -223,11 +226,11 @@ docker compose down
 
 ### Админка и конфиг в БД
 
-1. После `docker compose up` откройте `http://<хост>:8080/login` (или порт из **`ADMIN_PORT`**) и введите email.
-2. На следующем шаге откройте magic-link (в dev/CI может быть редирект сразу на подтверждение).
-3. Заполните пользователей и при необходимости маршруты «статус → комната» и «версия → комната». Доступ к CRUD имеет admin-роль.
-4. Заполните пользователей и маршруты в admin UI, затем перезапустите сервис **`bot`** (бот читает конфиг при старте).
-5. Для дедупликации на нескольких инстансах используется lease по пользователю (`bot_user_leases`) и state в `bot_issue_state` — дополнительных флагов не требуется.
+1. После `docker compose up` откройте `http://<хост>:8080/setup` и создайте первого admin (только если admin ещё нет в БД).
+2. Вход в админку: `http://<хост>:8080/login` по `email + password`.
+3. Восстановление пароля: `http://<хост>:8080/forgot-password` → одноразовый reset token.
+4. Заполните пользователей, маршруты и секреты в админке; затем перезапустите сервис **`bot`** (бот читает конфиг при старте).
+5. Для дедупликации на нескольких инстансах используется lease по пользователю (`bot_user_leases`) и state в `bot_issue_state`.
 
 Миграции схемы БД выполняются при старте сервиса **admin**: `alembic upgrade head`.
 
@@ -240,7 +243,7 @@ docker compose up -d bot
 
 ### Права на каталог `data/`
 
-Том `./data` на хосте должен быть **доступен на запись** пользователю процесса в контейнере (по умолчанию uid **1000** / пользователь `bot` в образе). Если каталог создал root или другой uid, возможны `PermissionError` при записи state и лога — выставьте владельца, например: `sudo chown -R 1000:1000 data` (подставьте нужный uid), либо см. [user namespace](https://docs.docker.com/engine/security/userns-remap/) в документации Docker. При отказе записи в файл лога бот продолжит работу и писать только в stdout (`docker compose logs`).
+Том `./data` на хосте должен быть **доступен на запись** пользователю процесса в контейнере (по умолчанию uid **1000** / пользователь `bot` в образе). Если каталог создал root или другой uid, возможны `PermissionError` при записи лога — выставьте владельца, например: `sudo chown -R 1000:1000 data` (подставьте нужный uid), либо см. [user namespace](https://docs.docker.com/engine/security/userns-remap/) в документации Docker. При отказе записи в файл лога бот продолжит работу и писать только в stdout (`docker compose logs`).
 
 <!-- Убрано упоминание systemd: теперь только Docker Compose -->
 
@@ -280,6 +283,30 @@ REDMINE_API_KEY=your_redmine_api_key
 | `LOG_TO_FILE` | `1` | `0`, `false`, `no`, `off` — не открывать файл, только stdout (удобно вместе с `docker logs`). |
 | `LOG_PATH` | *(пусто)* | Файл лога: не задано → `data/bot.log`; иначе путь **от корня репозитория** или абсолютный. |
 | `CHECK_INTERVAL` | `90` | Интервал опроса Redmine в секундах (15–86400). Если цикл дольше интервала, в лог пишется предупреждение — для SLA «до нескольких минут» это нормально. |
+
+### Admin auth / security
+
+| Переменная | Назначение |
+|------------|------------|
+| `AUTH_TOKEN_SALT` | Соль для hash reset-токенов |
+| `SESSION_TTL_SECONDS` | Время жизни admin-сессии |
+| `RESET_TOKEN_TTL_SECONDS` | TTL токена сброса пароля |
+| `RESET_COOLDOWN_SECONDS` | Ограничение частоты reset-запросов |
+| `COOKIE_SECURE` | Secure-флаг cookie (`1` для HTTPS) |
+| `APP_MASTER_KEY_FILE` | Путь к master key (32 байта) |
+
+### Health endpoints
+
+- `GET /health/live` — процесс поднят.
+- `GET /health/ready` — доступны БД и master key.
+
+### Recovery
+
+Аварийный сброс пароля администратора:
+
+```bash
+python scripts/reset_admin_password.py --email admin@example.com --password 'NewStrongPassword123'
+```
 
 ### Расписание и DND (из Postgres)
 

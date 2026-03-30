@@ -1,10 +1,12 @@
 """PostgreSQL: модели и загрузка конфигурации бота (USERS, маршруты комнат)."""
 
 from .models import (
+    AppSecret,
     Base,
     BotAppUser,
     BotIssueState,
     BotMagicToken,
+    PasswordResetToken,
     BotUser,
     BotUserLease,
     BotSession,
@@ -23,5 +25,7 @@ __all__ = [
     "BotAppUser",
     "BotMagicToken",
     "BotSession",
+    "PasswordResetToken",
+    "AppSecret",
     "MatrixRoomBinding",
 ]

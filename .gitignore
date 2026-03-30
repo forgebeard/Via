@@ -1,5 +1,7 @@
 # Секреты
 .env
+master_key.txt
+*.key
 
 # Виртуальное окружение
 venv/

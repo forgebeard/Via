@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import admin_main
+os.environ.setdefault("APP_MASTER_KEY", "0123456789abcdef0123456789abcdef")
 
 
 def _db_ready() -> bool:
@@ -31,8 +32,20 @@ def test_matrix_bind_flow_dev_echo_updates_bot_user_room(client: TestClient):
     redmine_id = 123
     room_id = "!room123:example.com"
 
-    # Magic-link login (в MVP редиректит на /magic сразу).
-    client.post("/login", data={"email": email}, follow_redirects=True)
+    setup = client.get("/setup")
+    csrf = setup.cookies.get("admin_csrf")
+    client.post(
+        "/setup",
+        data={"email": email, "password": "StrongPassword123", "csrf_token": csrf},
+        follow_redirects=False,
+    )
+    login = client.get("/login")
+    csrf_login = login.cookies.get("admin_csrf")
+    client.post(
+        "/login",
+        data={"email": email, "password": "StrongPassword123", "csrf_token": csrf_login},
+        follow_redirects=True,
+    )
 
     start = client.post(
         "/matrix/bind/start",
