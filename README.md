@@ -14,7 +14,7 @@
 | PostgreSQL (Docker) | Сервис в **`docker-compose.yml`**; конфиг пользователей/маршрутов и **state** — в Postgres через **админку** |
 | `src/preferences.py` (DND / рабочие часы) | **`can_notify()`** вызывается из **`send_safe`** и для утреннего отчёта: поля в объекте пользователя в памяти (загружаются из Postgres); приоритет «Аварийный» пробивает ограничения |
 
-Разделы ниже про **`config.yaml`**, **91 тест** и пути вроде `data/` относятся к целевой/альтернативной схеме и постепенно приводятся к виду выше.
+Файл **`config.yaml`** в текущей схеме **не используется** (пользователи, маршруты и state — в Postgres). Каталог **`data/`** — логи и локальные артефакты; актуальное число тестов см. `pytest tests/ --collect-only` (порядка **200+**).
 
 ---
 
@@ -30,7 +30,7 @@
 | 6 | **Информация предоставлена** | Уведомление при переходе в этот статус |
 | 7 | **Маршрутизация** | Разные статусы / версии / команды → разные комнаты Matrix |
 | 8 | **Мультипользовательность** | Поддержка нескольких пользователей с индивидуальными настройками |
-| 9 | **Рабочие часы и DND** | Заложено в `src/preferences.py`; **подключение к `bot.py` — в планах** |
+| 9 | **Рабочие часы и DND** | `src/preferences.py`, **`can_notify()`** уже вызывается из `bot.py` при отправке и в утреннем отчёте |
 
 ---
 
@@ -55,9 +55,14 @@
 ```
 ┌──────────┐                     ┌─────────────┐
 │  bot     │ ─── DATABASE_URL ─► │ PostgreSQL  │
-│  (контейнер)                  │  (volume)   │    bot_issue_state + lease
-└──────────┘                     └─────────────┘
-       │ (только данные/логи)
+│(контейнер)│                     │  (volume)   │  bot_users, routes, bot_issue_state,
+└──────────┘                     │             │  bot_user_leases, сессии админки, …
+       │                           └──────▲──────┘
+       │ (данные/логи)                  │
+┌──────────┐                            │
+│  admin   │ ─── DATABASE_URL ──────────┘
+│(uvicorn) │   миграции Alembic при старте
+└──────────┘
 ```
 
 **Цикл работы:**
@@ -78,10 +83,10 @@
 | Redmine API | `python-redmine` | Получение задач, журналов, статусов |
 | Планировщик | `APScheduler` | Периодические проверки |
 | Конфигурация | `python-dotenv` | Секреты из `.env` |
-| Тестирование | `pytest` + `pytest-asyncio` | ~190+ тестов (`tests/`) |
+| Тестирование | `pytest` + `pytest-asyncio` | 200+ тестов в `tests/` (юнит/API + e2e Playwright в `tests/e2e/`) |
 | Прод-запуск | Docker Compose | Том `./data`, логи: `docker compose logs -f bot` |
 | Контейнеризация | Dockerfile + Compose | См. раздел «Docker / Production запуск» |
-| БД (резерв) | PostgreSQL 16 | В compose; приложение пока не использует |
+| БД | PostgreSQL 16 | Основное хранилище: конфиг бота, state дедупликации, пользователи и сессии **admin** |
 
 ---
 
@@ -90,8 +95,12 @@
 ```
 matrix_bot_firebeard/
 ├── bot.py                 # Точка входа: Redmine + Matrix + APScheduler
+├── admin_main.py          # Точка входа админки: FastAPI + HTMX (порт `ADMIN_PORT`, см. compose)
 ├── Dockerfile             # Многоступенчатая сборка образа бота (Python 3.11)
-├── docker-compose.yml     # Сервисы: bot + postgres + тома
+├── docker-compose.yml     # Сервисы: bot + admin + postgres + тома
+├── alembic/               # Миграции схемы Postgres
+├── templates/admin/       # Jinja2-шаблоны админки
+├── static/admin/          # CSS и статика (`/static/...`)
 ├── .dockerignore          # Исключения из контекста docker build
 ├── data/
 │   ├── bot.log            # Лог (ротация в коде)
@@ -126,6 +135,8 @@ matrix_bot_firebeard/
 | `commands.py` | Интерактивные команды бота | — |
 | `onboarding.py` | Регистрация новых пользователей | — |
 | `reports.py` | Генерация отчётов | — |
+| `security.py` | Argon2, AES-GCM для секретов, политика паролей | `test_security_crypto` |
+| `rate_limit.py` | Скользящее окно лимитов для auth-эндпоинтов админки | `test_rate_limit` |
 
 ---
 
@@ -309,6 +320,8 @@ REDMINE_API_KEY=your_redmine_api_key
 | `COOKIE_SECURE` | Secure-флаг cookie (`1` для HTTPS) |
 | `APP_MASTER_KEY_FILE` | Путь к master key (32 байта) |
 | `SHOW_DEV_TOKENS` | Показ dev reset-токена в UI (только dev/test) |
+
+Публичные формы (**`/login`**, первичный **`/setup`**, **`/forgot-password`**, **`POST /reset-password`**) ограничиваются по IP in-memory лимитером (`src/rate_limit.py`, один процесс = одна «корзина»). За несколькими репликами админки без sticky-сессий имеет смысл вынести лимиты на прокси (nginx) или Redis.
 
 ### SMTP reset
 
@@ -630,7 +643,7 @@ python3 bot.py 2>&1 | head -30
 1. Проверьте `MATRIX_ACCESS_TOKEN` — токен может быть просрочен
 2. Проверьте, что бот присоединён к комнатам Matrix (пригласите его)
 3. Проверьте `REDMINE_API_KEY` — ключ должен иметь доступ к задачам
-4. Проверьте Redmine user ID в `config.yaml` — ID в URL профиля
+4. Проверьте **Redmine user id** у записи пользователя в админке / в таблице `bot_users` — он должен совпадать с ID в URL профиля в Redmine
 5. Посмотрите лог: `tail -50 data/bot.log`
 
 ### Бот спамит старыми уведомлениями после перезапуска

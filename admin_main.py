@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import hashlib
 import json
 from html import escape as html_escape
@@ -18,7 +19,6 @@ import secrets
 import threading
 import time
 import uuid
-from collections import defaultdict, deque
 from pathlib import Path
 from typing import Annotated
 from datetime import datetime, timedelta, timezone
@@ -65,6 +65,7 @@ from security import (
 
 from matrix_send import room_send_with_retry
 from ops.docker_control import DockerControlError, control_service, get_service_status
+from rate_limit import SimpleRateLimiter
 
 _templates_dir = str(_ROOT / "templates" / "admin")
 # В некоторых наборах версий Jinja2/Starlette кэш шаблонов может приводить к TypeError
@@ -86,7 +87,22 @@ _jinja_env.globals["asset_version"] = _admin_asset_version
 _jinja_env.globals["bot_timezone"] = lambda: (os.getenv("BOT_TIMEZONE") or "Europe/Moscow")
 templates = Jinja2Templates(env=_jinja_env)
 
-app = FastAPI(title="Matrix bot control panel", version="0.1.0")
+
+@asynccontextmanager
+async def _admin_lifespan(_app: FastAPI):
+    # Fail-fast: без master key нельзя безопасно работать с encrypted secrets.
+    try:
+        load_master_key()
+    except SecurityError as e:
+        raise RuntimeError(f"startup failed: {e}") from e
+    yield
+
+
+app = FastAPI(
+    title="Matrix bot control panel",
+    version="0.1.0",
+    lifespan=_admin_lifespan,
+)
 
 _STATIC_ROOT = _ROOT / "static"
 if _STATIC_ROOT.is_dir():
@@ -239,24 +255,7 @@ async def _audit_op(
     )
 
 
-class _SimpleRateLimiter:
-    """In-memory rate limiter (per process)."""
-
-    def __init__(self):
-        self._buckets: dict[str, deque[float]] = defaultdict(deque)
-
-    def hit(self, key: str, limit: int, window_seconds: int) -> bool:
-        now = datetime.now().timestamp()
-        q = self._buckets[key]
-        while q and now - q[0] > window_seconds:
-            q.popleft()
-        if len(q) >= limit:
-            return False
-        q.append(now)
-        return True
-
-
-_rate_limiter = _SimpleRateLimiter()
+_rate_limiter = SimpleRateLimiter()
 logger = logging.getLogger("admin")
 
 
@@ -474,15 +473,6 @@ REDMINE_API_KEY = (os.getenv("REDMINE_API_KEY") or "").strip()
 app.add_middleware(AuthMiddleware)
 
 
-@app.on_event("startup")
-async def startup_checks():
-    # Fail-fast: без master key нельзя безопасно работать с encrypted secrets.
-    try:
-        load_master_key()
-    except SecurityError as e:
-        raise RuntimeError(f"startup failed: {e}") from e
-
-
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -583,6 +573,18 @@ async def setup_post(
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
+    ip = _client_ip(request)
+    if not _rate_limiter.hit(f"setup:ip:{ip}", limit=10, window_seconds=3600):
+        csrf_ok, _ = _ensure_csrf(request)
+        return templates.TemplateResponse(
+            request,
+            "setup.html",
+            {
+                "error": "Слишком много попыток с этого адреса, попробуйте позже",
+                "csrf_token": csrf_ok,
+            },
+            status_code=429,
+        )
     email = (email or "").strip().lower()
     if not email or "@" not in email:
         return templates.TemplateResponse(
@@ -852,6 +854,18 @@ async def reset_password_post(
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
+    ip = _client_ip(request)
+    if not _rate_limiter.hit(f"reset_pw:ip:{ip}", limit=20, window_seconds=900):
+        return templates.TemplateResponse(
+            request,
+            "reset_password.html",
+            {
+                "error": "Слишком много попыток с этого адреса, попробуйте позже",
+                "token": (token or "").strip(),
+                "csrf_token": csrf_token,
+            },
+            status_code=429,
+        )
     token = (token or "").strip()
     if not token or not password:
         return templates.TemplateResponse(

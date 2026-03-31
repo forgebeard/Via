@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import secrets
@@ -10,11 +11,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
+from argon2.exceptions import HashingError, InvalidHashError, VerifyMismatchError
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
 _PASSWORD_HASHER = PasswordHasher()
+logger = logging.getLogger(__name__)
 
 
 class SecurityError(RuntimeError):
@@ -30,7 +32,14 @@ def verify_password(password_hash: str, password: str) -> bool:
         return _PASSWORD_HASHER.verify(password_hash, password)
     except VerifyMismatchError:
         return False
-    except Exception:
+    except InvalidHashError:
+        logger.warning("password verify: stored hash is invalid or corrupted")
+        return False
+    except HashingError as e:
+        logger.warning("password verify: hashing error (%s): %s", type(e).__name__, e)
+        return False
+    except Exception as e:
+        logger.warning("password verify: unexpected error (%s): %s", type(e).__name__, e)
         return False
 
 
