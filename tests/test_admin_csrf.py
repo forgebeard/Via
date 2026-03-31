@@ -14,6 +14,8 @@ from starlette.requests import Request
 os.environ.setdefault("APP_MASTER_KEY", "0123456789abcdef0123456789abcdef")
 os.environ.setdefault("SMTP_MOCK", "1")
 
+import admin.constants as admin_constants  # noqa: E402
+import admin.csrf as admin_csrf  # noqa: E402
 import admin_main  # noqa: E402
 
 
@@ -45,32 +47,32 @@ def _request_with_cookies(
 
 def test_verify_csrf_accepts_matching_form_token() -> None:
     tok = "csrf_form_ok_1"
-    req = _request_with_cookies({admin_main.CSRF_COOKIE_NAME: tok})
-    admin_main._verify_csrf(req, tok)
+    req = _request_with_cookies({admin_constants.CSRF_COOKIE_NAME: tok})
+    admin_csrf.verify_csrf(req, tok)
 
 
 def test_verify_csrf_accepts_matching_htmx_header() -> None:
     tok = "csrf_htmx_header_ok"
     req = _request_with_cookies(
-        {admin_main.CSRF_COOKIE_NAME: tok},
+        {admin_constants.CSRF_COOKIE_NAME: tok},
         extra_headers=[(b"x-csrf-token", tok.encode("utf-8"))],
     )
-    admin_main._verify_csrf(req, "")
+    admin_csrf.verify_csrf(req, "")
 
 
 def test_verify_csrf_rejects_without_cookie() -> None:
     req = _request_with_cookies({})
     with pytest.raises(HTTPException) as exc_info:
-        admin_main._verify_csrf(req, "any-token")
+        admin_csrf.verify_csrf(req, "any-token")
     assert exc_info.value.status_code == 400
     assert "CSRF" in (exc_info.value.detail or "")
 
 
 def test_verify_csrf_rejects_mismatched_token() -> None:
     tok = "cookie_value"
-    req = _request_with_cookies({admin_main.CSRF_COOKIE_NAME: tok})
+    req = _request_with_cookies({admin_constants.CSRF_COOKIE_NAME: tok})
     with pytest.raises(HTTPException) as exc_info:
-        admin_main._verify_csrf(req, "other_value")
+        admin_csrf.verify_csrf(req, "other_value")
     assert exc_info.value.status_code == 400
 
 
@@ -103,7 +105,7 @@ def test_login_post_with_valid_csrf_proceeds_to_auth_not_csrf_error(client: Test
     if not db_url or not db_url.startswith("postgresql://"):
         pytest.skip("Тест требует Postgres (DATABASE_URL)")
     page = client.get("/login")
-    token = page.cookies.get(admin_main.CSRF_COOKIE_NAME)
+    token = page.cookies.get(admin_constants.CSRF_COOKIE_NAME)
     assert token
     r = client.post(
         "/login",

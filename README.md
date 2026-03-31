@@ -111,6 +111,7 @@ matrix_bot_firebeard/
 ├── .env                   # Секреты — не коммитить
 ├── .cursorrules           # Правила для ассистента в Cursor
 ├── src/                   # Общие модули и задел под рефакторинг
+│   ├── admin/             # Код админки (роутеры, константы, CSP, CSRF — по мере выноса из admin_main)
 │   ├── config.py
 │   ├── utils.py           # в т.ч. safe_html()
 │   ├── matrix_client.py
@@ -137,6 +138,7 @@ matrix_bot_firebeard/
 | `reports.py` | Генерация отчётов | — |
 | `security.py` | Argon2, AES-GCM для секретов, политика паролей | `test_security_crypto` |
 | `rate_limit.py` | Скользящее окно лимитов для auth-эндпоинтов админки | `test_rate_limit` |
+| `admin/` | Пакет админ-панели: `constants`, `csrf`, `csp`, `lifespan`, `templates_env`, `routers/health` | `test_admin_main`, `test_admin_csrf` |
 
 ---
 

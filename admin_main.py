@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
 import hashlib
 import json
 from html import escape as html_escape
@@ -22,7 +21,6 @@ import uuid
 from pathlib import Path
 from typing import Annotated
 from datetime import datetime, timedelta, timezone
-from jinja2 import Environment, FileSystemLoader
 
 _ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_ROOT / "src"))
@@ -31,7 +29,6 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,9 +48,8 @@ from database.models import (
     VersionRoomRoute,
 )
 from database.session import get_session, get_session_factory
-from mail import check_smtp_health, mask_email, send_reset_email
+from mail import mask_email, send_reset_email
 from security import (
-    SecurityError,
     encrypt_secret,
     hash_password,
     load_master_key,
@@ -67,127 +63,43 @@ from matrix_send import room_send_with_retry
 from ops.docker_control import DockerControlError, control_service, get_service_status
 from rate_limit import SimpleRateLimiter
 
-_templates_dir = str(_ROOT / "templates" / "admin")
-# В некоторых наборах версий Jinja2/Starlette кэш шаблонов может приводить к TypeError
-# (unhashable type: 'dict'). Отключаем кэш, чтобы /login работал стабильно.
-_jinja_env = Environment(
-    loader=FileSystemLoader(_templates_dir),
-    autoescape=True,
-    cache_size=0,
+from admin.constants import (
+    ADMIN_EXISTS_CACHE_TTL_SECONDS,
+    AUTH_TOKEN_SALT,
+    COOKIE_SECURE,
+    CSRF_COOKIE_NAME,
+    GROUP_UNASSIGNED_NAME,
+    INTEGRATION_STATUS_CACHE_TTL_SECONDS,
+    NOTIFY_TYPE_KEYS,
+    ONBOARDING_SKIPPED_SECRET,
+    REDMINE_API_KEY,
+    REDMINE_URL,
+    REQUIRED_SECRET_NAMES,
+    RESET_TOKEN_TTL_SECONDS,
+    RUNTIME_STATUS_FILE,
+    SESSION_COOKIE_NAME,
+    SESSION_IDLE_TIMEOUT_SECONDS,
+    SESSION_TTL_SECONDS,
+    SETUP_PATH,
+    SHOW_DEV_TOKENS,
 )
-
-
-def _admin_asset_version() -> str:
-    """Query string для cache-bust ссылок на `/static/...` (см. `ADMIN_ASSET_VERSION`)."""
-    v = (os.getenv("ADMIN_ASSET_VERSION") or "").strip()
-    return v if v else "1"
-
-
-_jinja_env.globals["asset_version"] = _admin_asset_version
-_jinja_env.globals["bot_timezone"] = lambda: (os.getenv("BOT_TIMEZONE") or "Europe/Moscow")
-templates = Jinja2Templates(env=_jinja_env)
-
-
-@asynccontextmanager
-async def _admin_lifespan(_app: FastAPI):
-    # Fail-fast: без master key нельзя безопасно работать с encrypted secrets.
-    try:
-        load_master_key()
-    except SecurityError as e:
-        raise RuntimeError(f"startup failed: {e}") from e
-    yield
-
+from admin.csp import admin_csp_value as _admin_csp_value, security_headers_middleware
+from admin.csrf import ensure_csrf as _ensure_csrf, verify_csrf as _verify_csrf
+from admin.lifespan import admin_lifespan as _admin_lifespan
+from admin.routers.health import router as health_router
+from admin.templates_env import admin_asset_version as _admin_asset_version, templates
 
 app = FastAPI(
     title="Matrix bot control panel",
     version="0.1.0",
     lifespan=_admin_lifespan,
 )
+app.include_router(health_router)
+app.middleware("http")(security_headers_middleware)
 
 _STATIC_ROOT = _ROOT / "static"
 if _STATIC_ROOT.is_dir():
     app.mount("/static", StaticFiles(directory=str(_STATIC_ROOT)), name="static")
-
-
-def _admin_csp_value() -> str | None:
-    """
-    Content-Security-Policy для HTML-ответов.
-    ADMIN_CSP_POLICY — полная строка политики (приоритет).
-    ADMIN_ENABLE_CSP=1 — встроенная политика под текущие CDN (htmx, FA, Google Fonts)
-    и inline script/style (обработчики в шаблонах до выноса в .js).
-    """
-    explicit = (os.getenv("ADMIN_CSP_POLICY") or "").strip()
-    if explicit:
-        return explicit
-    if os.getenv("ADMIN_ENABLE_CSP", "").strip().lower() not in ("1", "true", "yes", "on"):
-        return None
-    return (
-        "default-src 'self'; "
-        "base-uri 'self'; "
-        "form-action 'self'; "
-        "frame-ancestors 'none'; "
-        "img-src 'self' data: https:; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
-        "script-src 'self' 'unsafe-inline' https://unpkg.com; "
-        "font-src 'self' https://fonts.gstatic.com data:; "
-        "connect-src 'self';"
-    )
-
-
-@app.middleware("http")
-async def _csp_middleware(request: Request, call_next):
-    response = await call_next(request)
-    csp = _admin_csp_value()
-    if csp:
-        response.headers["Content-Security-Policy"] = csp
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    return response
-
-SESSION_COOKIE_NAME = os.getenv("ADMIN_SESSION_COOKIE", "admin_session")
-CSRF_COOKIE_NAME = os.getenv("ADMIN_CSRF_COOKIE", "admin_csrf")
-COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0").strip().lower() in ("1", "true", "yes", "on")
-SETUP_PATH = "/setup"
-SESSION_IDLE_TIMEOUT_SECONDS = int(os.getenv("ADMIN_SESSION_IDLE_TIMEOUT", "1800"))
-RUNTIME_STATUS_FILE = os.getenv("BOT_RUNTIME_STATUS_FILE", "/app/data/runtime_status.json")
-GROUP_UNASSIGNED_NAME = "UNASSIGNED"
-
-AUTH_TOKEN_SALT = os.getenv("AUTH_TOKEN_SALT", "dev-token-salt")
-SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "86400"))
-RESET_TOKEN_TTL_SECONDS = int(os.getenv("RESET_TOKEN_TTL_SECONDS", "1800"))
-RESET_COOLDOWN_SECONDS = int(os.getenv("RESET_COOLDOWN_SECONDS", "90"))
-
-APP_MASTER_KEY_FILE = os.getenv("APP_MASTER_KEY_FILE", "/run/secrets/app_master_key")
-SHOW_DEV_TOKENS = os.getenv("SHOW_DEV_TOKENS", "0").strip().lower() in ("1", "true", "yes", "on")
-ADMIN_EXISTS_CACHE_TTL_SECONDS = int(os.getenv("ADMIN_EXISTS_CACHE_TTL_SECONDS", "20"))
-INTEGRATION_STATUS_CACHE_TTL_SECONDS = int(os.getenv("INTEGRATION_STATUS_CACHE_TTL_SECONDS", "30"))
-REQUIRED_SECRET_NAMES = [
-    v.strip()
-    for v in os.getenv(
-        "REQUIRED_SECRET_NAMES",
-        "REDMINE_URL,REDMINE_API_KEY,MATRIX_HOMESERVER,MATRIX_ACCESS_TOKEN,MATRIX_USER_ID,MATRIX_DEVICE_ID",
-    ).split(",")
-    if v.strip()
-]
-ONBOARDING_SKIPPED_SECRET = "__onboarding_skipped"
-NOTIFY_TYPES = [
-    ("new", "Новая задача"),
-    ("info", "Информация предоставлена"),
-    ("reminder", "Напоминание"),
-    ("overdue", "Просроченная задача"),
-    ("status_change", "Изменение статуса"),
-    ("issue_updated", "Обновление задачи"),
-    ("reopened", "Переоткрыта"),
-]
-NOTIFY_TYPE_KEYS = [k for k, _ in NOTIFY_TYPES]
-
-_ADMIN_EMAILS = {
-    e.strip().lower()
-    for e in (os.getenv("ADMIN_EMAILS", "") or "").split(",")
-    if e.strip()
-}
-
-ADMIN_BOOTSTRAP_FIRST_ADMIN = (os.getenv("ADMIN_BOOTSTRAP_FIRST_ADMIN", "0").strip().lower() in ("1", "true", "yes", "on"))
 
 
 def _now_utc() -> datetime:
@@ -207,23 +119,6 @@ def _client_ip(request: Request) -> str:
     if xff:
         return xff.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
-
-
-def _ensure_csrf(request: Request) -> tuple[str, bool]:
-    token = request.cookies.get(CSRF_COOKIE_NAME)
-    if token:
-        return token, False
-    return secrets.token_urlsafe(24), True
-
-
-def _verify_csrf(request: Request, form_token: str = "") -> None:
-    """Проверка double-submit CSRF: поле формы или заголовок X-CSRF-Token (для HTMX)."""
-    token = (form_token or "").strip()
-    if not token:
-        token = request.headers.get("X-CSRF-Token", "").strip()
-    cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
-    if not cookie_token or not token or token != cookie_token:
-        raise HTTPException(status_code=400, detail="Некорректный CSRF токен")
 
 
 async def _audit_op(
@@ -466,54 +361,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return response
 
 
-REDMINE_URL = (os.getenv("REDMINE_URL") or "").strip()
-REDMINE_API_KEY = (os.getenv("REDMINE_API_KEY") or "").strip()
-
-
 app.add_middleware(AuthMiddleware)
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
-
-
-@app.get("/health/live")
-async def health_live():
-    return {"status": "live"}
-
-
-@app.get("/health/ready")
-async def health_ready(session: AsyncSession = Depends(get_session)):
-    try:
-        await session.execute(select(BotAppUser.id).limit(1))
-        load_master_key()
-        get_service_status()
-    except SecurityError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-    except DockerControlError as e:
-        raise HTTPException(status_code=503, detail=f"runtime backend: {e}")
-    except Exception:
-        raise HTTPException(status_code=503, detail="service not ready")
-    return {"status": "ready"}
-
-
-@app.get("/health/smtp")
-async def health_smtp():
-    health = check_smtp_health()
-    code = 200 if health.ok else 503
-    return HTMLResponse(
-        content=json.dumps(
-            {
-                "status": "ok" if health.ok else "degraded",
-                "detail": health.detail,
-                "checked_at": health.checked_at,
-            },
-            ensure_ascii=False,
-        ),
-        status_code=code,
-        media_type="application/json",
-    )
 
 
 @app.get("/login", response_class=HTMLResponse)
