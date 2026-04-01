@@ -62,6 +62,8 @@ def e2e_admin_url() -> Generator[str, None, None]:
 
     port = _free_port()
     env = os.environ.copy()
+    # Родительский pytest выставляет SQLALCHEMY_NULL_POOL для unit-тестов; uvicorn — нет.
+    env.pop("SQLALCHEMY_NULL_POOL", None)
     env.setdefault("APP_MASTER_KEY", "0123456789abcdef0123456789abcdef")
     env.setdefault("SMTP_MOCK", "1")
     env.setdefault("PYTHONPATH", str(PROJECT_ROOT))

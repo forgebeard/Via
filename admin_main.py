@@ -145,6 +145,7 @@ APP_MASTER_KEY_FILE = os.getenv("APP_MASTER_KEY_FILE", "/run/secrets/app_master_
 SHOW_DEV_TOKENS = os.getenv("SHOW_DEV_TOKENS", "0").strip().lower() in ("1", "true", "yes", "on")
 ADMIN_EXISTS_CACHE_TTL_SECONDS = int(os.getenv("ADMIN_EXISTS_CACHE_TTL_SECONDS", "20"))
 INTEGRATION_STATUS_CACHE_TTL_SECONDS = int(os.getenv("INTEGRATION_STATUS_CACHE_TTL_SECONDS", "30"))
+MATRIX_CODE_TTL_SECONDS = int(os.getenv("MATRIX_CODE_TTL_SECONDS", "300"))
 REQUIRED_SECRET_NAMES = [
     v.strip()
     for v in os.getenv(
@@ -1868,7 +1869,6 @@ async def matrix_bind_start(
         pass
 
     dev_echo = os.getenv("MATRIX_CODE_DEV_ECHO", "0").strip().lower() in ("1", "true", "yes", "on")
-    dev_line = f"<p><b>Dev code:</b> {code}</p>" if dev_echo else ""
 
     return templates.TemplateResponse(
         request,

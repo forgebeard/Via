@@ -7,11 +7,15 @@
   - Даёт моки Redmine: MockIssue (задача), MockJournal (запись журнала) —
     без HTTP к реальному Redmine.
   - mock_matrix_client — AsyncClient с успешным room_send (для тестов bot.py).
+  - Включает NullPool для async Postgres (см. database.session): иначе пул
+    соединений, созданный в event loop Starlette TestClient, переиспользуется
+    в pytest-asyncio и даёт asyncpg «another operation is in progress».
 
 Тесты корневого bot.py дополнительно импортируют bot из корня; этот файл
 обслуживает и src-тесты, и test_bot.py.
 """
 
+import os
 import sys
 from pathlib import Path
 from datetime import date, timedelta
@@ -20,6 +24,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+# До импорта admin_main / database.session (иначе engine создастся без NullPool).
+os.environ.setdefault("SQLALCHEMY_NULL_POOL", "1")
 
 
 # ── Вспомогательные классы ──────────────────────────────────────────────

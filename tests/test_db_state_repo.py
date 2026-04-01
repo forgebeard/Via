@@ -51,7 +51,7 @@ async def test_lease_single_owner():
     factory = get_session_factory()
     owner1 = uuid.uuid4()
     owner2 = uuid.uuid4()
-    uid = 1972
+    uid = 910_001
 
     async with factory() as session:
         until1 = datetime.now(timezone.utc) + timedelta(seconds=300)
@@ -75,7 +75,7 @@ async def test_lease_expiry_allows_new_owner():
     factory = get_session_factory()
     owner1 = uuid.uuid4()
     owner2 = uuid.uuid4()
-    uid = 1972
+    uid = 910_002
 
     async with factory() as session:
         until1 = datetime.now(timezone.utc) + timedelta(seconds=300)
@@ -189,7 +189,7 @@ async def test_concurrent_lease_one_winner():
     from database.state_repo import try_acquire_user_lease
 
     factory = get_session_factory()
-    uid = 1972
+    uid = 910_003
     owner1 = uuid.uuid4()
     owner2 = uuid.uuid4()
 

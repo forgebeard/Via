@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 
 def async_database_url(url: str | None) -> str:
@@ -34,7 +35,12 @@ def make_engine():
     async_url = async_database_url(url)
     if not async_url:
         raise RuntimeError("DATABASE_URL не задан")
-    return create_async_engine(async_url, echo=os.getenv("SQL_ECHO", "0") == "1")
+    echo = os.getenv("SQL_ECHO", "0") == "1"
+    # Pytest: избегаем переиспользования соединений между разными event loop
+    # (TestClient / asyncio.run / pytest-asyncio).
+    if os.getenv("SQLALCHEMY_NULL_POOL", "").strip() in ("1", "true", "yes", "on"):
+        return create_async_engine(async_url, echo=echo, poolclass=NullPool)
+    return create_async_engine(async_url, echo=echo)
 
 
 _engine = None
