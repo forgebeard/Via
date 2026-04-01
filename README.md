@@ -138,7 +138,7 @@ matrix_bot_firebeard/
 | `reports.py` | Генерация отчётов | — |
 | `security.py` | Argon2, AES-GCM для секретов, политика паролей | `test_security_crypto` |
 | `rate_limit.py` | Скользящее окно лимитов для auth-эндпоинтов админки | `test_rate_limit` |
-| `admin/` | Пакет админ-панели: `audit`, `constants`, `csrf`, `csp`, `lifespan`, `templates_env`, `auth_helpers`, `routers/*` | `test_admin_main`, `test_admin_csrf` |
+| `admin/` | Пакет админ-панели: `audit`, `constants`, `notify_prefs`, `matrix_tokens`, `csrf`, `csp`, `lifespan`, `templates_env`, `auth_helpers`, `routers/*` (`health`, `auth`, `ops`, `secrets`, `app_users`, `groups`, `users`, `redmine`, `routes_cfg`, `matrix_bind`, `me`) | `test_admin_main`, `test_admin_csrf`, `test_notify_prefs` |
 
 ---
 

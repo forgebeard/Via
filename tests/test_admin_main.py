@@ -70,19 +70,19 @@ def test_admin_csp_value_env(monkeypatch):
 
 
 def test_notify_presets_helpers():
-    assert admin_main._normalize_notify([]) == ["all"]
-    assert admin_main._normalize_notify(["new", "issue_updated"]) == ["new", "issue_updated"]
-    assert admin_main._normalize_notify(["all", "new"]) == ["all"]
-    assert admin_main._notify_preset(["all"]) == "all"
-    assert admin_main._notify_preset(["new"]) == "new_only"
-    assert admin_main._notify_preset(["overdue"]) == "overdue_only"
-    assert admin_main._notify_preset(["new", "issue_updated"]) == "custom"
+    from admin.notify_prefs import normalize_notify, notify_preset, parse_work_hours_range
 
+    assert normalize_notify([]) == ["all"]
+    assert normalize_notify(["new", "issue_updated"]) == ["new", "issue_updated"]
+    assert normalize_notify(["all", "new"]) == ["all"]
+    assert notify_preset(["all"]) == "all"
+    assert notify_preset(["new"]) == "new_only"
+    assert notify_preset(["overdue"]) == "overdue_only"
+    assert notify_preset(["new", "issue_updated"]) == "custom"
 
-def test_work_hours_range_parser():
-    assert admin_main._parse_work_hours_range("09:00-18:00") == ("09:00", "18:00")
-    assert admin_main._parse_work_hours_range("") == ("", "")
-    assert admin_main._parse_work_hours_range("invalid") == ("", "")
+    assert parse_work_hours_range("09:00-18:00") == ("09:00", "18:00")
+    assert parse_work_hours_range("") == ("", "")
+    assert parse_work_hours_range("invalid") == ("", "")
 
 
 def test_setup_creates_first_admin(client: TestClient):

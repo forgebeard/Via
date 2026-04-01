@@ -47,9 +47,17 @@ def test_matrix_bind_flow_dev_echo_updates_bot_user_room(client: TestClient):
         follow_redirects=True,
     )
 
+    bind_page = client.get("/matrix/bind")
+    csrf_bind = bind_page.cookies.get("admin_csrf")
+    assert csrf_bind, "ожидается CSRF cookie после открытия /matrix/bind"
+
     start = client.post(
         "/matrix/bind/start",
-        data={"redmine_id": str(redmine_id), "room_id": room_id},
+        data={
+            "redmine_id": str(redmine_id),
+            "room_id": room_id,
+            "csrf_token": csrf_bind,
+        },
         follow_redirects=True,
     )
     assert start.status_code == 200
@@ -57,9 +65,15 @@ def test_matrix_bind_flow_dev_echo_updates_bot_user_room(client: TestClient):
     assert m, f"Не найден Dev code в ответе: {start.text[:300]}"
     code = m.group(1)
 
+    csrf_confirm = client.cookies.get("admin_csrf") or csrf_bind
     confirm = client.post(
         "/matrix/bind/confirm",
-        data={"redmine_id": str(redmine_id), "room_id": room_id, "code": code},
+        data={
+            "redmine_id": str(redmine_id),
+            "room_id": room_id,
+            "code": code,
+            "csrf_token": csrf_confirm,
+        },
         follow_redirects=False,
     )
     assert confirm.status_code in (303, 302)
