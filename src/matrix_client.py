@@ -42,7 +42,7 @@ async def get_client() -> AsyncClient:
 
     client = AsyncClient(MATRIX_HOMESERVER, MATRIX_USER_ID)
     client.access_token = MATRIX_ACCESS_TOKEN
-    client.device_id = MATRIX_DEVICE_ID or "BOT"
+    client.device_id = MATRIX_DEVICE_ID or "redmine_bot"
     client.user_id = MATRIX_USER_ID
 
     logger.info(f"✅ Matrix: клиент создан для {MATRIX_USER_ID}")

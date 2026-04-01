@@ -12,7 +12,7 @@
 | Интервал опроса Redmine | По умолчанию **90 с**; переопределение переменной **`CHECK_INTERVAL`** в `.env` (не ниже 15 с) |
 | Matrix | Отправка через **`src/matrix_send.py`** (`room_send_with_retry`): до **3** попыток, паузы **1 с** и **2 с** |
 | PostgreSQL (Docker) | Сервис в **`docker-compose.yml`**; конфиг пользователей/маршрутов и **state** — в Postgres через **админку** |
-| `src/preferences.py` (DND / рабочие часы) | **`can_notify()`** вызывается из **`send_safe`** и для утреннего отчёта: поля в объекте пользователя в памяти (загружаются из Postgres); приоритет «Аварийный» пробивает ограничения |
+| `src/preferences.py` (DND / рабочие часы) | **`can_notify()`** вызывается из **`send_safe`** и для утреннего отчёта: для личной комнаты — поля пользователя из Postgres; для **комнаты группы** — настройки группы (`group_delivery` в рантайме); приоритет «Аварийный» пробивает ограничения |
 
 Разделы ниже про **`config.yaml`**, **91 тест** и пути вроде `data/` относятся к целевой/альтернативной схеме и постепенно приводятся к виду выше.
 
@@ -156,7 +156,7 @@ nano .env   # заполнить все переменные (см. раздел
 
 ### 3. Настройка пользователей и маршрутизации
 
-Пользователи и маршрутизация хранятся в Postgres. Заполните таблицы через admin UI: `bot_users` (пользователи) + `status_room_routes` / `version_room_routes` (доп. комнаты).
+Пользователи и маршрутизация хранятся в Postgres. Заполните таблицы через admin UI: `bot_users` (пользователи) + `support_groups` (ID комнаты группы, привязка статусов Redmine к этой комнате, типы уведомлений и рабочие часы для дублей в неё) + `status_room_routes` / `version_room_routes` (доп. комнаты).
 
 ### 4. Проверка конфигурации (модуль `src/`)
 
@@ -274,7 +274,7 @@ docker compose up -d bot
 MATRIX_HOMESERVER=https://messenger.example.com
 MATRIX_ACCESS_TOKEN=syt_your_access_token_here
 MATRIX_USER_ID=@bot_user:messenger.example.com
-MATRIX_DEVICE_ID=BOTDEVICE
+# MATRIX_DEVICE_ID необязателен — по умолчанию используется redmine_bot
 
 # ─── Redmine ─────────────────────────────────────────
 REDMINE_URL=https://redmine.example.com
@@ -287,7 +287,7 @@ REDMINE_API_KEY=your_redmine_api_key
 |----------|-------------|
 | `MATRIX_ACCESS_TOKEN` | Element → Настройки → Помощь и О программе → Access Token |
 | `MATRIX_USER_ID` | Формат: `@username:your.server` |
-| `MATRIX_DEVICE_ID` | Любой идентификатор (например, `BOTDEVICE`) |
+| `MATRIX_DEVICE_ID` | Необязателен — по умолчанию `redmine_bot` |
 | `REDMINE_API_KEY` | Redmine → Моя учётная запись → API-ключ (правая колонка) |
 
 > ⚠️ **Важно:** Бот использует `access_token` (не пароль) для авторизации в Matrix — это безопаснее и не требует login-flow.

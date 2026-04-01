@@ -98,14 +98,8 @@ body {
 .sidebar-nav-main {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
-}
-.sidebar-nav-footer {
-  flex-shrink: 0;
-  margin-top: auto;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--border);
 }
 .nav-link {
   display: flex;

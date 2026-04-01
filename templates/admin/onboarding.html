@@ -1,12 +1,9 @@
 {% extends "base.html" %}
 {% from "macros.html" import page_head %}
-{% block title %}Первичная настройка подключений{% endblock %}
+{% block title %}Настройки подключений{% endblock %}
 {% block content %}
-{{ page_head("Первичная настройка подключений", "Укажите служебные ключи для Redmine и Matrix. Можно пропустить этот шаг и вернуться позже в раздел «Настройки».") }}
+{{ page_head("Настройки подключений") }}
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
-{% if missing %}
-<p class="muted">Ещё не заполнено: <code>{{ missing|join(", ") }}</code></p>
-{% endif %}
 <div class="card content-stack">
   <form class="form" method="post" action="/onboarding/save" style="margin-top:0;">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
@@ -15,33 +12,27 @@
       <div class="field">
         <label for="secret_REDMINE_URL">Адрес Redmine</label>
         <input id="secret_REDMINE_URL" name="secret_REDMINE_URL" type="text" placeholder="https://redmine.company.local"/>
-        <p class="field-hint">Нужен, чтобы читать задачи и статусы из Redmine.</p>
       </div>
       <div class="field">
         <label for="secret_REDMINE_API_KEY">API-ключ Redmine</label>
         <input id="secret_REDMINE_API_KEY" name="secret_REDMINE_API_KEY" type="text" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"/>
-        <p class="field-hint">Ключ сервисной учётки с доступом к проектам для мониторинга.</p>
       </div>
     </div>
     <div class="card card-nested stack">
       <h2 style="margin-top:0;">Matrix</h2>
       <div class="field">
-        <label for="secret_HOMESERVER">Адрес homeserver</label>
-        <input id="secret_HOMESERVER" name="secret_HOMESERVER" type="text" placeholder="https://matrix.company.local"/>
-        <p class="field-hint">Адрес Matrix-сервера, куда бот отправляет уведомления.</p>
+        <label for="secret_MATRIX_HOMESERVER">Адрес Matrix</label>
+        <input id="secret_MATRIX_HOMESERVER" name="secret_MATRIX_HOMESERVER" type="text" placeholder="https://matrix.company.local"/>
       </div>
       <div class="field">
-        <label for="secret_MATRIX_ACCESS_TOKEN">Токен Matrix</label>
-        <input id="secret_MATRIX_ACCESS_TOKEN" name="secret_MATRIX_ACCESS_TOKEN" type="text" placeholder="syt_xxxxxxxxxxxxxxxxxxx"/>
-        <p class="field-hint">Токен сервисной Matrix-учётки бота.</p>
+        <label for="secret_MATRIX_USER_ID">Имя учётной записи</label>
+        <input id="secret_MATRIX_USER_ID" name="secret_MATRIX_USER_ID" type="text" placeholder="@login:ваш.домен" autocomplete="username"/>
+      </div>
+      <div class="field">
+        <label for="secret_MATRIX_ACCESS_TOKEN">Токен</label>
+        <input id="secret_MATRIX_ACCESS_TOKEN" name="secret_MATRIX_ACCESS_TOKEN" type="text" placeholder="syt_xxxxxxxxxxxxxxxxxxx" autocomplete="off"/>
       </div>
     </div>
-    {% for name in required_names if name not in ["REDMINE_URL", "REDMINE_API_KEY", "HOMESERVER", "MATRIX_ACCESS_TOKEN"] %}
-      <div class="field">
-        <label for="secret_{{ name }}">{{ name }}</label>
-        <input id="secret_{{ name }}" name="secret_{{ name }}" type="text" placeholder="Введите значение {{ name }}"/>
-      </div>
-    {% endfor %}
     <div class="page-actions">
       <button class="btn btn-primary" type="submit">Сохранить и продолжить</button>
     </div>

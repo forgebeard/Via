@@ -60,7 +60,7 @@ load_dotenv()
 HOMESERVER       = os.getenv("MATRIX_HOMESERVER")
 ACCESS_TOKEN     = os.getenv("MATRIX_ACCESS_TOKEN")
 MATRIX_USER_ID   = os.getenv("MATRIX_USER_ID")
-MATRIX_DEVICE_ID = os.getenv("MATRIX_DEVICE_ID")
+MATRIX_DEVICE_ID = (os.getenv("MATRIX_DEVICE_ID") or "").strip() or "redmine_bot"
 
 # --- Redmine ---
 REDMINE_URL = os.getenv("REDMINE_URL")
@@ -341,6 +341,34 @@ def _group_room(user_cfg: dict) -> str:
     return (user_cfg.get("group_room") or "").strip()
 
 
+def _cfg_for_room(user_cfg: dict, room_id: str) -> dict:
+    """
+    Для Matrix-комнаты группы применяются типы уведомлений и расписание группы
+    (из group_delivery), а не личные настройки пользователя.
+    """
+    target = (room_id or "").strip()
+    gr = _group_room(user_cfg)
+    if not target or not gr or target != gr:
+        return user_cfg
+    gd = user_cfg.get("group_delivery")
+    if not isinstance(gd, dict):
+        return user_cfg
+    merged = dict(user_cfg)
+    merged["notify"] = gd.get("notify") if isinstance(gd.get("notify"), list) else ["all"]
+    wh = gd.get("work_hours")
+    if wh:
+        merged["work_hours"] = wh
+    else:
+        merged.pop("work_hours", None)
+    wd = gd.get("work_days")
+    if wd is not None:
+        merged["work_days"] = wd
+    else:
+        merged.pop("work_days", None)
+    merged["dnd"] = bool(gd.get("dnd"))
+    return merged
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # MATRIX: ОТПРАВКА СООБЩЕНИЙ
 # ═══════════════════════════════════════════════════════════════════════════
@@ -425,7 +453,8 @@ async def send_safe(client, issue, user_cfg, room_id, notification_type, extra_t
     """
     Обёртка send_matrix_message: DND/рабочие часы (can_notify), затем перехват ошибок Matrix.
     """
-    if not can_notify(user_cfg, priority=_issue_priority_name(issue)):
+    cfg = _cfg_for_room(user_cfg, room_id)
+    if not can_notify(cfg, priority=_issue_priority_name(issue)):
         logger.debug(
             "Пропуск уведомления (время/DND): user %s, #%s, %s",
             user_cfg.get("redmine_id"),
@@ -663,7 +692,7 @@ async def check_user_issues(client, redmine, user_cfg, db_session):
                         if personal_room != room:
                             await send_safe(client, issue, user_cfg, personal_room, "new")
                     group_room = _group_room(user_cfg)
-                    if group_room:
+                    if group_room and should_notify(_cfg_for_room(user_cfg, group_room), "new"):
                         await send_safe(client, issue, user_cfg, group_room, "new")
                     for extra_room in get_extra_rooms_for_new(issue):
                         await send_safe(client, issue, user_cfg, extra_room, "new")
@@ -685,7 +714,7 @@ async def check_user_issues(client, redmine, user_cfg, db_session):
                         if personal_room != room:
                             await send_safe(client, issue, user_cfg, personal_room, "new")
                     group_room = _group_room(user_cfg)
-                    if group_room:
+                    if group_room and should_notify(_cfg_for_room(user_cfg, group_room), "new"):
                         await send_safe(client, issue, user_cfg, group_room, "new")
                     for extra_room in get_extra_rooms_for_rv(issue):
                         await send_safe(client, issue, user_cfg, extra_room, "new")
@@ -704,7 +733,9 @@ async def check_user_issues(client, redmine, user_cfg, db_session):
                         elapsed_group = (now - ensure_tz(datetime.fromisoformat(last_group))).total_seconds()
                     else:
                         elapsed_group = GROUP_REPEAT_SECONDS + 1
-                    if elapsed_group >= GROUP_REPEAT_SECONDS:
+                    if elapsed_group >= GROUP_REPEAT_SECONDS and should_notify(
+                        _cfg_for_room(user_cfg, group_room), "new"
+                    ):
                         await send_safe(client, issue, user_cfg, group_room, "new")
                         sent[iid]["group_last_notified_at"] = now.isoformat()
                         changed_sent.add(iid)

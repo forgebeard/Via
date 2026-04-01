@@ -33,12 +33,10 @@
         <a class="nav-link {% if _path.startswith('/groups') %}active{% endif %}" href="/groups"><i class="fa-solid fa-layer-group"></i><span>Группы</span></a>
         <a class="nav-link {% if _path.startswith('/users') %}active{% endif %}" href="/users"><i class="fa-solid fa-users"></i><span>Пользователи</span></a>
         <a class="nav-link {% if _path.startswith('/onboarding') or _path.startswith('/secrets') %}active{% endif %}" href="/onboarding"><i class="fa-solid fa-gear"></i><span>Настройки</span></a>
-      </div>
-      {% if _current_user and _current_user.role == 'admin' %}
-      <div class="sidebar-nav-footer">
+        {% if _current_user and _current_user.role == 'admin' %}
         <a class="nav-link {% if _path.startswith('/events') %}active{% endif %}" href="/events"><i class="fa-solid fa-bolt"></i><span>События</span></a>
+        {% endif %}
       </div>
-      {% endif %}
     </nav>
   </aside>
 

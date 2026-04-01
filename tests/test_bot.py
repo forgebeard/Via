@@ -131,6 +131,62 @@ class TestShouldNotify:
         assert bot.should_notify(cfg, "new") is False
 
 
+class TestCfgForRoom:
+    """Мерж group_delivery при отправке в комнату группы."""
+
+    def test_personal_room_returns_same_mapping(self):
+        cfg = {
+            "redmine_id": 1,
+            "room": "!p:server",
+            "notify": ["all"],
+            "group_room": "!g:server",
+            "group_delivery": {"notify": ["new"], "work_hours": None, "work_days": None, "dnd": True},
+        }
+        out = bot._cfg_for_room(cfg, "!p:server")
+        assert out is cfg
+
+    def test_group_room_applies_delivery(self):
+        cfg = {
+            "redmine_id": 1,
+            "room": "!p:server",
+            "notify": ["all"],
+            "work_hours": "09:00-10:00",
+            "dnd": False,
+            "group_room": "!g:server",
+            "group_delivery": {
+                "notify": ["new"],
+                "work_hours": "11:00-12:00",
+                "work_days": [0],
+                "dnd": True,
+            },
+        }
+        out = bot._cfg_for_room(cfg, "!g:server")
+        assert out is not cfg
+        assert out["notify"] == ["new"]
+        assert out["work_hours"] == "11:00-12:00"
+        assert out["work_days"] == [0]
+        assert out["dnd"] is True
+        assert out["room"] == "!p:server"
+
+    def test_group_delivery_null_hours_uses_preferences_defaults(self):
+        cfg = {
+            "redmine_id": 1,
+            "room": "!p:server",
+            "notify": ["all"],
+            "work_hours": "09:00-10:00",
+            "group_room": "!g:server",
+            "group_delivery": {
+                "notify": ["all"],
+                "work_hours": None,
+                "work_days": None,
+                "dnd": False,
+            },
+        }
+        out = bot._cfg_for_room(cfg, "!g:server")
+        assert "work_hours" not in out
+        assert "work_days" not in out
+
+
 class TestGetVersionName:
     """Тесты получения версии задачи."""
 

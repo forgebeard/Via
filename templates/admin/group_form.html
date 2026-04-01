@@ -11,8 +11,9 @@
       <input id="name" name="name" required value="{{ g.name if g else '' }}" placeholder="Отдел технической поддержки РЕД ОС"/>
     </div>
     <div class="field">
-      <label for="room_id">Комната Matrix группы</label>
-      <input id="room_id" name="room_id" value="{{ g.room_id if g else '' }}" placeholder="!group-room:server"/>
+      <label for="room_id">ID комнаты группы</label>
+      <input id="room_id" name="room_id" value="{{ g.room_id if g else '' }}" placeholder="!group-room:server" {% if not g %}required{% endif %}/>
+      <p class="field-hint">Куда дублировать групповые уведомления в Matrix. Это не токен бота: учётные данные Matrix/Redmine задаются в разделе «Настройки».</p>
     </div>
     <div class="field">
       <label for="timezone_name">Таймзона группы</label>
@@ -23,11 +24,58 @@
       <input type="checkbox" id="is_active" name="is_active" value="1" {% if not g or g.is_active %}checked{% endif %}/>
       <label for="is_active">Группа активна</label>
     </div>
+
+    <fieldset>
+      <legend>Типы уведомлений (для комнаты группы)</legend>
+      <label class="choice"><input type="radio" name="notify_preset" value="all" {% if notify_preset == "all" %}checked{% endif %}/> Все уведомления</label>
+      <label class="choice"><input type="radio" name="notify_preset" value="new_only" {% if notify_preset == "new_only" %}checked{% endif %}/> Только новые задачи</label>
+      <label class="choice"><input type="radio" name="notify_preset" value="overdue_only" {% if notify_preset == "overdue_only" %}checked{% endif %}/> Только просроченные</label>
+      <label class="choice"><input type="radio" name="notify_preset" value="custom" {% if notify_preset == "custom" %}checked{% endif %}/> Кастомный набор</label>
+      <div id="notify_custom_box_group" class="sub-panel">
+        <span class="field-hint">В расширенном режиме выберите типы:</span>
+        <div class="choice-grid">
+          {% for key, label in [
+            ("new", "Новая задача"), ("info", "Информация предоставлена"), ("reminder", "Напоминание"),
+            ("overdue", "Просроченная"), ("status_change", "Смена статуса"), ("issue_updated", "Обновление"), ("reopened", "Переоткрыта")
+          ] %}
+            <label class="choice"><input type="checkbox" name="notify_values" value="{{ key }}" {% if key in notify_selected %}checked{% endif %}/> {{ label }}</label>
+          {% endfor %}
+        </div>
+        <input type="hidden" name="notify_json" value="{{ notify_json }}"/>
+      </div>
+    </fieldset>
+
+    <div class="field">
+      <label for="work_hours_from_group">Рабочие часы (для комнаты группы)</label>
+      <div class="inline-range">
+        <input type="time" id="work_hours_from_group" name="work_hours_from" value="{% if g and g.work_hours and '-' in g.work_hours %}{{ g.work_hours.split('-')[0] }}{% endif %}"/>
+        <span class="sep">—</span>
+        <input type="time" id="work_hours_to_group" name="work_hours_to" value="{% if g and g.work_hours and '-' in g.work_hours %}{{ g.work_hours.split('-')[1] }}{% endif %}"/>
+      </div>
+      <p class="field-hint">Таймзона: <strong>{{ bot_tz }}</strong>. Если интервал пуст — круглосуточно (как у пользователей без расписания).</p>
+    </div>
+
+    <fieldset>
+      <legend>Рабочие дни (для комнаты группы)</legend>
+      <div class="choice-grid">
+        {% set _gdays = (g.work_days if g and g.work_days is not none else [0,1,2,3,4]) %}
+        {% for idx, label in [(0,"Пн"),(1,"Вт"),(2,"Ср"),(3,"Чт"),(4,"Пт"),(5,"Сб"),(6,"Вс")] %}
+          <label class="choice"><input type="checkbox" name="work_days_values" value="{{ idx }}" {% if idx in _gdays %}checked{% endif %}/> {{ label }}</label>
+        {% endfor %}
+      </div>
+      <input type="hidden" name="work_days_json" value="{% if g and g.work_days is not none %}{{ g.work_days }}{% endif %}"/>
+    </fieldset>
+
+    <div class="field field-check">
+      <input type="checkbox" name="dnd" value="on" id="dnd_group" {% if g and g.dnd %}checked{% endif %}/>
+      <label for="dnd_group">Не беспокоить (DND) для комнаты группы</label>
+    </div>
+
     {% if not g %}
     <div class="field">
-      <label for="initial_status_keys">Статусы Redmine (необязательно)</label>
-      <textarea id="initial_status_keys" name="initial_status_keys" rows="4" placeholder="Точное имя статуса в Redmine — каждое с новой строки или через запятую"></textarea>
-      <p class="field-hint">Добавляются в эту комнату после сохранения группы. Имена статусов в системе уникальны.</p>
+      <label for="initial_status_keys">Статусы</label>
+      <textarea id="initial_status_keys" name="initial_status_keys" rows="4" required placeholder="Точное имя статуса в Redmine — каждое с новой строки или через запятую"></textarea>
+      <p class="field-hint">Обязательно: хотя бы один статус. После сохранения список можно менять в блоке ниже.</p>
     </div>
     {% endif %}
     <div class="page-actions">
@@ -37,16 +85,30 @@
   </form>
 </div>
 
+<script>
+  (function () {
+    const radios = Array.from(document.querySelectorAll('input[name="notify_preset"]'));
+    const box = document.getElementById('notify_custom_box_group');
+    function refresh() {
+      const current = radios.find(r => r.checked);
+      if (!box) return;
+      box.style.display = current && current.value === 'custom' ? 'block' : 'none';
+    }
+    radios.forEach(r => r.addEventListener('change', refresh));
+    refresh();
+  })();
+</script>
+
 {% if g %}
 <div class="card content-stack" style="margin-top:1.25rem;">
-  <h2 style="margin-top:0;">Статусы Redmine</h2>
-  <p class="muted">Уведомления о смене статуса задачи дублируются в комнату группы (<strong>точное</strong> имя статуса, как в Redmine).</p>
+  <h2 style="margin-top:0;">Статусы</h2>
+  <p class="muted">Уведомления о смене статуса задачи дублируются в комнату группы по <strong>точному</strong> имени статуса из Redmine.</p>
   {% if status_err == "no_room" %}
-  <p class="error">Сначала укажите комнату Matrix у группы и сохраните форму выше.</p>
+  <p class="error">Сначала укажите ID комнаты группы и сохраните форму выше.</p>
   {% elif status_err == "empty" %}
   <p class="error">Введите имя статуса.</p>
   {% elif status_err == "exists" %}
-  <p class="error">Такой статус уже привязан к комнате (в Redmine имена статусов глобальны).</p>
+  <p class="error">Такой статус уже привязан к другой комнате (имена статусов в Redmine глобальны).</p>
   {% endif %}
   {% if status_msg == "added" %}
   <p class="muted">Статус добавлен.</p>
@@ -54,7 +116,8 @@
   <p class="muted">Статус удалён.</p>
   {% endif %}
 
-  {% if (g.room_id or "")|trim %}
+  {% set _rid = (g.room_id or "").strip() %}
+  {% if _rid %}
   <div class="table-wrap" style="margin-top:0.75rem;">
     <table>
       <thead><tr><th>Статус</th><th class="table-actions" aria-label="Действия"></th></tr></thead>
@@ -86,7 +149,7 @@
     </div>
   </form>
   {% else %}
-  <p class="muted">После сохранения комнаты Matrix здесь появится список статусов.</p>
+  <p class="muted">Укажите ID комнаты группы в форме выше и сохраните — здесь появится список статусов.</p>
   {% endif %}
 </div>
 {% endif %}

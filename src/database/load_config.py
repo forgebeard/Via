@@ -31,6 +31,12 @@ def user_orm_to_cfg(row: BotUser, groups_by_id: dict[int, SupportGroup]) -> dict
             d["group_room"] = g.room_id
             if g.timezone:
                 d["group_timezone"] = g.timezone
+            d["group_delivery"] = {
+                "notify": g.notify if isinstance(g.notify, list) else ["all"],
+                "work_hours": g.work_hours,
+                "work_days": g.work_days,
+                "dnd": bool(g.dnd),
+            }
     if row.work_hours:
         d["work_hours"] = row.work_hours
     if row.work_days is not None:

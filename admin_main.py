@@ -159,10 +159,11 @@ REQUIRED_SECRET_NAMES = [
     v.strip()
     for v in os.getenv(
         "REQUIRED_SECRET_NAMES",
-        "REDMINE_URL,REDMINE_API_KEY,MATRIX_HOMESERVER,MATRIX_ACCESS_TOKEN,MATRIX_USER_ID,MATRIX_DEVICE_ID",
+        "REDMINE_URL,REDMINE_API_KEY,MATRIX_HOMESERVER,MATRIX_ACCESS_TOKEN,MATRIX_USER_ID",
     ).split(",")
     if v.strip()
 ]
+MATRIX_DEFAULT_DEVICE_ID = (os.getenv("MATRIX_DEFAULT_DEVICE_ID") or "redmine_bot").strip() or "redmine_bot"
 ONBOARDING_SKIPPED_SECRET = "__onboarding_skipped"
 NOTIFY_TYPES = [
     ("new", "Новая задача"),
@@ -784,14 +785,11 @@ async def onboarding_page(request: Request, session: AsyncSession = Depends(get_
     user = getattr(request.state, "current_user", None)
     if not user or getattr(user, "role", "") != "admin":
         return RedirectResponse("/login", status_code=303)
-    status = await _integration_status(session)
     csrf_token, set_cookie = _ensure_csrf(request)
     resp = templates.TemplateResponse(
         request,
         "onboarding.html",
         {
-            "required_names": REQUIRED_SECRET_NAMES,
-            "missing": status["missing"],
             "csrf_token": csrf_token,
             "error": None,
         },
@@ -1276,6 +1274,9 @@ async def groups_new(
             "status_routes": [],
             "status_err": "",
             "status_msg": "",
+            "notify_json": '["all"]',
+            "notify_preset": "all",
+            "notify_selected": ["all"],
         },
     )
 
@@ -1309,6 +1310,9 @@ async def groups_edit(
             "status_routes": status_rows,
             "status_err": status_err,
             "status_msg": status_msg,
+            "notify_json": json.dumps(row.notify, ensure_ascii=False),
+            "notify_preset": _notify_preset(row.notify),
+            "notify_selected": row.notify or ["all"],
         },
     )
 
@@ -1321,6 +1325,15 @@ async def groups_create(
     timezone_name: Annotated[str, Form()] = "",
     is_active: Annotated[str, Form()] = "",
     initial_status_keys: Annotated[str, Form()] = "",
+    notify_json: Annotated[str, Form()] = "",
+    notify_preset: Annotated[str, Form()] = "all",
+    notify_values: Annotated[list[str], Form()] = [],
+    work_hours: Annotated[str, Form()] = "",
+    work_hours_from: Annotated[str, Form()] = "",
+    work_hours_to: Annotated[str, Form()] = "",
+    work_days_json: Annotated[str, Form()] = "",
+    work_days_values: Annotated[list[str], Form()] = [],
+    dnd: Annotated[str, Form()] = "",
     csrf_token: Annotated[str, Form()] = "",
     session: AsyncSession = Depends(get_session),
 ):
@@ -1333,22 +1346,48 @@ async def groups_create(
         raise HTTPException(400, "Название обязательно")
     if n == GROUP_UNASSIGNED_NAME:
         raise HTTPException(400, "Это имя зарезервировано для системы")
+    room = (room_id or "").strip()
+    if not room:
+        raise HTTPException(400, "Укажите ID комнаты группы")
+    status_keys = _parse_status_keys_list(initial_status_keys)
+    if not status_keys:
+        raise HTTPException(400, "Добавьте хотя бы один статус")
+    if work_hours_from and work_hours_to:
+        wh = f"{work_hours_from.strip()}-{work_hours_to.strip()}"
+    else:
+        wh = work_hours.strip() or None
+    if work_days_values:
+        wd = sorted({int(v) for v in work_days_values if str(v).isdigit()})
+    else:
+        wd = _parse_work_days(work_days_json)
+    if notify_preset == "all":
+        notify = ["all"]
+    elif notify_preset == "new_only":
+        notify = ["new"]
+    elif notify_preset == "overdue_only":
+        notify = ["overdue"]
+    elif notify_preset == "custom":
+        notify = _normalize_notify(notify_values)
+    else:
+        notify = _parse_notify(notify_json)
     row = SupportGroup(
         name=n,
-        room_id=(room_id or "").strip(),
+        room_id=room,
         timezone=(timezone_name or "").strip() or None,
         is_active=is_active in ("1", "on", "true"),
+        notify=notify,
+        work_hours=wh,
+        work_days=wd,
+        dnd=dnd in ("1", "on", "true"),
     )
     session.add(row)
     await session.flush()
     rid = row.id
-    room = (row.room_id or "").strip()
-    if room:
-        for key in _parse_status_keys_list(initial_status_keys):
-            ex = await session.execute(select(StatusRoomRoute.id).where(StatusRoomRoute.status_key == key))
-            if ex.scalar_one_or_none():
-                continue
-            session.add(StatusRoomRoute(status_key=key, room_id=room))
+    for key in status_keys:
+        ex = await session.execute(select(StatusRoomRoute.id).where(StatusRoomRoute.status_key == key))
+        if ex.scalar_one_or_none():
+            continue
+        session.add(StatusRoomRoute(status_key=key, room_id=room))
     return RedirectResponse(f"/groups/{rid}/edit", status_code=303)
 
 
@@ -1360,6 +1399,15 @@ async def groups_update(
     room_id: Annotated[str, Form()] = "",
     timezone_name: Annotated[str, Form()] = "",
     is_active: Annotated[str, Form()] = "",
+    notify_json: Annotated[str, Form()] = "",
+    notify_preset: Annotated[str, Form()] = "all",
+    notify_values: Annotated[list[str], Form()] = [],
+    work_hours: Annotated[str, Form()] = "",
+    work_hours_from: Annotated[str, Form()] = "",
+    work_hours_to: Annotated[str, Form()] = "",
+    work_days_json: Annotated[str, Form()] = "",
+    work_days_values: Annotated[list[str], Form()] = [],
+    dnd: Annotated[str, Form()] = "",
     csrf_token: Annotated[str, Form()] = "",
     session: AsyncSession = Depends(get_session),
 ):
@@ -1377,12 +1425,34 @@ async def groups_update(
         raise HTTPException(400, "Название обязательно")
     if n == GROUP_UNASSIGNED_NAME:
         raise HTTPException(400, "Это имя зарезервировано для системы")
+    if work_hours_from and work_hours_to:
+        wh = f"{work_hours_from.strip()}-{work_hours_to.strip()}"
+    else:
+        wh = work_hours.strip() or None
+    if work_days_values:
+        wd = sorted({int(v) for v in work_days_values if str(v).isdigit()})
+    else:
+        wd = _parse_work_days(work_days_json)
+    if notify_preset == "all":
+        notify = ["all"]
+    elif notify_preset == "new_only":
+        notify = ["new"]
+    elif notify_preset == "overdue_only":
+        notify = ["overdue"]
+    elif notify_preset == "custom":
+        notify = _normalize_notify(notify_values)
+    else:
+        notify = _parse_notify(notify_json)
     old_room = (row.room_id or "").strip()
     new_room = (room_id or "").strip()
     row.name = n
     row.room_id = new_room
     row.timezone = (timezone_name or "").strip() or None
     row.is_active = is_active in ("1", "on", "true")
+    row.notify = notify
+    row.work_hours = wh
+    row.work_days = wd
+    row.dnd = dnd in ("1", "on", "true")
     if old_room and new_room and old_room != new_room:
         await session.execute(
             update(StatusRoomRoute).where(StatusRoomRoute.room_id == old_room).values(room_id=new_room)
@@ -2099,7 +2169,7 @@ async def matrix_bind_start(
         HOMESERVER = (os.getenv("MATRIX_HOMESERVER") or "").strip()
         ACCESS_TOKEN = (os.getenv("MATRIX_ACCESS_TOKEN") or "").strip()
         MATRIX_USER_ID = (os.getenv("MATRIX_USER_ID") or "").strip()
-        MATRIX_DEVICE_ID = (os.getenv("MATRIX_DEVICE_ID") or "").strip()
+        MATRIX_DEVICE_ID = (os.getenv("MATRIX_DEVICE_ID") or "").strip() or MATRIX_DEFAULT_DEVICE_ID
         if HOMESERVER and ACCESS_TOKEN and MATRIX_USER_ID:
             mclient = AsyncClient(HOMESERVER)
             mclient.access_token = ACCESS_TOKEN

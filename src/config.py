@@ -56,7 +56,7 @@ LOG_FILE = resolved_log_file()
 MATRIX_HOMESERVER = os.getenv("MATRIX_HOMESERVER")
 MATRIX_ACCESS_TOKEN = os.getenv("MATRIX_ACCESS_TOKEN")
 MATRIX_USER_ID = os.getenv("MATRIX_USER_ID")
-MATRIX_DEVICE_ID = os.getenv("MATRIX_DEVICE_ID")
+MATRIX_DEVICE_ID = (os.getenv("MATRIX_DEVICE_ID") or "").strip() or "redmine_bot"
 
 # ═══════════════════════════════════════════════════════════════
 # REDMINE
