@@ -24,7 +24,8 @@ def test_login_page_visible(page: Page, e2e_admin_url: str) -> None:
 @pytest.mark.e2e
 def test_unauthenticated_users_redirects_to_login(page: Page, e2e_admin_url: str) -> None:
     page.goto(f"{e2e_admin_url}/users")
-    expect(page).to_have_url(re.compile(r".*/login/?$"))
+    # Пока нет ни одного админа, middleware ведёт на /setup; после появления админа — на /login.
+    expect(page).to_have_url(re.compile(r".*/(login|setup)/?$"))
 
 
 @pytest.mark.e2e

@@ -5,7 +5,16 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import delete, text
+
+from database.models import BotUserLease
+
+
+async def _delete_lease_for_uid(factory, uid: int) -> None:
+    """Убирает строку lease, чтобы тесты были идемпотентны на одной БД (локально / повторный pytest)."""
+    async with factory() as session:
+        await session.execute(delete(BotUserLease).where(BotUserLease.user_redmine_id == uid))
+        await session.commit()
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
@@ -52,6 +61,7 @@ async def test_lease_single_owner():
     owner1 = uuid.uuid4()
     owner2 = uuid.uuid4()
     uid = 910_001
+    await _delete_lease_for_uid(factory, uid)
 
     async with factory() as session:
         until1 = datetime.now(timezone.utc) + timedelta(seconds=300)
@@ -70,12 +80,12 @@ async def test_lease_expiry_allows_new_owner():
     await ensure_migrated()
     from database.session import get_session_factory
     from database.state_repo import try_acquire_user_lease
-    from database.models import BotUserLease
 
     factory = get_session_factory()
     owner1 = uuid.uuid4()
     owner2 = uuid.uuid4()
     uid = 910_002
+    await _delete_lease_for_uid(factory, uid)
 
     async with factory() as session:
         until1 = datetime.now(timezone.utc) + timedelta(seconds=300)
@@ -192,6 +202,7 @@ async def test_concurrent_lease_one_winner():
     uid = 910_003
     owner1 = uuid.uuid4()
     owner2 = uuid.uuid4()
+    await _delete_lease_for_uid(factory, uid)
 
     async def worker(owner):
         async with factory() as session:
