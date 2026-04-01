@@ -2,7 +2,7 @@
 Веб-админка: пользователи бота и маршруты Matrix (Postgres).
 
 Запуск: uvicorn admin_main:app --host 0.0.0.0 --port 8080
-Требуется DATABASE_URL (доступ к UI — через email/password).
+Требуется DATABASE_URL (доступ к UI — через логин и пароль администратора).
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from admin.csp import admin_csp_value as _admin_csp_value  # noqa: F401
 from admin.csp import security_headers_middleware
 from admin.lifespan import admin_lifespan as _admin_lifespan
 from admin.middleware.auth import AuthMiddleware
-from admin.routers.app_users import router as app_users_router
 from admin.routers.auth import router as auth_router
 from admin.routers.dashboard import router as dashboard_router
 from admin.routers.groups import router as groups_router
@@ -43,7 +42,6 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(ops_router)
 app.include_router(secrets_router)
-app.include_router(app_users_router)
 app.include_router(groups_router)
 app.include_router(users_router)
 app.include_router(redmine_router)

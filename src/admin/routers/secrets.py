@@ -16,7 +16,7 @@ from admin.runtime import integration_status_cache, logger
 from admin.templates_env import templates
 from database.models import AppSecret
 from database.session import get_session
-from mail import mask_email
+from mail import mask_login
 from security import encrypt_secret, load_master_key
 
 router = APIRouter()
@@ -70,7 +70,7 @@ async def secrets_save(
     logger.info(
         "secret_updated name=%s actor=%s key_version=%s",
         name,
-        mask_email(actor.email),
+        mask_login(actor.login),
         enc.key_version,
     )
     return RedirectResponse("/secrets", status_code=303)

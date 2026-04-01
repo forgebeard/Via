@@ -28,7 +28,7 @@ def test_matrix_bind_redirects_to_login_without_auth(client: TestClient):
 def test_matrix_bind_flow_dev_echo_updates_bot_user_room(client: TestClient):
     os.environ["MATRIX_CODE_DEV_ECHO"] = "1"
 
-    email = "matrix_user@example.com"
+    admin_login = "matrix_user"
     redmine_id = 123
     room_id = "!room123:example.com"
 
@@ -36,14 +36,19 @@ def test_matrix_bind_flow_dev_echo_updates_bot_user_room(client: TestClient):
     csrf = setup.cookies.get("admin_csrf")
     client.post(
         "/setup",
-        data={"email": email, "password": "StrongPassword123", "csrf_token": csrf},
+        data={
+            "login": admin_login,
+            "password": "StrongPassword123",
+            "password_confirm": "StrongPassword123",
+            "csrf_token": csrf,
+        },
         follow_redirects=False,
     )
     login = client.get("/login")
     csrf_login = login.cookies.get("admin_csrf")
     client.post(
         "/login",
-        data={"email": email, "password": "StrongPassword123", "csrf_token": csrf_login},
+        data={"login": admin_login, "password": "StrongPassword123", "csrf_token": csrf_login},
         follow_redirects=True,
     )
 

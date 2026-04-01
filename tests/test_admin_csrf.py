@@ -89,7 +89,7 @@ def test_login_post_rejects_wrong_csrf_with_db(client: TestClient) -> None:
     r = client.post(
         "/login",
         data={
-            "email": "nobody@example.com",
+            "login": "nobody",
             "password": "DoesNotMatter123",
             "csrf_token": "definitely_wrong",
         },
@@ -110,7 +110,7 @@ def test_login_post_with_valid_csrf_proceeds_to_auth_not_csrf_error(client: Test
     r = client.post(
         "/login",
         data={
-            "email": "unknown_user@example.com",
+            "login": "unknown_user",
             "password": "StrongPassword123",
             "csrf_token": token,
         },

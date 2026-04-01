@@ -33,8 +33,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if p in (
             "/login",
-            "/forgot-password",
-            "/reset-password",
             "/health",
             "/health/live",
             "/health/ready",

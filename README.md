@@ -138,7 +138,7 @@ matrix_bot_firebeard/
 | `reports.py` | Генерация отчётов | — |
 | `security.py` | Argon2, AES-GCM для секретов, политика паролей | `test_security_crypto` |
 | `rate_limit.py` | Скользящее окно лимитов для auth-эндпоинтов админки | `test_rate_limit` |
-| `admin/` | Пакет админ-панели: `authz`, `audit`, `constants`, `notify_prefs`, `matrix_tokens`, `csrf`, `csp`, `lifespan`, `templates_env`, `auth_helpers`, `routers/*` (`health`, `auth`, `ops`, `secrets`, `app_users`, `groups`, `users`, `redmine`, `routes_cfg`, `matrix_bind`, `me`, `dashboard`) | `test_admin_main`, `test_admin_csrf`, `test_notify_prefs`, `test_authz` |
+| `admin/` | Пакет админ-панели: `authz`, `audit`, `cli_admin_credentials`, `constants`, `notify_prefs`, `matrix_tokens`, `csrf`, `csp`, `lifespan`, `templates_env`, `auth_helpers`, `routers/*` (`health`, `auth`, `ops`, `secrets`, `groups`, `users`, `redmine`, `routes_cfg`, `matrix_bind`, `me`, `dashboard`) | `test_admin_main`, `test_admin_csrf`, `test_notify_prefs`, `test_authz` |
 
 ---
 
@@ -186,7 +186,7 @@ cd src && python3 -c "from config import validate_required_env; ok, m = validate
 python -m pytest tests/ -v --tb=short --ignore=tests/e2e
 ```
 
-**E2E (Playwright)** — `tests/e2e/`: поднимают отдельный `uvicorn` и Chromium. Нужны `DATABASE_URL` на Postgres, после установки браузера: `python -m playwright install chromium`. Полный сценарий входа выполняется либо при пустой БД (одноразовая регистрация через `/setup` в фикстуре), либо при заданных **`E2E_ADMIN_EMAIL`** и **`E2E_ADMIN_PASSWORD`** в окружении.
+**E2E (Playwright)** — `tests/e2e/`: поднимают отдельный `uvicorn` и Chromium. Нужны `DATABASE_URL` на Postgres, после установки браузера: `python -m playwright install chromium`. Полный сценарий входа выполняется либо при пустой БД (одноразовая регистрация через `/setup` в фикстуре), либо при заданных **`E2E_ADMIN_LOGIN`** (или устаревший алиас **`E2E_ADMIN_EMAIL`**) и **`E2E_ADMIN_PASSWORD`** в окружении.
 
 ```bash
 python -m pytest tests/e2e/ -v --tb=short
@@ -253,9 +253,9 @@ docker compose down
 
 ### Админка и конфиг в БД
 
-1. После `docker compose up` откройте `http://<хост>:8080/setup` и создайте первого admin (только если admin ещё нет в БД).
-2. Вход в админку: `http://<хост>:8080/login` по `email + password`.
-3. Восстановление пароля: `http://<хост>:8080/forgot-password` → одноразовый reset token.
+1. После `docker compose up` откройте `http://<хост>:8080/setup` и создайте первого администратора: **логин**, **пароль** и **подтверждение пароля** (только если админа ещё нет в БД).
+2. Вход в админку: `http://<хост>:8080/login` по **логину и паролю**.
+3. Смена пароля или логина администратора — **только через CLI** на сервере: `scripts/manage_admin_credentials.py` (см. раздел Recovery ниже).
 4. Заполните пользователей, маршруты и секреты в админке; затем перезапустите сервис **`bot`** (бот читает конфиг при старте).
 5. Для дедупликации на нескольких инстансах используется lease по пользователю (`bot_user_leases`) и state в `bot_issue_state`.
 
@@ -315,17 +315,14 @@ REDMINE_API_KEY=your_redmine_api_key
 
 | Переменная | Назначение |
 |------------|------------|
-| `AUTH_TOKEN_SALT` | Соль для hash reset-токенов |
+| `AUTH_TOKEN_SALT` | Соль для hash одноразового кода привязки Matrix (`/matrix/bind`) |
 | `SESSION_TTL_SECONDS` | Время жизни admin-сессии |
-| `RESET_TOKEN_TTL_SECONDS` | TTL токена сброса пароля |
-| `RESET_COOLDOWN_SECONDS` | Ограничение частоты reset-запросов |
 | `COOKIE_SECURE` | Secure-флаг cookie (`1` для HTTPS) |
 | `APP_MASTER_KEY_FILE` | Путь к master key (32 байта) |
-| `SHOW_DEV_TOKENS` | Показ dev reset-токена в UI (только dev/test) |
 
-Публичные формы (**`/login`**, первичный **`/setup`**, **`/forgot-password`**, **`POST /reset-password`**) ограничиваются по IP in-memory лимитером (`src/rate_limit.py`, один процесс = одна «корзина»). За несколькими репликами админки без sticky-сессий имеет смысл вынести лимиты на прокси (nginx) или Redis.
+Публичные формы (**`/login`**, первичный **`/setup`**) ограничиваются по IP in-memory лимитером (`src/rate_limit.py`, один процесс = одна «корзина»). За несколькими репликами админки без sticky-сессий имеет смысл вынести лимиты на прокси (nginx) или Redis.
 
-### SMTP reset
+### SMTP (опционально, проверка `/health/smtp`)
 
 | Переменная | Назначение |
 |------------|------------|
@@ -333,9 +330,9 @@ REDMINE_API_KEY=your_redmine_api_key
 | `SMTP_PORT` | SMTP порт |
 | `SMTP_USERNAME` | SMTP логин |
 | `SMTP_PASSWORD` | SMTP пароль |
-| `SMTP_SENDER` | Email отправителя |
+| `SMTP_SENDER` | Адрес отправителя (для проверки соединения) |
 | `SMTP_USE_TLS` / `SMTP_USE_STARTTLS` | Режим транспортной защиты |
-| `SMTP_MOCK` | dev/test режим без реальной отправки (в production должен быть `0`) |
+| `SMTP_MOCK` | dev/test режим без реального подключения (в production обычно `0`) |
 | `SMTP_HEALTH_TTL_SECONDS` | TTL кэша проверки SMTP |
 
 ### Health endpoints
@@ -346,10 +343,20 @@ REDMINE_API_KEY=your_redmine_api_key
 
 ### Recovery
 
-Аварийный сброс пароля администратора:
+Смена **пароля** или **логина** администратора (только CLI, с инвалидацией всех сессий):
 
 ```bash
-python scripts/reset_admin_password.py --email admin@example.com --password 'NewStrongPassword123'
+python scripts/manage_admin_credentials.py reset-password --login admin --password 'NewStrongPassword123'
+# или интерактивный ввод пароля:
+python scripts/manage_admin_credentials.py reset-password --login admin
+
+python scripts/manage_admin_credentials.py change-login --old-login admin --new-login superadmin
+```
+
+Совместимость со старым вызовом (аргумент `--email` = логин):
+
+```bash
+python scripts/reset_admin_password.py --login admin --password 'NewStrongPassword123'
 ```
 
 Полный регламент отката: `docs/rollback-runbook.md`.
@@ -574,7 +581,7 @@ python -m pytest tests/ --cov=src --cov-report=term-missing
 |--------|-------|-----------------|
 | Корневой бот | `test_bot.py` | Логика `bot.py`, Matrix-моки, state, журналы |
 | Модули `src/` | `test_config.py`, `test_utils.py`, … | Конфиг, utils, state, preferences, matrix_client |
-| Админка E2E | `tests/e2e/` | Playwright: страница логина, редирект без сессии, вход (при пустой БД или `E2E_ADMIN_*`) |
+| Админка E2E | `tests/e2e/` | Playwright: страница логина, редирект без сессии, вход (при пустой БД или `E2E_ADMIN_LOGIN` / `E2E_ADMIN_PASSWORD`) |
 
 ---
 

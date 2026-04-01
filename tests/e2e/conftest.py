@@ -123,12 +123,12 @@ def _csrf_from_html(html: str) -> str | None:
 @pytest.fixture(scope="session")
 def e2e_credentials(e2e_admin_url: str) -> tuple[str, str] | None:
     """
-    Возвращает (email, password) для входа: из env или после одноразовой регистрации /setup.
+    Возвращает (login, password) для входа: из env или после одноразовой регистрации /setup.
     """
-    email = (os.getenv("E2E_ADMIN_EMAIL") or "").strip()
+    login = (os.getenv("E2E_ADMIN_LOGIN") or os.getenv("E2E_ADMIN_EMAIL") or "").strip()
     password = (os.getenv("E2E_ADMIN_PASSWORD") or "").strip()
-    if email and password:
-        return email, password
+    if login and password:
+        return login, password
 
     # Попробовать создать первого админа, если БД «пустая» (нужна сессия CSRF-cookie)
     cj = http.cookiejar.CookieJar()
@@ -149,10 +149,15 @@ def e2e_credentials(e2e_admin_url: str) -> tuple[str, str] | None:
     if not token:
         return None
 
-    new_email = "e2e_admin@e2e.local"
+    new_login = "e2e_admin"
     new_password = "StrongPassword123E2e!!"
     encoded = urlencode(
-        {"email": new_email, "password": new_password, "csrf_token": token}
+        {
+            "login": new_login,
+            "password": new_password,
+            "password_confirm": new_password,
+            "csrf_token": token,
+        }
     ).encode("utf-8")
     post = Request(
         f"{e2e_admin_url}/setup",
@@ -169,4 +174,4 @@ def e2e_credentials(e2e_admin_url: str) -> tuple[str, str] | None:
             return None
         raise
 
-    return new_email, new_password
+    return new_login, new_password

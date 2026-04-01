@@ -60,13 +60,13 @@ async def bot_ops_action(
     _verify_csrf(request, csrf_token)
     current = require_admin(request)
     ip = client_ip(request)
-    if not rate_limiter.hit(f"ops:{ip}:{current.email}", limit=12, window_seconds=60):
+    if not rate_limiter.hit(f"ops:{ip}:{current.login}", limit=12, window_seconds=60):
         raise HTTPException(429, "Слишком много операций, попробуйте позже")
 
     allowed = {"start", "stop", "restart"}
     if action not in allowed:
         raise HTTPException(400, "Недопустимое действие")
-    actor = current.email
+    actor = current.login
     if action == "restart":
         await audit_op(session, "BOT_RESTART", "accepted", actor_email=actor, detail="scheduled")
         await session.commit()

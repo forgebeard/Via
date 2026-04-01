@@ -15,11 +15,8 @@ GROUP_UNASSIGNED_NAME = "UNASSIGNED"
 AUTH_TOKEN_SALT = os.getenv("AUTH_TOKEN_SALT", "dev-token-salt")
 SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "86400"))
 MATRIX_CODE_TTL_SECONDS = int(os.getenv("MATRIX_CODE_TTL_SECONDS", "300"))
-RESET_TOKEN_TTL_SECONDS = int(os.getenv("RESET_TOKEN_TTL_SECONDS", "1800"))
-RESET_COOLDOWN_SECONDS = int(os.getenv("RESET_COOLDOWN_SECONDS", "90"))
 
 APP_MASTER_KEY_FILE = os.getenv("APP_MASTER_KEY_FILE", "/run/secrets/app_master_key")
-SHOW_DEV_TOKENS = os.getenv("SHOW_DEV_TOKENS", "0").strip().lower() in ("1", "true", "yes", "on")
 ADMIN_EXISTS_CACHE_TTL_SECONDS = int(os.getenv("ADMIN_EXISTS_CACHE_TTL_SECONDS", "20"))
 INTEGRATION_STATUS_CACHE_TTL_SECONDS = int(os.getenv("INTEGRATION_STATUS_CACHE_TTL_SECONDS", "30"))
 REQUIRED_SECRET_NAMES = [
@@ -41,19 +38,6 @@ NOTIFY_TYPES = [
     ("reopened", "Переоткрыта"),
 ]
 NOTIFY_TYPE_KEYS = [k for k, _ in NOTIFY_TYPES]
-
-_ADMIN_EMAILS = {
-    e.strip().lower()
-    for e in (os.getenv("ADMIN_EMAILS", "") or "").split(",")
-    if e.strip()
-}
-
-ADMIN_BOOTSTRAP_FIRST_ADMIN = os.getenv("ADMIN_BOOTSTRAP_FIRST_ADMIN", "0").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-    "on",
-)
 
 REDMINE_URL = (os.getenv("REDMINE_URL") or "").strip()
 REDMINE_API_KEY = (os.getenv("REDMINE_API_KEY") or "").strip()

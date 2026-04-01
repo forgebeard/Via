@@ -2,7 +2,13 @@ import logging
 
 import pytest
 
-from security import decrypt_secret, encrypt_secret, hash_password, verify_password
+from security import (
+    decrypt_secret,
+    encrypt_secret,
+    hash_password,
+    validate_password_policy,
+    verify_password,
+)
 
 
 def test_encryption_unique_nonce():
@@ -19,6 +25,17 @@ def test_verify_password_roundtrip():
     h = hash_password("GoodPassword123")
     assert verify_password(h, "GoodPassword123") is True
     assert verify_password(h, "WrongPassword123") is False
+
+
+def test_validate_password_policy_rejects_login_substring():
+    ok, reason = validate_password_policy("StrongPassword123x", login="strong")
+    assert ok is False
+    assert reason and "логин" in reason.lower()
+
+
+def test_validate_password_policy_allows_without_login_clash():
+    ok, _ = validate_password_policy("StrongPassword123", login="admin")
+    assert ok is True
 
 
 def test_verify_password_invalid_hash_logs_warning(caplog: pytest.LogCaptureFixture):
