@@ -8,6 +8,10 @@ SESSION_COOKIE_NAME = os.getenv("ADMIN_SESSION_COOKIE", "admin_session")
 CSRF_COOKIE_NAME = os.getenv("ADMIN_CSRF_COOKIE", "admin_csrf")
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0").strip().lower() in ("1", "true", "yes", "on")
 SETUP_PATH = "/setup"
+# Первый вход после развёртывания: логин/пароль по умолчанию (см. README), затем обязательная смена.
+BOOTSTRAP_ADMIN_LOGIN = "admin"
+BOOTSTRAP_ADMIN_PASSWORD = "admin"
+MUST_CHANGE_CREDENTIALS_PATH = "/me/bootstrap-credentials"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.getenv("ADMIN_SESSION_IDLE_TIMEOUT", "1800"))
 RUNTIME_STATUS_FILE = os.getenv("BOT_RUNTIME_STATUS_FILE", "/app/data/runtime_status.json")
 GROUP_UNASSIGNED_NAME = "UNASSIGNED"
@@ -39,5 +43,6 @@ NOTIFY_TYPES = [
 ]
 NOTIFY_TYPE_KEYS = [k for k, _ in NOTIFY_TYPES]
 
+# Fallback, если в БД (app_secrets) ещё нет значений — см. routers/redmine.py
 REDMINE_URL = (os.getenv("REDMINE_URL") or "").strip()
 REDMINE_API_KEY = (os.getenv("REDMINE_API_KEY") or "").strip()

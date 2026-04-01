@@ -32,24 +32,12 @@ def test_matrix_bind_flow_dev_echo_updates_bot_user_room(client: TestClient):
     redmine_id = 123
     room_id = "!room123:example.com"
 
-    setup = client.get("/setup")
-    csrf = setup.cookies.get("admin_csrf")
-    client.post(
-        "/setup",
-        data={
-            "login": admin_login,
-            "password": "StrongPassword123",
-            "password_confirm": "StrongPassword123",
-            "csrf_token": csrf,
-        },
-        follow_redirects=False,
-    )
-    login = client.get("/login")
-    csrf_login = login.cookies.get("admin_csrf")
-    client.post(
-        "/login",
-        data={"login": admin_login, "password": "StrongPassword123", "csrf_token": csrf_login},
-        follow_redirects=True,
+    from tests.support_admin import ensure_admin_logged_in
+
+    ensure_admin_logged_in(
+        client,
+        final_login=admin_login,
+        final_password="StrongPassword123",
     )
 
     bind_page = client.get("/matrix/bind")

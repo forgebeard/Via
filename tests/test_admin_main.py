@@ -84,24 +84,10 @@ def test_notify_presets_helpers():
     assert parse_work_hours_range("invalid") == ("", "")
 
 
-def test_setup_creates_first_admin(client: TestClient):
-    db_url = os.getenv("DATABASE_URL", "")
-    if not db_url or not db_url.startswith("postgresql://"):
-        pytest.skip("Тест требует Postgres (DATABASE_URL)")
-    page = client.get("/setup")
-    assert page.status_code == 200
-    token = page.cookies.get("admin_csrf")
-    r = client.post(
-        "/setup",
-        data={
-            "login": "first_admin",
-            "password": "StrongPassword123",
-            "password_confirm": "StrongPassword123",
-            "csrf_token": token,
-        },
-        follow_redirects=False,
-    )
+def test_setup_redirects_to_login(client: TestClient):
+    r = client.get("/setup", follow_redirects=False)
     assert r.status_code in (302, 303)
+    assert r.headers.get("location", "").endswith("/login")
 
 
 def test_users_redirects_to_login_without_auth(client: TestClient):
@@ -111,25 +97,9 @@ def test_users_redirects_to_login_without_auth(client: TestClient):
 
 
 def _setup_and_login_admin(client: TestClient, login: str = "test_admin", password: str = "StrongPassword123") -> None:
-    setup = client.get("/setup")
-    token = setup.cookies.get("admin_csrf")
-    client.post(
-        "/setup",
-        data={
-            "login": login,
-            "password": password,
-            "password_confirm": password,
-            "csrf_token": token,
-        },
-        follow_redirects=False,
-    )
-    login_page = client.get("/login")
-    ltoken = login_page.cookies.get("admin_csrf")
-    client.post(
-        "/login",
-        data={"login": login, "password": password, "csrf_token": ltoken},
-        follow_redirects=True,
-    )
+    from tests.support_admin import ensure_admin_logged_in
+
+    ensure_admin_logged_in(client, final_login=login, final_password=password)
 
 
 def test_onboarding_page_copy(client: TestClient):
@@ -160,7 +130,7 @@ def test_ops_restart_accepts_and_redirects(client: TestClient, monkeypatch):
     db_url = os.getenv("DATABASE_URL", "")
     if not db_url or not db_url.startswith("postgresql://"):
         pytest.skip("Тест требует Postgres (DATABASE_URL)")
-    _setup_and_login_admin(client, login="ops_admin")
+    _setup_and_login_admin(client)
 
     from admin.routers import ops as admin_ops
 

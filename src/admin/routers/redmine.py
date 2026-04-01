@@ -6,19 +6,30 @@ import asyncio
 import json
 from html import escape as html_escape
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.authz import require_admin
 from admin.constants import REDMINE_API_KEY, REDMINE_URL
 from admin.runtime import logger, redmine_search_breaker
+from database.app_secret_values import load_decrypted_secrets, merge_secret
+from database.session import get_session
 
 router = APIRouter()
+
+
+async def _redmine_url_and_key(session: AsyncSession) -> tuple[str, str]:
+    db = await load_decrypted_secrets(session, ("REDMINE_URL", "REDMINE_API_KEY"))
+    url = merge_secret(db, "REDMINE_URL", REDMINE_URL)
+    key = merge_secret(db, "REDMINE_API_KEY", REDMINE_API_KEY)
+    return url, key
 
 
 @router.get("/redmine/users/search", response_class=HTMLResponse)
 async def redmine_users_search(
     request: Request,
+    session: AsyncSession = Depends(get_session),
     q: str = "",
     limit: int = 20,
 ):
@@ -43,7 +54,8 @@ async def redmine_users_search(
         logger.warning("Redmine search blocked due to cooldown")
         return HTMLResponse('<option value="">Поиск временно недоступен (cooldown)</option>')
 
-    if not REDMINE_URL or not REDMINE_API_KEY:
+    redmine_url, redmine_key = await _redmine_url_and_key(session)
+    if not redmine_url or not redmine_key:
         return HTMLResponse('<option value="">Redmine не настроен (нет URL/API key)</option>')
 
     def _do_search() -> tuple[list[dict], str | None]:
@@ -52,8 +64,8 @@ async def redmine_users_search(
         from urllib.request import Request, urlopen
 
         params = urlencode({"name": q, "limit": str(limit_i)})
-        url = f"{REDMINE_URL.rstrip('/')}/users.json?{params}"
-        req = Request(url, headers={"X-Redmine-API-Key": REDMINE_API_KEY})
+        url = f"{redmine_url.rstrip('/')}/users.json?{params}"
+        req = Request(url, headers={"X-Redmine-API-Key": redmine_key})
         try:
             with urlopen(req, timeout=5.0) as r:
                 payload = json.loads(r.read().decode("utf-8", errors="replace"))

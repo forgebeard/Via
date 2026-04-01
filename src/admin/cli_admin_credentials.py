@@ -45,6 +45,7 @@ async def async_reset_password(login: str, password: str | None, *, force: bool)
             print("Администратор с таким логином не найден", file=sys.stderr)
             return 3
         user.password_hash = hash_password(pwd)
+        user.must_change_credentials = False
         user.session_version = (user.session_version or 1) + 1
         await session.execute(delete(BotSession).where(BotSession.user_id == user.id))
         await session.commit()
@@ -75,6 +76,7 @@ async def async_change_login(old_login: str, new_login: str) -> int:
             print("Новый логин уже занят", file=sys.stderr)
             return 4
         user.login = new_n
+        user.must_change_credentials = False
         user.session_version = (user.session_version or 1) + 1
         await session.execute(delete(BotSession).where(BotSession.user_id == user.id))
         await session.commit()

@@ -13,6 +13,7 @@ from starlette.requests import Request
 from admin.constants import (
     COOKIE_SECURE,
     CSRF_COOKIE_NAME,
+    MUST_CHANGE_CREDENTIALS_PATH,
     SESSION_COOKIE_NAME,
     SESSION_IDLE_TIMEOUT_SECONDS,
     SETUP_PATH,
@@ -52,7 +53,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return RedirectResponse("/login", status_code=303)
 
         if not has_admin and p != SETUP_PATH:
-            return RedirectResponse(SETUP_PATH, status_code=303)
+            return RedirectResponse("/login", status_code=303)
 
         token_raw = request.cookies.get(SESSION_COOKIE_NAME, "")
         if not token_raw:
@@ -94,6 +95,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 request.state.integration_status = await load_integration_status(session)
         except Exception:
             return RedirectResponse("/login", status_code=303)
+
+        user = getattr(request.state, "current_user", None)
+        if user and getattr(user, "must_change_credentials", False):
+            allowed = (
+                p == MUST_CHANGE_CREDENTIALS_PATH
+                or p == "/logout"
+                or p.startswith("/static/")
+                or p.startswith("/health")
+            )
+            if not allowed:
+                return RedirectResponse(MUST_CHANGE_CREDENTIALS_PATH, status_code=303)
 
         csrf_token, set_csrf_cookie = _ensure_csrf(request)
         request.state.csrf_token = csrf_token

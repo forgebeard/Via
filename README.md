@@ -212,24 +212,22 @@ python3 bot.py
 
 | Сервис | Назначение |
 |--------|------------|
-| **bot** | Образ из `Dockerfile` (корневой `bot.py` + `src/`), том `./data` → `/app/data`, `.env` только для чтения; healthcheck: `python -c "import bot"` |
-| **postgres** | PostgreSQL 16, том `postgres_data`; `DATABASE_URL` в **bot** и **admin** |
-| **docker-socket-proxy** | Ограниченный прокси к Docker API для runtime-control из admin (без прямого монтирования raw socket в admin) |
-| **admin** | Веб-интерфейс (`admin_main.py`, FastAPI + Jinja2 + HTMX): шаблоны в `templates/admin/`, стили в `static/admin/css/` (раздача `/static/...`); ссылки на CSS с `?v=…` из **`ADMIN_ASSET_VERSION`** (по умолчанию `1`) для сброса кэша после обновления стилей; runtime-control (`start/stop/restart` сервиса `bot`) через `DOCKER_HOST` + `DOCKER_TARGET_SERVICE`; опционально **CSP** через `ADMIN_ENABLE_CSP` / `ADMIN_CSP_POLICY` в `.env`. Порт: **`ADMIN_PORT`** (по умолчанию 8080); при старте `alembic upgrade head` |
+| **postgres-password-init** | Одноразовый контейнер: случайный пароль Postgres в томе `postgres_password_vol` (в git паролей нет). |
+| **bot** | Образ `Dockerfile`, том `./data`; DSN из `DATABASE_PASSWORD_FILE` + `POSTGRES_*`. Healthcheck: `python -c "import bot"`. |
+| **postgres** | PostgreSQL 16, том `postgres_data`; пароль из файла `POSTGRES_PASSWORD_FILE`. |
+| **docker-socket-proxy** | Прокси к Docker API для runtime-control из admin. |
+| **admin** | Веб-интерфейс; `./data` смонтирован на **запись** (логи, авто `data/.app_master_key`). Старт: `scripts/docker_admin_entry.sh` → `alembic upgrade head` → uvicorn. Порт **`ADMIN_PORT`**. |
 
-### Подготовка `.env`
+### Секреты и `.env` при Docker
 
-Сначала добавьте переменные для PostgreSQL (используются и `docker compose`, и подстановка `DATABASE_URL` в контейнере бота):
+1. **Пароль Postgres** создаётся при первом `docker compose up` и лежит только в томе. Для DBeaver / строки Alembic с хоста: админка → **«Пароль PostgreSQL»** на обзоре (`/ops/postgres-connection`).
+2. **Master key** шифрования секретов в БД: если не задан `APP_MASTER_KEY`, создаётся `data/.app_master_key` (в `.gitignore`). Каталог `data/` общий для **admin** и **bot**.
+3. **Matrix / Redmine** — в первую очередь через **онбординг** и страницу **«Секреты»**; переменные в `.env` — опциональный fallback (CI, отладка).
+4. **`.env` не обязателен** для старта compose (`env_file: required: false`). При необходимости: `cp .env.example .env` — порт админки, SMTP и т.д.
 
-```env
-POSTGRES_USER=bot
-POSTGRES_PASSWORD=сгенерируйте_надёжный_пароль
-POSTGRES_DB=redmine_matrix
-```
+Для **pytest** по умолчанию подставляется тестовый `DATABASE_URL` (как в CI). Чтобы использовать свой `.env` при тестах: `TEST_USE_LOCAL_ENV=1 pytest …`.
 
-Остальные переменные — как в разделе «Настройка .env» ниже (`MATRIX_*`, `REDMINE_*` и параметры admin).
-
-> ⚠️ Если в пароле есть символы `@ : / ? #` — для `DATABASE_URL` может понадобиться URL-кодирование или упрощённый пароль для dev.
+**Смена пароля админа панели** — `scripts/manage_admin_credentials.py`. **Смена пароля роли Postgres** после инициализации — через `psql` / `ALTER USER` (или новые тома в dev).
 
 ### Сборка и запуск
 
@@ -249,13 +247,13 @@ docker compose logs -f bot
 docker compose down
 ```
 
-Данные **Postgres** сохраняются в томе `postgres_data` (конфиг + `bot_issue_state`/lease). State больше не пишется в JSON.
+Данные **Postgres** — в томе `postgres_data`; файл с паролем суперпользователя — в томе `postgres_password_vol` (не коммитится). State больше не пишется в JSON.
 
 ### Админка и конфиг в БД
 
-1. После `docker compose up` откройте `http://<хост>:8080/setup` и создайте первого администратора: **логин**, **пароль** и **подтверждение пароля** (только если админа ещё нет в БД).
-2. Вход в админку: `http://<хост>:8080/login` по **логину и паролю**.
-3. Смена пароля или логина администратора — **только через CLI** на сервере: `scripts/manage_admin_credentials.py` (см. раздел Recovery ниже).
+1. После `docker compose up` и миграций первый администратор создаётся автоматически: логин **`admin`**, пароль **`admin`**. Откройте `http://<хост>:8080/login`, войдите и **сразу смените логин и пароль** (без этого недоступны онбординг Redmine/Matrix и остальная панель).
+2. Дальнейший вход — по вашему новому логину и паролю.
+3. Смена пароля или логина позже — через CLI: `scripts/manage_admin_credentials.py` (см. раздел Recovery ниже).
 4. Заполните пользователей, маршруты и секреты в админке; затем перезапустите сервис **`bot`** (бот читает конфиг при старте).
 5. Для дедупликации на нескольких инстансах используется lease по пользователю (`bot_user_leases`) и state в `bot_issue_state`.
 
@@ -276,16 +274,18 @@ docker compose up -d bot
 
 ---
 
-## Настройка .env
+## Настройка интеграций (UI в приоритете)
+
+В Docker-режиме **Matrix и Redmine** задаются в админке (онбординг / «Секреты») и хранятся в БД зашифрованными. Блок ниже — справка для **опционального** `.env` (локальная отладка, CI):
 
 ```env
-# ─── Matrix-сервер ───────────────────────────────────
+# ─── Matrix (fallback) ─────────────────────────────
 MATRIX_HOMESERVER=https://messenger.example.com
 MATRIX_ACCESS_TOKEN=syt_your_access_token_here
 MATRIX_USER_ID=@bot_user:messenger.example.com
 MATRIX_DEVICE_ID=BOTDEVICE
 
-# ─── Redmine ─────────────────────────────────────────
+# ─── Redmine (fallback) ─────────────────────────────
 REDMINE_URL=https://redmine.example.com
 REDMINE_API_KEY=your_redmine_api_key
 ```

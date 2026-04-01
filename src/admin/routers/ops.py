@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import time
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.audit import audit_op
@@ -17,10 +19,47 @@ from admin.auth_helpers import client_ip
 from admin.authz import require_admin
 from admin.csrf import verify_csrf as _verify_csrf
 from admin.runtime import logger, rate_limiter
+from admin.templates_env import templates
 from database.session import get_session, get_session_factory
 from ops.docker_control import DockerControlError, control_service
 
 router = APIRouter()
+
+
+@router.get("/ops/postgres-connection", response_class=HTMLResponse)
+async def postgres_connection_page(request: Request):
+    """Показать параметры БД для подключения с хоста (пароль из смонтированного файла)."""
+    require_admin(request)
+    user = (os.getenv("POSTGRES_USER") or "bot").strip()
+    db = (os.getenv("POSTGRES_DB") or "redmine_matrix").strip()
+    pw_file = (os.getenv("DATABASE_PASSWORD_FILE") or "").strip()
+    password_display = ""
+    err = ""
+    if pw_file:
+        p = Path(pw_file)
+        if p.is_file():
+            password_display = p.read_text(encoding="utf-8").strip()
+        else:
+            err = f"Файл пароля не найден: {pw_file}"
+    else:
+        err = (
+            "Пароль из файла недоступен (не задан DATABASE_PASSWORD_FILE). "
+            "Используйте явный DATABASE_URL в окружении или стандартный compose с томом пароля."
+        )
+    return templates.TemplateResponse(
+        request,
+        "postgres_credentials.html",
+        {
+            "pg_user": user,
+            "pg_db": db,
+            "password": password_display,
+            "error": err,
+            "host_port_note": (
+                "С хоста: 127.0.0.1 и порт из compose (часто 5433 → контейнер 5432). "
+                "Внутри сети Docker: хост postgres, порт 5432."
+            ),
+        },
+    )
 
 
 def restart_in_background(actor_email: str | None) -> None:

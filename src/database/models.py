@@ -158,6 +158,7 @@ class BotAppUser(Base):
     redmine_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, unique=True)
     password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    must_change_credentials: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class BotMagicToken(Base):

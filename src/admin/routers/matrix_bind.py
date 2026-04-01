@@ -19,6 +19,7 @@ from admin.csrf import verify_csrf as _verify_csrf
 from admin.matrix_tokens import hash_binding_code
 from admin.templates_env import templates
 from admin.timeutil import now_utc as _now_utc
+from database.app_secret_values import load_decrypted_secrets, merge_secret
 from database.models import BotAppUser, BotUser, MatrixRoomBinding
 from database.session import get_session
 from matrix_send import room_send_with_retry
@@ -77,10 +78,14 @@ async def matrix_bind_start(
     await session.flush()
 
     try:
-        homeserver = (os.getenv("MATRIX_HOMESERVER") or "").strip()
-        access_token = (os.getenv("MATRIX_ACCESS_TOKEN") or "").strip()
-        matrix_user_id = (os.getenv("MATRIX_USER_ID") or "").strip()
-        matrix_device_id = (os.getenv("MATRIX_DEVICE_ID") or "").strip()
+        db_mx = await load_decrypted_secrets(
+            session,
+            ("MATRIX_HOMESERVER", "MATRIX_ACCESS_TOKEN", "MATRIX_USER_ID", "MATRIX_DEVICE_ID"),
+        )
+        homeserver = merge_secret(db_mx, "MATRIX_HOMESERVER", os.getenv("MATRIX_HOMESERVER"))
+        access_token = merge_secret(db_mx, "MATRIX_ACCESS_TOKEN", os.getenv("MATRIX_ACCESS_TOKEN"))
+        matrix_user_id = merge_secret(db_mx, "MATRIX_USER_ID", os.getenv("MATRIX_USER_ID"))
+        matrix_device_id = merge_secret(db_mx, "MATRIX_DEVICE_ID", os.getenv("MATRIX_DEVICE_ID"))
         if homeserver and access_token and matrix_user_id:
             mclient = AsyncClient(homeserver)
             mclient.access_token = access_token

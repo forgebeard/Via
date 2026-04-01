@@ -1,8 +1,8 @@
 """
 Браузерные смоук-тесты админки (Playwright).
 
-Без E2E_ADMIN_* полный вход выполняется только если в БД ещё нет администратора
-(фикстура пытается один раз пройти /setup).
+Без E2E_ADMIN_* фикстура один раз выполняет вход admin/admin и смену учётки на e2e_admin
+(нужны миграции и зашитый в миграции первый админ).
 """
 
 from __future__ import annotations
@@ -35,8 +35,8 @@ def test_login_reaches_shell_after_auth(
 ) -> None:
     if e2e_credentials is None:
         pytest.skip(
-            "Нет учётных данных: задайте E2E_ADMIN_LOGIN (или E2E_ADMIN_EMAIL) и E2E_ADMIN_PASSWORD "
-            "или очистите таблицу админов для одноразового /setup"
+            "Нет учётных данных: задайте E2E_ADMIN_LOGIN и E2E_ADMIN_PASSWORD "
+            "или убедитесь, что миграции создали admin/admin и HTTP-bootstrap доступен"
         )
     login, password = e2e_credentials
     page.goto(f"{e2e_admin_url}/login")
