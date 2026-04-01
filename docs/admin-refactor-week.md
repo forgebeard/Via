@@ -6,12 +6,13 @@
 - День 2–3: `runtime.py`, `session_logic.py`, `timeutil.py`, `middleware/auth.py` (сессии + CSRF cookie).
 - День 4: `auth_helpers.py`, `routers/auth.py` (login, setup, onboarding, forgot/reset, logout).
 - День 5: `audit.py`, `routers/ops.py`, `routers/secrets.py`.
+- День 6: `routers/app_users.py`.
 
 ## Дальше по дням
 
 | День | Задача |
 |------|--------|
-| 6+ | Роутеры `app_users`, `groups`, `users`, `routes`, `matrix_bind`, `me` — порциями |
+| 7+ | Роутеры `groups`, `users`, `routes`, `matrix_bind`, `me` — порциями |
 
 ## Инварианты
 

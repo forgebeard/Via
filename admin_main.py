@@ -35,7 +35,6 @@ from database.load_config import row_counts
 from database.models import (
     AppSecret,
     BotAppUser,
-    BotSession,
     BotUser,
     MatrixRoomBinding,
     StatusRoomRoute,
@@ -43,9 +42,6 @@ from database.models import (
     VersionRoomRoute,
 )
 from database.session import get_session
-from mail import mask_email
-from security import encrypt_secret, hash_password, load_master_key, token_hash, validate_password_policy
-
 from matrix_send import room_send_with_retry
 from ops.docker_control import DockerControlError, get_service_status
 
@@ -64,6 +60,7 @@ from admin.constants import (
 from admin.csp import admin_csp_value as _admin_csp_value, security_headers_middleware
 from admin.csrf import ensure_csrf as _ensure_csrf, verify_csrf as _verify_csrf
 from admin.lifespan import admin_lifespan as _admin_lifespan
+from admin.routers.app_users import router as app_users_router
 from admin.routers.auth import router as auth_router
 from admin.routers.health import router as health_router
 from admin.routers.ops import router as ops_router
@@ -83,6 +80,7 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(ops_router)
 app.include_router(secrets_router)
+app.include_router(app_users_router)
 app.middleware("http")(security_headers_middleware)
 
 _STATIC_ROOT = _ROOT / "static"
@@ -127,54 +125,6 @@ async def index(
             },
         },
     )
-
-
-@app.get("/app-users", response_class=HTMLResponse)
-async def app_users_page(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-):
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    rows = await session.execute(select(BotAppUser).order_by(BotAppUser.email))
-    users = list(rows.scalars().all())
-    csrf_token, set_cookie = _ensure_csrf(request)
-    resp = templates.TemplateResponse(
-        request,
-        "app_users.html",
-        {"users": users, "csrf_token": csrf_token},
-    )
-    if set_cookie:
-        resp.set_cookie(CSRF_COOKIE_NAME, csrf_token, httponly=True, secure=COOKIE_SECURE, samesite="lax")
-    return resp
-
-
-@app.post("/app-users/{user_id}/reset-password-admin")
-async def app_user_reset_password_admin(
-    request: Request,
-    user_id: str,
-    new_password: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    _verify_csrf(request, csrf_token)
-    current = getattr(request.state, "current_user", None)
-    if not current or getattr(current, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    uid = uuid.UUID(user_id)
-    q = await session.execute(select(BotAppUser).where(BotAppUser.id == uid))
-    target = q.scalar_one_or_none()
-    if not target:
-        raise HTTPException(404, "Пользователь не найден")
-    ok, reason = validate_password_policy(new_password, email=target.email)
-    if not ok:
-        raise HTTPException(400, reason)
-    target.password_hash = hash_password(new_password)
-    target.session_version = (target.session_version or 1) + 1
-    await session.execute(delete(BotSession).where(BotSession.user_id == target.id))
-    logger.info("admin_password_reset target=%s actor=%s", mask_email(target.email), mask_email(current.email))
-    return RedirectResponse("/app-users", status_code=303)
 
 
 # --- Пользователи ---
