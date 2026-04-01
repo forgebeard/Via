@@ -3,6 +3,7 @@
 {% block title %}Группы{% endblock %}
 {% block content %}
 {% call page_head("Группы") %}
+  <span class="page-list-summary" title="С учётом фильтра поиска">В списке: <strong>{{ list_total }}</strong></span>
   <a class="btn btn-primary" href="/groups/new"><i class="fa-solid fa-plus"></i> Добавить группу</a>
 {% endcall %}
 

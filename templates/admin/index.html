@@ -9,21 +9,18 @@
   </div>
 </header>
 
-<div class="grid-stats">
-  <div class="card stat-card">
-    <div class="stat-label">Пользователи</div>
-    <div class="stat-value">{{ users_count }}</div>
-    <i class="fa-solid fa-users stat-icon" aria-hidden="true"></i>
-  </div>
-  <div class="card stat-card">
-    <div class="stat-label">Маршруты по статусу</div>
-    <div class="stat-value">{{ status_routes_count }}</div>
-    <i class="fa-solid fa-route stat-icon" aria-hidden="true"></i>
-  </div>
-  <a class="card stat-card stat-card--link" href="/routes/version">
-    <div class="stat-label">Маршруты по версии</div>
-    <div class="stat-value">{{ version_routes_count }}</div>
-    <i class="fa-solid fa-code-branch stat-icon" aria-hidden="true"></i>
+<div class="grid-stats dash-link-grid">
+  <a class="card dash-link-tile" href="/users" aria-label="Пользователи">
+    <i class="fa-solid fa-users dash-link-tile__icon" aria-hidden="true"></i>
+    <span class="dash-link-tile__label">Пользователи</span>
+  </a>
+  <a class="card dash-link-tile" href="/groups" aria-label="Группы">
+    <i class="fa-solid fa-layer-group dash-link-tile__icon" aria-hidden="true"></i>
+    <span class="dash-link-tile__label">Группы</span>
+  </a>
+  <a class="card dash-link-tile" href="/events" aria-label="События">
+    <i class="fa-solid fa-bolt dash-link-tile__icon" aria-hidden="true"></i>
+    <span class="dash-link-tile__label">События</span>
   </a>
 </div>
 

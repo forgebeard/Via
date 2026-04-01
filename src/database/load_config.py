@@ -6,18 +6,33 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import BotUser, StatusRoomRoute, SupportGroup, VersionRoomRoute
+from .models import (
+    BotUser,
+    GroupVersionRoute,
+    StatusRoomRoute,
+    SupportGroup,
+    UserVersionRoute,
+    VersionRoomRoute,
+)
 from .session import get_session_factory
 
 logger = logging.getLogger("redmine_bot")
 
 
-def user_orm_to_cfg(row: BotUser, groups_by_id: dict[int, SupportGroup]) -> dict[str, Any]:
+def user_orm_to_cfg(
+    row: BotUser,
+    groups_by_id: dict[int, SupportGroup],
+    gv_by_group: dict[int, list[dict[str, str]]] | None = None,
+    uv_by_user: dict[int, list[dict[str, str]]] | None = None,
+) -> dict[str, Any]:
+    gv_by_group = gv_by_group or {}
+    uv_by_user = uv_by_user or {}
     d: dict[str, Any] = {
         "redmine_id": row.redmine_id,
         "room": row.room,
@@ -43,6 +58,11 @@ def user_orm_to_cfg(row: BotUser, groups_by_id: dict[int, SupportGroup]) -> dict
         d["work_days"] = row.work_days
     if row.dnd:
         d["dnd"] = True
+    vr: list[dict[str, str]] = []
+    vr.extend(uv_by_user.get(row.id, []))
+    if row.group_id is not None:
+        vr.extend(gv_by_group.get(row.group_id, []))
+    d["version_routes"] = vr
     return d
 
 
@@ -59,8 +79,20 @@ async def fetch_runtime_config(session: AsyncSession | None = None) -> tuple[lis
     groups = list(r_groups.scalars().all())
     groups_by_id = {g.id: g for g in groups}
 
+    gv_by_group: dict[int, list[dict[str, str]]] = defaultdict(list)
+    r_gv = await session.execute(select(GroupVersionRoute))
+    for gr in r_gv.scalars().all():
+        gv_by_group[gr.group_id].append({"key": gr.version_key, "room": gr.room_id})
+
+    uv_by_user: dict[int, list[dict[str, str]]] = defaultdict(list)
+    r_uv = await session.execute(select(UserVersionRoute))
+    for ur in r_uv.scalars().all():
+        uv_by_user[ur.bot_user_id].append({"key": ur.version_key, "room": ur.room_id})
+
     r_users = await session.execute(select(BotUser).order_by(BotUser.redmine_id))
-    users = [user_orm_to_cfg(u, groups_by_id) for u in r_users.scalars().all()]
+    users = [
+        user_orm_to_cfg(u, groups_by_id, gv_by_group, uv_by_user) for u in r_users.scalars().all()
+    ]
 
     r_st = await session.execute(select(StatusRoomRoute))
     status_map = {row.status_key: row.room_id for row in r_st.scalars().all()}

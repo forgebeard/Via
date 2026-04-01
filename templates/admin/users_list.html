@@ -3,6 +3,7 @@
 {% block title %}Пользователи{% endblock %}
 {% block content %}
 {% call page_head("Пользователи", "Поиск, фильтры и группировка по группам.") %}
+  <span class="page-list-summary" title="С учётом фильтров">В списке: <strong>{{ list_total }}</strong></span>
   <a class="btn btn-primary" href="/users/new"><i class="fa-solid fa-plus"></i> Добавить</a>
 {% endcall %}
 

@@ -77,6 +77,11 @@
       <textarea id="initial_status_keys" name="initial_status_keys" rows="4" required placeholder="Точное имя статуса в Redmine — каждое с новой строки или через запятую"></textarea>
       <p class="field-hint">Обязательно: хотя бы один статус. После сохранения список можно менять в блоке ниже.</p>
     </div>
+    <div class="field">
+      <label for="initial_version_keys">Версии (необязательно)</label>
+      <textarea id="initial_version_keys" name="initial_version_keys" rows="3" placeholder="Подстрока в названии версии задачи в Redmine — с новой строки или через запятую"></textarea>
+      <p class="field-hint">Дополнительные уведомления в комнату группы, если в версии задачи встречается этот фрагмент (без учёта регистра).</p>
+    </div>
     {% endif %}
     <div class="page-actions">
       <button class="btn btn-primary" type="submit">Сохранить</button>
@@ -150,6 +155,60 @@
   </form>
   {% else %}
   <p class="muted">Укажите ID комнаты группы в форме выше и сохраните — здесь появится список статусов.</p>
+  {% endif %}
+</div>
+
+<div class="card content-stack" style="margin-top:1.25rem;">
+  <h2 style="margin-top:0;">Версии</h2>
+  <p class="muted">Если <strong>название версии</strong> задачи в Redmine содержит указанный фрагмент (без учёта регистра), уведомление о новой задаче / РВ дополнительно уходит в комнату группы.</p>
+  {% if version_err == "no_room" %}
+  <p class="error">Сначала укажите ID комнаты группы и сохраните форму выше.</p>
+  {% elif version_err == "empty" %}
+  <p class="error">Введите ключ версии.</p>
+  {% elif version_err == "exists" %}
+  <p class="error">Такой ключ версии уже есть у этой группы.</p>
+  {% endif %}
+  {% if version_msg == "added" %}
+  <p class="muted">Версия добавлена.</p>
+  {% elif version_msg == "deleted" %}
+  <p class="muted">Запись удалена.</p>
+  {% endif %}
+
+  {% set _rid = (g.room_id or "").strip() %}
+  {% if _rid %}
+  <div class="table-wrap" style="margin-top:0.75rem;">
+    <table>
+      <thead><tr><th>Ключ версии</th><th>Комната</th><th class="table-actions" aria-label="Действия"></th></tr></thead>
+      <tbody>
+        {% for r in version_routes %}
+        <tr>
+          <td>{{ r.version_key }}</td>
+          <td><code class="mono-truncate">{{ r.room_id }}</code></td>
+          <td class="table-actions">
+            <form method="post" action="/groups/{{ g.id }}/version-routes/{{ r.id }}/delete" style="display:inline;" hx-confirm="Удалить привязку версии?">
+              <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
+              <button type="submit" class="btn btn-danger">Удалить</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr class="table-empty"><td colspan="3">Пока нет привязок по версии</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <form class="form" method="post" action="/groups/{{ g.id }}/version-routes/add" style="margin-top:1rem;">
+    <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
+    <div class="field">
+      <label for="version_key_new">Добавить ключ версии</label>
+      <input type="text" id="version_key_new" name="version_key" placeholder="Например: РЕД ОС" required/>
+    </div>
+    <div class="page-actions">
+      <button type="submit" class="btn btn-primary">Добавить</button>
+    </div>
+  </form>
+  {% else %}
+  <p class="muted">Укажите ID комнаты группы в форме выше и сохраните.</p>
   {% endif %}
 </div>
 {% endif %}

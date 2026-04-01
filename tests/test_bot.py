@@ -466,7 +466,7 @@ class TestRouting:
     def test_new_issue_without_version_goes_to_redos(self, simple_issue):
         """Задача без версии → комната РЕД ОС."""
         with patch.dict(bot.VERSION_ROOM_MAP, {"РЕД ОС": "!redos:server"}):
-            rooms = bot.get_extra_rooms_for_new(simple_issue)
+            rooms = bot.get_extra_rooms_for_new(simple_issue, {})
             assert "!redos:server" in rooms
 
     def test_new_issue_virt_goes_to_virt(self, issue_with_version):
@@ -475,7 +475,7 @@ class TestRouting:
             "РЕД Виртуализация": "!virt:server",
             "РЕД ОС": "!redos:server",
         }):
-            rooms = bot.get_extra_rooms_for_new(issue_with_version)
+            rooms = bot.get_extra_rooms_for_new(issue_with_version, {})
             assert "!virt:server" in rooms
             assert "!redos:server" not in rooms
 
@@ -483,7 +483,7 @@ class TestRouting:
         """Передано в работу.РВ → всегда в комнату РВ."""
         with patch.dict(bot.STATUS_ROOM_MAP, {"Передано в работу.РВ": "!rv:server"}):
             with patch.dict(bot.VERSION_ROOM_MAP, {"РЕД Виртуализация": "!virt:server"}):
-                rooms = bot.get_extra_rooms_for_rv(rv_issue)
+                rooms = bot.get_extra_rooms_for_rv(rv_issue, {})
                 assert "!rv:server" in rooms
                 assert "!virt:server" in rooms  # т.к. версия Виртуализация
 
@@ -492,14 +492,14 @@ class TestRouting:
         issue = MockIssue(issue_id=8888, status="Передано в работу.РВ")
         with patch.dict(bot.STATUS_ROOM_MAP, {"Передано в работу.РВ": "!rv:server"}):
             with patch.dict(bot.VERSION_ROOM_MAP, {"РЕД Виртуализация": "!virt:server"}):
-                rooms = bot.get_extra_rooms_for_rv(issue)
+                rooms = bot.get_extra_rooms_for_rv(issue, {})
                 assert "!rv:server" in rooms
                 assert "!virt:server" not in rooms
 
     def test_empty_room_maps(self, simple_issue):
         """Пустые маппинги → пустой набор комнат."""
         with patch.dict(bot.VERSION_ROOM_MAP, {}, clear=True):
-            rooms = bot.get_extra_rooms_for_new(simple_issue)
+            rooms = bot.get_extra_rooms_for_new(simple_issue, {})
             assert rooms == set()
 
 

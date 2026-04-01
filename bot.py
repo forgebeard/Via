@@ -277,48 +277,49 @@ def validate_users(users):
 # РОУТИНГ: какие доп. комнаты получают уведомление
 # ═══════════════════════════════════════════════════════════════════════════
 
-ROOM_RED_OS_KEY = "РЕД ОС"
-ROOM_VIRT_KEY = "РЕД Виртуализация"
+# Совместимость с прежней глобальной картой: задача без версии → комната ключа «РЕД ОС», если задан.
+_LEGACY_VERSION_FALLBACK_KEY = "РЕД ОС"
 
 
-def get_extra_rooms_for_new(issue):
+def _extra_rooms_for_issue_version(issue, user_cfg: dict) -> set[str]:
     """
-    Доп. комнаты для НОВОЙ задачи (статус «Новая»).
-    Если версия содержит «РЕД Виртуализация» → комната Виртуализации.
-    Иначе → комната РЕД ОС.
+    Доп. комнаты по названию версии задачи в Redmine.
+    Совпадение: подстрока version_key (без учёта регистра) входит в имя версии.
+    Учитываются маршруты пользователя/группы (version_routes) и глобальная VERSION_ROOM_MAP.
     """
-    rooms = set()
-    version = get_version_name(issue)
-
-    if version and ROOM_VIRT_KEY.lower() in version.lower():
-        virt_room = VERSION_ROOM_MAP.get(ROOM_VIRT_KEY)
-        if virt_room:
-            rooms.add(virt_room)
-    else:
-        os_room = VERSION_ROOM_MAP.get(ROOM_RED_OS_KEY)
-        if os_room:
-            rooms.add(os_room)
-
+    rooms: set[str] = set()
+    version_name = get_version_name(issue) or ""
+    if not version_name.strip():
+        r = (VERSION_ROOM_MAP.get(_LEGACY_VERSION_FALLBACK_KEY) or "").strip()
+        return {r} if r else set()
+    vn = version_name.lower()
+    for spec in user_cfg.get("version_routes") or []:
+        key = (spec.get("key") or "").strip()
+        rid = (spec.get("room") or "").strip()
+        if key and rid and key.lower() in vn:
+            rooms.add(rid)
+    for key, room in (VERSION_ROOM_MAP or {}).items():
+        r = (room or "").strip()
+        if not r:
+            continue
+        k = (key or "").strip()
+        if k and k.lower() in vn:
+            rooms.add(r)
     return rooms
 
 
-def get_extra_rooms_for_rv(issue):
-    """
-    Доп. комнаты для статуса «Передано в работу.РВ».
-    Всегда в комнату РВ + если Виртуализация — ещё и туда.
-    """
-    rooms = set()
+def get_extra_rooms_for_new(issue, user_cfg: dict) -> set[str]:
+    """Доп. комнаты для НОВОЙ задачи (статус «Новая») — по версии и глобальным маршрутам."""
+    return _extra_rooms_for_issue_version(issue, user_cfg)
 
+
+def get_extra_rooms_for_rv(issue, user_cfg: dict) -> set[str]:
+    """Доп. комнаты для статуса «Передано в работу.РВ»: комната РВ из STATUS_ROOM_MAP + по версии."""
+    rooms: set[str] = set()
     rv_room = STATUS_ROOM_MAP.get(STATUS_RV)
     if rv_room:
         rooms.add(rv_room)
-
-    version = get_version_name(issue)
-    if version and ROOM_VIRT_KEY.lower() in version.lower():
-        virt_room = VERSION_ROOM_MAP.get(ROOM_VIRT_KEY)
-        if virt_room:
-            rooms.add(virt_room)
-
+    rooms |= _extra_rooms_for_issue_version(issue, user_cfg)
     return rooms
 
 
@@ -694,7 +695,7 @@ async def check_user_issues(client, redmine, user_cfg, db_session):
                     group_room = _group_room(user_cfg)
                     if group_room and should_notify(_cfg_for_room(user_cfg, group_room), "new"):
                         await send_safe(client, issue, user_cfg, group_room, "new")
-                    for extra_room in get_extra_rooms_for_new(issue):
+                    for extra_room in get_extra_rooms_for_new(issue, user_cfg):
                         await send_safe(client, issue, user_cfg, extra_room, "new")
                 sent[iid] = {
                     "notified_at": now.isoformat(),
@@ -716,7 +717,7 @@ async def check_user_issues(client, redmine, user_cfg, db_session):
                     group_room = _group_room(user_cfg)
                     if group_room and should_notify(_cfg_for_room(user_cfg, group_room), "new"):
                         await send_safe(client, issue, user_cfg, group_room, "new")
-                    for extra_room in get_extra_rooms_for_rv(issue):
+                    for extra_room in get_extra_rooms_for_rv(issue, user_cfg):
                         await send_safe(client, issue, user_cfg, extra_room, "new")
                 sent[iid] = {
                     "notified_at": now.isoformat(),

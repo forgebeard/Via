@@ -38,17 +38,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nio import AsyncClient
 
-from database.load_config import row_counts
 from database.models import (
     AppSecret,
     BotOpsAudit,
     BotAppUser,
     BotSession,
     BotUser,
+    GroupVersionRoute,
     MatrixRoomBinding,
     PasswordResetToken,
     StatusRoomRoute,
     SupportGroup,
+    UserVersionRoute,
     VersionRoomRoute,
 )
 from database.session import get_session, get_session_factory
@@ -1018,7 +1019,6 @@ async def index(
     user = getattr(request.state, "current_user", None)
     if not user or getattr(user, "role", "") != "admin":
         raise HTTPException(403, "Только admin")
-    nu, ns, nv = await row_counts(session)
     runtime_file = _runtime_status_from_file()
     try:
         runtime_docker = get_service_status()
@@ -1028,9 +1028,6 @@ async def index(
         request,
         "index.html",
         {
-            "users_count": nu,
-            "status_routes_count": ns,
-            "version_routes_count": nv,
             "runtime_status": {
                 "uptime_s": int(time.monotonic() - _process_started_at),
                 "live": True,
@@ -1253,6 +1250,7 @@ async def groups_list(
         {
             "items": rows,
             "q": q,
+            "list_total": len(rows),
         },
     )
 
@@ -1277,6 +1275,7 @@ async def groups_new(
             "notify_json": '["all"]',
             "notify_preset": "all",
             "notify_selected": ["all"],
+            "initial_version_keys": "",
         },
     )
 
@@ -1297,9 +1296,17 @@ async def groups_edit(
         raise HTTPException(404, "Группа не найдена")
     status_err = (request.query_params.get("status_err") or "").strip()
     status_msg = (request.query_params.get("status_msg") or "").strip()
+    version_err = (request.query_params.get("version_err") or "").strip()
+    version_msg = (request.query_params.get("version_msg") or "").strip()
     room = (row.room_id or "").strip()
     sr_stmt = select(StatusRoomRoute).where(StatusRoomRoute.room_id == room).order_by(StatusRoomRoute.status_key)
     status_rows = list((await session.execute(sr_stmt)).scalars().all()) if room else []
+    gv_stmt = (
+        select(GroupVersionRoute)
+        .where(GroupVersionRoute.group_id == group_id)
+        .order_by(GroupVersionRoute.version_key)
+    )
+    version_rows = list((await session.execute(gv_stmt)).scalars().all())
     return templates.TemplateResponse(
         request,
         "group_form.html",
@@ -1310,6 +1317,9 @@ async def groups_edit(
             "status_routes": status_rows,
             "status_err": status_err,
             "status_msg": status_msg,
+            "version_routes": version_rows,
+            "version_err": version_err,
+            "version_msg": version_msg,
             "notify_json": json.dumps(row.notify, ensure_ascii=False),
             "notify_preset": _notify_preset(row.notify),
             "notify_selected": row.notify or ["all"],
@@ -1325,6 +1335,7 @@ async def groups_create(
     timezone_name: Annotated[str, Form()] = "",
     is_active: Annotated[str, Form()] = "",
     initial_status_keys: Annotated[str, Form()] = "",
+    initial_version_keys: Annotated[str, Form()] = "",
     notify_json: Annotated[str, Form()] = "",
     notify_preset: Annotated[str, Form()] = "all",
     notify_values: Annotated[list[str], Form()] = [],
@@ -1388,6 +1399,16 @@ async def groups_create(
         if ex.scalar_one_or_none():
             continue
         session.add(StatusRoomRoute(status_key=key, room_id=room))
+    for vkey in _parse_status_keys_list(initial_version_keys):
+        ex = await session.execute(
+            select(GroupVersionRoute.id).where(
+                GroupVersionRoute.group_id == rid,
+                GroupVersionRoute.version_key == vkey,
+            )
+        )
+        if ex.scalar_one_or_none():
+            continue
+        session.add(GroupVersionRoute(group_id=rid, version_key=vkey, room_id=room))
     return RedirectResponse(f"/groups/{rid}/edit", status_code=303)
 
 
@@ -1457,6 +1478,11 @@ async def groups_update(
         await session.execute(
             update(StatusRoomRoute).where(StatusRoomRoute.room_id == old_room).values(room_id=new_room)
         )
+        await session.execute(
+            update(GroupVersionRoute)
+            .where(GroupVersionRoute.group_id == group_id, GroupVersionRoute.room_id == old_room)
+            .values(room_id=new_room)
+        )
     return RedirectResponse(f"/groups/{group_id}/edit", status_code=303)
 
 
@@ -1509,6 +1535,61 @@ async def group_status_route_delete(
         raise HTTPException(404, "Маршрут не найден")
     await session.delete(rte)
     return RedirectResponse(f"/groups/{group_id}/edit?status_msg=deleted", status_code=303)
+
+
+@app.post("/groups/{group_id}/version-routes/add")
+async def group_version_route_add(
+    request: Request,
+    group_id: int,
+    version_key: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
+    session: AsyncSession = Depends(get_session),
+):
+    _verify_csrf(request, csrf_token)
+    user = getattr(request.state, "current_user", None)
+    if not user or getattr(user, "role", "") != "admin":
+        raise HTTPException(403, "Только admin")
+    row = await session.get(SupportGroup, group_id)
+    if not row or _is_reserved_support_group(row):
+        raise HTTPException(404, "Группа не найдена")
+    room = (row.room_id or "").strip()
+    if not room:
+        return RedirectResponse(f"/groups/{group_id}/edit?version_err=no_room", status_code=303)
+    key = (version_key or "").strip()
+    if not key:
+        return RedirectResponse(f"/groups/{group_id}/edit?version_err=empty", status_code=303)
+    exists = await session.execute(
+        select(GroupVersionRoute.id).where(
+            GroupVersionRoute.group_id == group_id,
+            GroupVersionRoute.version_key == key,
+        )
+    )
+    if exists.scalar_one_or_none():
+        return RedirectResponse(f"/groups/{group_id}/edit?version_err=exists", status_code=303)
+    session.add(GroupVersionRoute(group_id=group_id, version_key=key, room_id=room))
+    return RedirectResponse(f"/groups/{group_id}/edit?version_msg=added", status_code=303)
+
+
+@app.post("/groups/{group_id}/version-routes/{route_row_id}/delete")
+async def group_version_route_delete(
+    request: Request,
+    group_id: int,
+    route_row_id: int,
+    csrf_token: Annotated[str, Form()] = "",
+    session: AsyncSession = Depends(get_session),
+):
+    _verify_csrf(request, csrf_token)
+    user = getattr(request.state, "current_user", None)
+    if not user or getattr(user, "role", "") != "admin":
+        raise HTTPException(403, "Только admin")
+    row = await session.get(SupportGroup, group_id)
+    if not row or _is_reserved_support_group(row):
+        raise HTTPException(404, "Группа не найдена")
+    rte = await session.get(GroupVersionRoute, route_row_id)
+    if not rte or rte.group_id != group_id:
+        raise HTTPException(404, "Маршрут не найден")
+    await session.delete(rte)
+    return RedirectResponse(f"/groups/{group_id}/edit?version_msg=deleted", status_code=303)
 
 
 @app.post("/groups/{group_id}/delete")
@@ -1578,6 +1659,7 @@ async def users_list(
             "groups_by_id": groups_by_id,
             "q": q,
             "group_filter": group_id,
+            "list_total": len(rows),
         },
     )
 
@@ -1708,7 +1790,7 @@ async def users_create(
     )
     session.add(row)
     await session.flush()
-    return RedirectResponse("/users", status_code=303)
+    return RedirectResponse(f"/users/{row.id}/edit", status_code=303)
 
 
 @app.get("/users/{user_id}/edit", response_class=HTMLResponse)
@@ -1723,6 +1805,14 @@ async def users_edit(
     row = await session.get(BotUser, user_id)
     if not row:
         raise HTTPException(404)
+    version_err = (request.query_params.get("version_err") or "").strip()
+    version_msg = (request.query_params.get("version_msg") or "").strip()
+    uv_stmt = (
+        select(UserVersionRoute)
+        .where(UserVersionRoute.bot_user_id == user_id)
+        .order_by(UserVersionRoute.version_key)
+    )
+    version_rows = list((await session.execute(uv_stmt)).scalars().all())
     groups_rows = list((await session.execute(select(SupportGroup).order_by(SupportGroup.name.asc()))).scalars().all())
     return templates.TemplateResponse(
         request,
@@ -1736,6 +1826,9 @@ async def users_edit(
             "groups": _groups_assignable(groups_rows),
             "group_unassigned_display": GROUP_UNASSIGNED_DISPLAY,
             "bot_tz": os.getenv("BOT_TIMEZONE", "Europe/Moscow"),
+            "version_routes": version_rows,
+            "version_err": version_err,
+            "version_msg": version_msg,
         },
     )
 
@@ -1767,10 +1860,12 @@ async def users_update(
     row = await session.get(BotUser, user_id)
     if not row:
         raise HTTPException(404)
+    old_room = (row.room or "").strip()
+    new_room = room.strip()
     row.redmine_id = redmine_id
     row.display_name = display_name.strip() or None
     row.group_id = int(group_id) if str(group_id).isdigit() else None
-    row.room = room.strip()
+    row.room = new_room
     if notify_preset == "all":
         row.notify = ["all"]
     elif notify_preset == "new_only":
@@ -1790,7 +1885,65 @@ async def users_update(
     else:
         row.work_days = _parse_work_days(work_days_json)
     row.dnd = dnd in ("on", "true", "1")
-    return RedirectResponse("/users", status_code=303)
+    if old_room and new_room and old_room != new_room:
+        await session.execute(
+            update(UserVersionRoute)
+            .where(UserVersionRoute.bot_user_id == user_id, UserVersionRoute.room_id == old_room)
+            .values(room_id=new_room)
+        )
+    return RedirectResponse(f"/users/{user_id}/edit", status_code=303)
+
+
+@app.post("/users/{user_id}/version-routes/add")
+async def user_version_route_add(
+    request: Request,
+    user_id: int,
+    version_key: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
+    session: AsyncSession = Depends(get_session),
+):
+    _verify_csrf(request, csrf_token)
+    user = getattr(request.state, "current_user", None)
+    if not user or getattr(user, "role", "") != "admin":
+        raise HTTPException(403, "Только admin")
+    row = await session.get(BotUser, user_id)
+    if not row:
+        raise HTTPException(404)
+    room = (row.room or "").strip()
+    if not room:
+        return RedirectResponse(f"/users/{user_id}/edit?version_err=no_room", status_code=303)
+    key = (version_key or "").strip()
+    if not key:
+        return RedirectResponse(f"/users/{user_id}/edit?version_err=empty", status_code=303)
+    exists = await session.execute(
+        select(UserVersionRoute.id).where(
+            UserVersionRoute.bot_user_id == user_id,
+            UserVersionRoute.version_key == key,
+        )
+    )
+    if exists.scalar_one_or_none():
+        return RedirectResponse(f"/users/{user_id}/edit?version_err=exists", status_code=303)
+    session.add(UserVersionRoute(bot_user_id=user_id, version_key=key, room_id=room))
+    return RedirectResponse(f"/users/{user_id}/edit?version_msg=added", status_code=303)
+
+
+@app.post("/users/{user_id}/version-routes/{route_row_id}/delete")
+async def user_version_route_delete(
+    request: Request,
+    user_id: int,
+    route_row_id: int,
+    csrf_token: Annotated[str, Form()] = "",
+    session: AsyncSession = Depends(get_session),
+):
+    _verify_csrf(request, csrf_token)
+    user = getattr(request.state, "current_user", None)
+    if not user or getattr(user, "role", "") != "admin":
+        raise HTTPException(403, "Только admin")
+    rte = await session.get(UserVersionRoute, route_row_id)
+    if not rte or rte.bot_user_id != user_id:
+        raise HTTPException(404, "Маршрут не найден")
+    await session.delete(rte)
+    return RedirectResponse(f"/users/{user_id}/edit?version_msg=deleted", status_code=303)
 
 
 @app.post("/users/{user_id}/delete")

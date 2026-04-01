@@ -22,6 +22,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -66,6 +67,40 @@ class VersionRoomRoute(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     version_key: Mapped[str] = mapped_column(String(512), unique=True, nullable=False, index=True)
+    room_id: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class GroupVersionRoute(Base):
+    """Версия Redmine (подстрока в названии версии задачи) → Matrix-комната для группы."""
+
+    __tablename__ = "group_version_routes"
+    __table_args__ = (UniqueConstraint("group_id", "version_key", name="uq_group_version_routes_group_version"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("support_groups.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    version_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    room_id: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class UserVersionRoute(Base):
+    """Версия Redmine → Matrix-комната для пользователя бота (личные доп. маршруты)."""
+
+    __tablename__ = "user_version_routes"
+    __table_args__ = (UniqueConstraint("bot_user_id", "version_key", name="uq_user_version_routes_user_version"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bot_user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("bot_users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    version_key: Mapped[str] = mapped_column(String(512), nullable=False)
     room_id: Mapped[str] = mapped_column(Text, nullable=False)
 
 

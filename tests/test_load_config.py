@@ -12,6 +12,7 @@ from database.load_config import user_orm_to_cfg  # noqa: E402
 
 class _FakeUser:
     def __init__(self) -> None:
+        self.id = 1
         self.redmine_id = 42
         self.room = "!personal:matrix"
         self.notify = ["all"]
@@ -36,7 +37,7 @@ class _FakeGroup:
 def test_user_orm_to_cfg_includes_group_delivery() -> None:
     u = _FakeUser()
     g = _FakeGroup()
-    cfg = user_orm_to_cfg(u, {g.id: g})
+    cfg = user_orm_to_cfg(u, {g.id: g}, {}, {})
     assert cfg["group_room"] == "!group:matrix"
     gd = cfg.get("group_delivery")
     assert isinstance(gd, dict)
@@ -45,3 +46,16 @@ def test_user_orm_to_cfg_includes_group_delivery() -> None:
     assert gd["work_days"] == [0, 1, 2, 3, 4]
     assert gd["dnd"] is True
     assert cfg["work_hours"] == "08:00-09:00"
+    assert cfg["version_routes"] == []
+
+
+def test_user_orm_to_cfg_merges_version_routes() -> None:
+    u = _FakeUser()
+    u.id = 100
+    g = _FakeGroup()
+    gv = {7: [{"key": "РЕД ОС", "room": "!gver:matrix"}]}
+    uv = {100: [{"key": "ЛичнаяВерсия", "room": "!uver:matrix"}]}
+    cfg = user_orm_to_cfg(u, {g.id: g}, gv, uv)
+    pairs = {(x["key"], x["room"]) for x in cfg["version_routes"]}
+    assert ("ЛичнаяВерсия", "!uver:matrix") in pairs
+    assert ("РЕД ОС", "!gver:matrix") in pairs
