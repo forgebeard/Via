@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from admin.authz import require_admin
 from admin.constants import COOKIE_SECURE, CSRF_COOKIE_NAME
 from admin.csrf import ensure_csrf as _ensure_csrf, verify_csrf as _verify_csrf
 from admin.runtime import logger
@@ -27,9 +28,7 @@ async def app_users_page(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ):
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
+    require_admin(request)
     rows = await session.execute(select(BotAppUser).order_by(BotAppUser.email))
     users = list(rows.scalars().all())
     csrf_token, set_cookie = _ensure_csrf(request)
@@ -52,9 +51,7 @@ async def app_user_reset_password_admin(
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
-    current = getattr(request.state, "current_user", None)
-    if not current or getattr(current, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
+    current = require_admin(request)
     uid = uuid.UUID(user_id)
     q = await session.execute(select(BotAppUser).where(BotAppUser.id == uid))
     target = q.scalar_one_or_none()

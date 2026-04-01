@@ -9,18 +9,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from admin.authz import require_admin
 from admin.csrf import verify_csrf as _verify_csrf
 from admin.templates_env import templates
 from database.models import StatusRoomRoute, VersionRoomRoute
 from database.session import get_session
 
 router = APIRouter()
-
-
-def _require_admin(request: Request) -> None:
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
 
 
 @router.get("/routes/status", response_class=HTMLResponse)
@@ -32,7 +27,7 @@ async def routes_status(
     error: str = "",
     session: AsyncSession = Depends(get_session),
 ):
-    _require_admin(request)
+    require_admin(request)
     stmt = select(StatusRoomRoute)
     q = (q or "").strip()
     if q:
@@ -66,7 +61,7 @@ async def routes_status_add(
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
-    _require_admin(request)
+    require_admin(request)
     key = status_key.strip()
     room = room_id.strip()
     if not key or not room:
@@ -87,7 +82,7 @@ async def routes_status_add_by_room(
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
-    _require_admin(request)
+    require_admin(request)
     room = room_id.strip()
     raw_statuses = status_keys.strip()
     if not room or not raw_statuses:
@@ -116,7 +111,7 @@ async def routes_status_del(
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
-    _require_admin(request)
+    require_admin(request)
     await session.execute(delete(StatusRoomRoute).where(StatusRoomRoute.id == row_id))
     return RedirectResponse("/routes/status", status_code=303)
 
@@ -126,7 +121,7 @@ async def routes_version(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ):
-    _require_admin(request)
+    require_admin(request)
     r = await session.execute(select(VersionRoomRoute).order_by(VersionRoomRoute.version_key))
     rows = list(r.scalars().all())
     return templates.TemplateResponse(
@@ -145,7 +140,7 @@ async def routes_version_add(
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
-    _require_admin(request)
+    require_admin(request)
     session.add(VersionRoomRoute(version_key=version_key.strip(), room_id=room_id.strip()))
     return RedirectResponse("/routes/version", status_code=303)
 
@@ -158,6 +153,6 @@ async def routes_version_del(
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
-    _require_admin(request)
+    require_admin(request)
     await session.execute(delete(VersionRoomRoute).where(VersionRoomRoute.id == row_id))
     return RedirectResponse("/routes/version", status_code=303)

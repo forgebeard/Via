@@ -6,19 +6,14 @@ import asyncio
 import json
 from html import escape as html_escape
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
+from admin.authz import require_admin
 from admin.constants import REDMINE_API_KEY, REDMINE_URL
 from admin.runtime import logger, redmine_search_breaker
 
 router = APIRouter()
-
-
-def _require_admin(request: Request) -> None:
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
 
 
 @router.get("/redmine/users/search", response_class=HTMLResponse)
@@ -43,7 +38,7 @@ async def redmine_users_search(
     if not q:
         return HTMLResponse("")
 
-    _require_admin(request)
+    require_admin(request)
     if redmine_search_breaker.blocked():
         logger.warning("Redmine search blocked due to cooldown")
         return HTMLResponse('<option value="">Поиск временно недоступен (cooldown)</option>')

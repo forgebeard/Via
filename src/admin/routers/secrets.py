@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from admin.authz import require_admin
 from admin.constants import COOKIE_SECURE, CSRF_COOKIE_NAME
 from admin.csrf import ensure_csrf as _ensure_csrf, verify_csrf as _verify_csrf
 from admin.runtime import integration_status_cache, logger
@@ -26,9 +27,7 @@ async def secrets_page(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ):
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
+    require_admin(request)
     rows = await session.execute(select(AppSecret).order_by(AppSecret.name))
     items = list(rows.scalars().all())
     csrf_token, set_cookie = _ensure_csrf(request)
@@ -51,9 +50,7 @@ async def secrets_save(
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
+    actor = require_admin(request)
     name = (name or "").strip()
     value = (value or "").strip()
     if not name or not value:
@@ -73,7 +70,7 @@ async def secrets_save(
     logger.info(
         "secret_updated name=%s actor=%s key_version=%s",
         name,
-        mask_email(user.email),
+        mask_email(actor.email),
         enc.key_version,
     )
     return RedirectResponse("/secrets", status_code=303)

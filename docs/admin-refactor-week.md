@@ -7,13 +7,14 @@
 - День 4: `auth_helpers.py`, `routers/auth.py` (login, setup, onboarding, forgot/reset, logout).
 - День 5: `audit.py`, `routers/ops.py`, `routers/secrets.py`.
 - День 6: `routers/app_users.py`.
-- День 7: `notify_prefs.py`, `matrix_tokens.py`, `MATRIX_CODE_TTL_SECONDS` в `constants`; роутеры `groups`, `users`, `redmine`, `routes_cfg` (статус/версия), `matrix_bind`, `me`; в `admin_main.py` остаётся главная `/` и подключение роутеров.
+- День 7: `notify_prefs.py`, `matrix_tokens.py`, `MATRIX_CODE_TTL_SECONDS` в `constants`; роутеры `groups`, `users`, `redmine`, `routes_cfg` (статус/версия), `matrix_bind`, `me`; в `admin_main.py` — только сборка `app` и подключение роутеров.
+- День 8: `authz.require_admin`, `routers/dashboard.py` для `/`; те же проверки в `app_users`, `secrets`, `ops`.
 
 ## Дальше по дням
 
 | День | Задача |
 |------|--------|
-| 8+ | Опционально: `routers/dashboard.py` для `/`, общие хелперы `_require_admin`, финальная зачистка дублирования |
+| 9+ | По необходимости: FastAPI `Depends(require_admin_dep)` вместо вызова в теле хендлера; мелкая зачистка |
 
 ## Инварианты
 

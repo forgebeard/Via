@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from admin.authz import require_admin
 from admin.constants import GROUP_UNASSIGNED_NAME
 from admin.csrf import verify_csrf as _verify_csrf
 from admin.notify_prefs import normalize_notify, notify_preset, parse_notify, parse_work_days
@@ -21,12 +22,6 @@ from database.session import get_session
 router = APIRouter()
 
 
-def _require_admin(request: Request) -> None:
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-
-
 @router.get("/users", response_class=HTMLResponse)
 async def users_list(
     request: Request,
@@ -34,7 +29,7 @@ async def users_list(
     group_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ):
-    _require_admin(request)
+    require_admin(request)
 
     groups_rows = list((await session.execute(select(SupportGroup).order_by(SupportGroup.name.asc()))).scalars().all())
     groups_by_id = {g.id: g for g in groups_rows}
@@ -86,7 +81,7 @@ async def users_new(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ):
-    _require_admin(request)
+    require_admin(request)
     groups_rows = list((await session.execute(select(SupportGroup).order_by(SupportGroup.name.asc()))).scalars().all())
     return templates.TemplateResponse(
         request,
@@ -123,7 +118,7 @@ async def users_create(
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
-    _require_admin(request)
+    require_admin(request)
     if work_hours_from and work_hours_to:
         wh = f"{work_hours_from.strip()}-{work_hours_to.strip()}"
     else:
@@ -164,7 +159,7 @@ async def users_edit(
     user_id: int,
     session: AsyncSession = Depends(get_session),
 ):
-    _require_admin(request)
+    require_admin(request)
     row = await session.get(BotUser, user_id)
     if not row:
         raise HTTPException(404)
@@ -205,7 +200,7 @@ async def users_update(
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
-    _require_admin(request)
+    require_admin(request)
     row = await session.get(BotUser, user_id)
     if not row:
         raise HTTPException(404)
@@ -243,7 +238,7 @@ async def users_delete(
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
-    _require_admin(request)
+    require_admin(request)
     row = await session.get(BotUser, user_id)
     if row:
         await session.delete(row)

@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from admin.authz import require_admin
 from admin.csrf import verify_csrf as _verify_csrf
 from admin.templates_env import templates
 from database.models import SupportGroup
@@ -18,19 +19,13 @@ from database.session import get_session
 router = APIRouter()
 
 
-def _require_admin(request: Request) -> None:
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-
-
 @router.get("/groups", response_class=HTMLResponse)
 async def groups_list(
     request: Request,
     q: str = "",
     session: AsyncSession = Depends(get_session),
 ):
-    _require_admin(request)
+    require_admin(request)
     q = (q or "").strip()
     stmt = select(SupportGroup)
     if q:
@@ -50,7 +45,7 @@ async def groups_list(
 
 @router.get("/groups/new", response_class=HTMLResponse)
 async def groups_new(request: Request):
-    _require_admin(request)
+    require_admin(request)
     return templates.TemplateResponse(
         request,
         "group_form.html",
@@ -64,7 +59,7 @@ async def groups_edit(
     group_id: int,
     session: AsyncSession = Depends(get_session),
 ):
-    _require_admin(request)
+    require_admin(request)
     row = await session.get(SupportGroup, group_id)
     if not row:
         raise HTTPException(404, "Группа не найдена")
@@ -86,7 +81,7 @@ async def groups_create(
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
-    _require_admin(request)
+    require_admin(request)
     n = (name or "").strip()
     if not n:
         raise HTTPException(400, "Название обязательно")
@@ -113,7 +108,7 @@ async def groups_update(
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
-    _require_admin(request)
+    require_admin(request)
     row = await session.get(SupportGroup, group_id)
     if not row:
         raise HTTPException(404, "Группа не найдена")
@@ -135,7 +130,7 @@ async def groups_delete(
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
-    _require_admin(request)
+    require_admin(request)
     row = await session.get(SupportGroup, group_id)
     if row:
         await session.delete(row)

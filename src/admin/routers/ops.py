@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.audit import audit_op
 from admin.auth_helpers import client_ip
+from admin.authz import require_admin
 from admin.csrf import verify_csrf as _verify_csrf
 from admin.runtime import logger, rate_limiter
 from database.session import get_session, get_session_factory
@@ -57,9 +58,7 @@ async def bot_ops_action(
     session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
-    current = getattr(request.state, "current_user", None)
-    if not current or getattr(current, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
+    current = require_admin(request)
     ip = client_ip(request)
     if not rate_limiter.hit(f"ops:{ip}:{current.email}", limit=12, window_seconds=60):
         raise HTTPException(429, "Слишком много операций, попробуйте позже")
