@@ -2,7 +2,17 @@
 {% block title %}Дашборд{% endblock %}
 {% block content %}
 {% if ops_flash %}
-<div class="warning" role="status">{{ ops_flash }}</div>
+<div id="ops-flash" class="warning ops-flash" role="status">{{ ops_flash }}</div>
+<script>
+(function () {
+  var el = document.getElementById("ops-flash");
+  if (!el) return;
+  window.setTimeout(function () {
+    el.classList.add("ops-flash--dismissed");
+    window.setTimeout(function () { el.remove(); }, 400);
+  }, 10000);
+})();
+</script>
 {% endif %}
 <header class="page-head">
   <div class="page-head-row">
@@ -57,27 +67,31 @@
     </div>
   </article>
 
-  <article class="card demo-card">
+  <article class="card demo-card demo-card--service">
     <h2 style="margin-top:0;">Сервис</h2>
-    <div id="dash-service-metrics"
+    <div class="service-metrics-wrap"
+         id="dash-service-metrics"
          hx-get="/dash/service-strip"
-         hx-trigger="load, every 10s"
+         hx-trigger="load, every 1s"
          hx-swap="innerHTML">
     {% include "partials/service_metrics.html" %}
     </div>
-    <div class="page-actions">
-      <form method="post" action="/ops/bot/start">
-        <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
-        <button class="btn btn-ghost" type="submit"><i class="fa-solid fa-play"></i> Старт</button>
-      </form>
-      <form method="post" action="/ops/bot/stop" hx-confirm="Остановить бота?">
-        <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
-        <button class="btn btn-danger" type="submit"><i class="fa-solid fa-stop"></i> Стоп</button>
-      </form>
-      <form method="post" action="/ops/bot/restart" hx-confirm="Перезапустить бота?">
-        <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
-        <button class="btn btn-primary" type="submit"><i class="fa-solid fa-rotate-right"></i> Рестарт</button>
-      </form>
+    <div class="service-actions-panel" aria-label="Управление ботом">
+      <div class="service-actions-title">Управление</div>
+      <div class="service-actions-grid">
+        <form method="post" action="/ops/bot/start">
+          <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
+          <button class="btn btn-ghost service-action-btn" type="submit"><i class="fa-solid fa-play"></i> Старт</button>
+        </form>
+        <form method="post" action="/ops/bot/stop" hx-confirm="Остановить бота?">
+          <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
+          <button class="btn btn-danger service-action-btn" type="submit"><i class="fa-solid fa-stop"></i> Стоп</button>
+        </form>
+        <form method="post" action="/ops/bot/restart" hx-confirm="Перезапустить бота?">
+          <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
+          <button class="btn btn-primary service-action-btn" type="submit"><i class="fa-solid fa-rotate-right"></i> Рестарт</button>
+        </form>
+      </div>
     </div>
   </article>
 </div>

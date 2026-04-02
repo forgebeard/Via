@@ -116,7 +116,7 @@ def bot_status_label_ru(docker: dict[str, Any]) -> str:
         return "Контейнер не найден"
     ds = str(docker.get("docker_status") or "").lower()
     if ds == "restarting":
-        return "Перезагрузка"
+        return "Рестарт"
     if docker.get("running") is True or ds == "running":
         return "Включен"
     if ds in ("exited", "dead"):
@@ -162,5 +162,4 @@ def service_card_context(docker: dict[str, Any], cycle: dict[str, Any], tz_name:
         "started_display": started_disp,
         "uptime_display": uptime_disp,
         "error_count": err_n,
-        "container_name": (docker.get("container_name") or "").strip(),
     }

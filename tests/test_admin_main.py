@@ -50,7 +50,7 @@ def test_forgot_password_redirects_to_login(client: TestClient):
 
 def test_admin_asset_version_helper(monkeypatch):
     monkeypatch.delenv("ADMIN_ASSET_VERSION", raising=False)
-    assert admin_main._admin_asset_version() == "3"
+    assert admin_main._admin_asset_version() == "4"
     monkeypatch.setenv("ADMIN_ASSET_VERSION", "build-xyz")
     assert admin_main._admin_asset_version() == "build-xyz"
 
@@ -75,6 +75,9 @@ def test_append_ops_to_events_log(tmp_path, monkeypatch):
     text = (tmp_path / "ev.log").read_text(encoding="utf-8")
     assert "[ADMIN]" in text
     assert "Docker bot/stop ok" in text
+    first = text.strip().splitlines()[0]
+    assert re.match(r"^\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2} \[ADMIN\]", first)
+    assert "," not in first[:25]  # без миллисекунд в префиксе времени
 
 
 def test_dash_service_strip_redirects_without_auth(client: TestClient):
@@ -107,7 +110,9 @@ def test_dash_service_strip_for_admin(client: TestClient, monkeypatch):
     )
     r = client.get("/dash/service-strip")
     assert r.status_code == 200
-    assert "Включен" in r.text or "состояние" in r.text
+    assert "Статус:" in r.text
+    assert "Включен" in r.text
+    assert "proj-bot-1" not in r.text
     assert "Uptime" in r.text
 
 

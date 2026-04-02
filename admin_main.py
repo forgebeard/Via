@@ -64,6 +64,7 @@ from security import (
 )
 
 from dash_service_display import service_card_context
+from events_log_display import admin_events_log_timestamp_now, format_events_log_for_ui
 from ops.docker_control import DockerControlError, control_service, get_service_status
 
 _templates_dir = str(_ROOT / "templates" / "admin")
@@ -79,7 +80,7 @@ _jinja_env = Environment(
 def _admin_asset_version() -> str:
     """Query string для cache-bust ссылок на `/static/...` (см. `ADMIN_ASSET_VERSION`)."""
     v = (os.getenv("ADMIN_ASSET_VERSION") or "").strip()
-    return v if v else "3"
+    return v if v else "4"
 
 
 _jinja_env.globals["asset_version"] = _admin_asset_version
@@ -258,8 +259,7 @@ def _append_ops_to_events_log(message: str) -> None:
     try:
         path = _admin_events_log_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        now = _now_utc()
-        ts = now.strftime("%Y-%m-%d %H:%M:%S") + f",{now.microsecond // 1000:03d}"
+        ts = admin_events_log_timestamp_now()
         safe = (message or "").replace("\n", " ").replace("\r", " ").strip()[:800]
         with path.open("a", encoding="utf-8") as f:
             f.write(f"{ts} [ADMIN] {safe}\n")
@@ -370,9 +370,9 @@ def _group_display_name(groups_by_id: dict, group_id: int | None) -> str:
 
 
 _OPS_FLASH_MESSAGES: dict[str, str] = {
-    "stop_ok": "Docker принял остановку контейнера бота (или контейнер уже был остановлен).",
+    "stop_ok": "Остановка бота выполнена. Если контейнер уже был выключен, состояние не менялось.",
     "stop_error": "Не удалось остановить бот. Проверьте DOCKER_HOST, docker-socket-proxy и имя сервиса (DOCKER_TARGET_SERVICE, метки compose).",
-    "start_ok": "Docker принял запуск контейнера бота (или он уже был запущен).",
+    "start_ok": "Бот запущен. Если он уже работал, ничего не изменилось.",
     "start_error": "Не удалось запустить бот. Проверьте Docker и настройки.",
     "restart_accepted": "Перезапуск бота запланирован (команда уходит в фоне).",
     "ops_commit_error": "Не удалось сохранить запись в журнал операций (БД). Состояние Docker смотрите в выводе compose / на дашборде.",
@@ -2384,7 +2384,8 @@ async def events_log_tail(request: Request):
     user = getattr(request.state, "current_user", None)
     if not user or getattr(user, "role", "") != "admin":
         raise HTTPException(403, "Только admin")
-    text = _read_log_tail(_admin_events_log_path())
+    raw = _read_log_tail(_admin_events_log_path())
+    text = format_events_log_for_ui(raw)
     return HTMLResponse(f'<pre class="log-tail" id="events-log-pre">{html_escape(text)}</pre>')
 
 

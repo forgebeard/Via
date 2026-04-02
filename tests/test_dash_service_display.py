@@ -43,7 +43,7 @@ def test_humanize_no_trailing_zero_seconds():
 
 
 def test_bot_status_restarting():
-    assert bot_status_label_ru({"docker_status": "restarting", "running": False}) == "Перезагрузка"
+    assert bot_status_label_ru({"docker_status": "restarting", "running": False}) == "Рестарт"
 
 
 def test_service_card_stopped_no_uptime():

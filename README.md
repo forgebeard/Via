@@ -204,7 +204,7 @@ python3 bot.py
 | **bot** | Образ из `Dockerfile` (корневой `bot.py` + `src/`), том `./data` → `/app/data`, `.env` только для чтения; healthcheck: `python -c "import bot"` |
 | **postgres** | PostgreSQL 16, том `postgres_data`; `DATABASE_URL` в **bot** и **admin** |
 | **docker-socket-proxy** | Ограниченный прокси к Docker API для runtime-control из admin (без прямого монтирования raw socket в admin). Если Start/Stop не срабатывают, на дашборде в уведомлении показывается текст ошибки Docker; см. комментарии к переменным `DOCKER_*` в `.env.example` (в том числе `DOCKER_TARGET_CONTAINER_SUBSTRING`). |
-| **admin** | Панель (`admin_main.py`, FastAPI + Jinja2 + HTMX): **дашборд**, **группы** (в т.ч. маршруты по статусу Redmine в комнату группы), **пользователи**, **настройки** (`/onboarding`), **события** (хвост лога, см. **`ADMIN_EVENTS_LOG_PATH`** / `data/bot.log`; в лог дописываются строки **`[ADMIN]`** при Start/Stop/Restart); маршруты по версии — URL **`/routes/version`** (без пункта в меню); runtime-control бота; **CSP** (`ADMIN_ENABLE_CSP` / `ADMIN_CSP_POLICY`); **`ADMIN_PORT`** (8080); при старте `alembic upgrade head`; том **`./data`** у сервиса **с записью** (чтобы дописывать события и читать `runtime_status.json`) |
+| **admin** | Панель (`admin_main.py`, FastAPI + Jinja2 + HTMX): **дашборд**, **группы** (в т.ч. маршруты по статусу Redmine в комнату группы), **пользователи**, **настройки** (`/onboarding`), **события** (хвост лога: новые строки сверху, время в **`BOT_TIMEZONE`**, см. **`ADMIN_EVENTS_LOG_PATH`**, **`ADMIN_EVENTS_LOG_PARSE_AS_UTC`** / `data/bot.log`; в лог дописываются строки **`[ADMIN]`** при Start/Stop/Restart); маршруты по версии — URL **`/routes/version`** (без пункта в меню); runtime-control бота; **CSP** (`ADMIN_ENABLE_CSP` / `ADMIN_CSP_POLICY`); **`ADMIN_PORT`** (8080); при старте `alembic upgrade head`; том **`./data`** у сервиса **с записью** (чтобы дописывать события и читать `runtime_status.json`) |
 
 ### Подготовка `.env`
 
@@ -314,6 +314,7 @@ REDMINE_API_KEY=your_redmine_api_key
 |------------|------------|
 | `ADMIN_LOGINS` | Список разрешённых логинов панели (через запятую); пусто = без ограничения |
 | `ADMIN_EVENTS_LOG_PATH` | Файл лога для `/events` в админке; пусто → `data/bot.log` от корня приложения админки |
+| `ADMIN_EVENTS_LOG_PARSE_AS_UTC` | `1` (по умолчанию): префикс `YYYY-MM-DD` в файле считать UTC и показывать в `BOT_TIMEZONE`; `0` — время в файле уже в `BOT_TIMEZONE` |
 | `AUTH_TOKEN_SALT` | Соль для hash reset-токенов |
 | `SESSION_TTL_SECONDS` | Время жизни admin-сессии |
 | `RESET_TOKEN_TTL_SECONDS` | TTL токена сброса пароля |

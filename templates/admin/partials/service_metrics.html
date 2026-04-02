@@ -1,7 +1,4 @@
-<p class="muted service-line"><strong>Бот:</strong> состояние <strong>{{ service_ctx.bot_status_label }}</strong>.</p>
-{% if service_ctx.container_name %}
-<p class="muted service-line service-container-name">{{ service_ctx.container_name }}</p>
-{% endif %}
+<p class="muted service-line"><strong>Статус:</strong> <strong>{{ service_ctx.bot_status_label }}</strong></p>
 <p class="muted service-line"><strong>Дата запуска:</strong> {{ service_ctx.started_display }}</p>
 <p class="muted service-line"><strong>Uptime:</strong> {{ service_ctx.uptime_display }}</p>
 <p class="muted service-line">
