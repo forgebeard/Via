@@ -170,6 +170,11 @@ class BotOpsAudit(Base):
     action: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Заполняются для action=ADMIN_CRUD (остальные строки — Docker и т.д.)
+    entity_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    entity_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    crud_action: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    details_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )

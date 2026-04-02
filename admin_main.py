@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from contextlib import asynccontextmanager
 from html import escape as html_escape
 import logging
 import os
@@ -23,7 +24,7 @@ from collections import defaultdict, deque
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo, available_timezones
 from jinja2 import Environment, FileSystemLoader
@@ -32,11 +33,11 @@ _ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_ROOT / "src"))
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,10 +68,17 @@ from security import (
     verify_password,
 )
 
+from admin.crud_events_log import (
+    actor_label_for_crud_log,
+    format_crud_line,
+    sanitize_audit_details,
+    want_admin_audit_crud_db,
+    want_admin_events_log_crud,
+)
 from dash_service_display import service_card_context
 from events_log_display import admin_events_log_timestamp_now, format_events_log_for_ui
 from ops.docker_control import DockerControlError, control_service, get_service_status
-from ui_datetime import format_datetime_ui
+from ui_datetime import bot_display_timezone, format_datetime_ui
 
 _templates_dir = str(_ROOT / "templates" / "admin")
 # В некоторых наборах версий Jinja2/Starlette кэш шаблонов может приводить к TypeError
@@ -83,6 +91,17 @@ _jinja_env = Environment(
 _jinja_env.filters["dt_ui"] = format_datetime_ui
 
 
+def _audit_json_pretty(value):
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    return str(value)
+
+
+_jinja_env.filters["audit_json"] = _audit_json_pretty
+
+
 def _admin_asset_version() -> str:
     """Query string для cache-bust ссылок на `/static/...` (см. `ADMIN_ASSET_VERSION`)."""
     v = (os.getenv("ADMIN_ASSET_VERSION") or "").strip()
@@ -93,7 +112,18 @@ _jinja_env.globals["asset_version"] = _admin_asset_version
 _jinja_env.globals["bot_timezone"] = lambda: (os.getenv("BOT_TIMEZONE") or "Europe/Moscow")
 templates = Jinja2Templates(env=_jinja_env)
 
-app = FastAPI(title="Matrix bot control panel", version="0.1.0")
+
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI):
+    # Fail-fast: without master key we cannot safely work with encrypted secrets.
+    try:
+        load_master_key()
+    except SecurityError as e:
+        raise RuntimeError(f"startup failed: {e}") from e
+    yield
+
+
+app = FastAPI(title="Matrix bot control panel", version="0.1.0", lifespan=_app_lifespan)
 
 _STATIC_ROOT = _ROOT / "static"
 if _STATIC_ROOT.is_dir():
@@ -700,6 +730,94 @@ _rate_limiter = _SimpleRateLimiter()
 logger = logging.getLogger("admin")
 
 
+def _infer_crud_entity_id(entity_type: str, details: dict | None) -> int | None:
+    """Числовой идентификатор сущности для индексации в bot_ops_audit (эвристика по типу)."""
+    if not details:
+        return None
+
+    def gint(v: object) -> int | None:
+        if v is None or isinstance(v, bool):
+            return None
+        if isinstance(v, int):
+            return v
+        try:
+            return int(str(v).strip())
+        except (ValueError, TypeError):
+            return None
+
+    et = (entity_type or "").strip()
+    if et == "bot_user":
+        return gint(details.get("id"))
+    if et == "group":
+        return gint(details.get("id"))
+    if et in ("group_version_route", "group_status_route"):
+        return gint(details.get("group_id"))
+    if et == "user_version_route":
+        return gint(details.get("bot_user_id"))
+    if et == "route/version_global":
+        return gint(details.get("id"))
+    if et == "self_settings":
+        return gint(details.get("bot_user_id"))
+    return None
+
+
+async def _persist_admin_crud_audit(
+    session: AsyncSession,
+    request_actor,
+    entity_type: str,
+    crud_action: str,
+    details: dict | None,
+) -> None:
+    if not want_admin_audit_crud_db():
+        return
+    actor_login = (getattr(request_actor, "login", None) or "").strip().lower() or None
+    cleaned = sanitize_audit_details(details or {})
+    entity_id = _infer_crud_entity_id(entity_type, details)
+    et = (entity_type or "unknown")[:64]
+    ca = (crud_action or "unknown")[:32]
+    row = BotOpsAudit(
+        actor_login=actor_login,
+        action="ADMIN_CRUD",
+        status="ok",
+        detail=None,
+        entity_type=et or None,
+        entity_id=entity_id,
+        crud_action=ca or None,
+        details_json=cleaned if cleaned else None,
+    )
+    session.add(row)
+    logger.info(
+        json.dumps(
+            {
+                "level": "AUDIT",
+                "action": "ADMIN_CRUD",
+                "status": "ok",
+                "actor": actor_login or "",
+                "entity_type": et,
+                "crud_action": ca,
+                "entity_id": entity_id,
+                "details": cleaned,
+                "ts": _now_utc().isoformat(),
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
+async def _maybe_log_admin_crud(
+    session: AsyncSession,
+    request_actor,
+    entity_type: str,
+    action: str,
+    details: dict | None = None,
+) -> None:
+    if want_admin_events_log_crud():
+        actor = actor_label_for_crud_log(request_actor)
+        line = format_crud_line(entity_type, action, actor, details)
+        _append_ops_to_events_log(line)
+    await _persist_admin_crud_audit(session, request_actor, entity_type, action, details)
+
+
 class _AdminExistsCache:
     def __init__(self):
         self.value: bool | None = None
@@ -908,15 +1026,6 @@ REDMINE_API_KEY = (os.getenv("REDMINE_API_KEY") or "").strip()
 
 
 app.add_middleware(AuthMiddleware)
-
-
-@app.on_event("startup")
-async def startup_checks():
-    # Fail-fast: без master key нельзя безопасно работать с encrypted secrets.
-    try:
-        load_master_key()
-    except SecurityError as e:
-        raise RuntimeError(f"startup failed: {e}") from e
 
 
 @app.get("/health")
@@ -1808,6 +1917,7 @@ async def app_user_change_login_admin(
 async def groups_list(
     request: Request,
     q: str = "",
+    highlight_group_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ):
     user = getattr(request.state, "current_user", None)
@@ -1827,6 +1937,7 @@ async def groups_list(
         {
             "items": rows,
             "q": q,
+            "highlight_group_id": highlight_group_id,
             "list_total": len(rows),
         },
     )
@@ -1933,7 +2044,7 @@ async def groups_create(
     name: Annotated[str, Form()],
     room_id: Annotated[str, Form()] = "",
     timezone_name: Annotated[str, Form()] = "",
-    is_active: Annotated[str, Form()] = "",
+    is_active: Annotated[str | None, Form()] = None,
     initial_status_keys: Annotated[str, Form()] = "",
     initial_version_keys: Annotated[str, Form()] = "",
     version_keys_json: Annotated[str, Form()] = "",
@@ -1995,7 +2106,8 @@ async def groups_create(
         name=n,
         room_id=room,
         timezone=(timezone_name or "").strip() or None,
-        is_active=is_active in ("1", "on", "true"),
+        # Group form no longer exposes this switch; default new groups to active.
+        is_active=True if is_active is None else is_active in ("1", "on", "true"),
         notify=notify,
         work_hours=wh,
         work_days=wd,
@@ -2027,7 +2139,14 @@ async def groups_create(
         if ex.scalar_one_or_none():
             continue
         session.add(GroupVersionRoute(group_id=rid, version_key=vkey, room_id=room))
-    return RedirectResponse(f"/groups/{rid}/edit", status_code=303)
+    await _maybe_log_admin_crud(
+        session,
+        user,
+        "group",
+        "create",
+        {"id": rid, "name": n},
+    )
+    return RedirectResponse(f"/groups?highlight_group_id={rid}", status_code=303)
 
 
 @app.post("/groups/{group_id}")
@@ -2037,7 +2156,7 @@ async def groups_update(
     name: Annotated[str, Form()],
     room_id: Annotated[str, Form()] = "",
     timezone_name: Annotated[str, Form()] = "",
-    is_active: Annotated[str, Form()] = "",
+    is_active: Annotated[str | None, Form()] = None,
     notify_json: Annotated[str, Form()] = "",
     notify_preset: Annotated[str, Form()] = "all",
     notify_values: Annotated[list[str], Form()] = [],
@@ -2100,7 +2219,9 @@ async def groups_update(
     row.name = n
     row.room_id = new_room
     row.timezone = (timezone_name or "").strip() or None
-    row.is_active = is_active in ("1", "on", "true")
+    # Preserve existing value when control is absent in form payload.
+    if is_active is not None:
+        row.is_active = is_active in ("1", "on", "true")
     row.notify = notify
     row.work_hours = wh
     row.work_days = wd
@@ -2142,7 +2263,14 @@ async def groups_update(
         await session.flush()
     except IntegrityError:
         raise HTTPException(400, "Не удалось сохранить группу: проверьте уникальность названия")
-    return RedirectResponse(f"/groups/{group_id}/edit", status_code=303)
+    await _maybe_log_admin_crud(
+        session,
+        user,
+        "group",
+        "update",
+        {"id": group_id, "name": n},
+    )
+    return RedirectResponse(f"/groups?highlight_group_id={group_id}", status_code=303)
 
 
 @app.post("/groups/{group_id}/status-routes/add")
@@ -2170,6 +2298,13 @@ async def group_status_route_add(
     if exists.scalar_one_or_none():
         return RedirectResponse(f"/groups/{group_id}/edit?status_err=exists", status_code=303)
     session.add(StatusRoomRoute(status_key=key, room_id=room))
+    await _maybe_log_admin_crud(
+        session,
+        user,
+        "group_status_route",
+        "create",
+        {"group_id": group_id, "status_key": key},
+    )
     return RedirectResponse(f"/groups/{group_id}/edit?status_msg=added", status_code=303)
 
 
@@ -2192,7 +2327,15 @@ async def group_status_route_delete(
     rte = await session.get(StatusRoomRoute, route_row_id)
     if not rte or (rte.room_id or "").strip() != room:
         raise HTTPException(404, "Маршрут не найден")
+    sk = rte.status_key
     await session.delete(rte)
+    await _maybe_log_admin_crud(
+        session,
+        user,
+        "group_status_route",
+        "delete",
+        {"group_id": group_id, "status_key": sk, "route_id": route_row_id},
+    )
     return RedirectResponse(f"/groups/{group_id}/edit?status_msg=deleted", status_code=303)
 
 
@@ -2226,6 +2369,13 @@ async def group_version_route_add(
     if exists.scalar_one_or_none():
         return RedirectResponse(f"/groups/{group_id}/edit?version_err=exists", status_code=303)
     session.add(GroupVersionRoute(group_id=group_id, version_key=key, room_id=room))
+    await _maybe_log_admin_crud(
+        session,
+        user,
+        "group_version_route",
+        "create",
+        {"group_id": group_id, "version_key": key},
+    )
     return RedirectResponse(f"/groups/{group_id}/edit?version_msg=added", status_code=303)
 
 
@@ -2247,7 +2397,15 @@ async def group_version_route_delete(
     rte = await session.get(GroupVersionRoute, route_row_id)
     if not rte or rte.group_id != group_id:
         raise HTTPException(404, "Маршрут не найден")
+    vkey = rte.version_key
     await session.delete(rte)
+    await _maybe_log_admin_crud(
+        session,
+        user,
+        "group_version_route",
+        "delete",
+        {"group_id": group_id, "version_key": vkey, "route_id": route_row_id},
+    )
     return RedirectResponse(f"/groups/{group_id}/edit?version_msg=deleted", status_code=303)
 
 
@@ -2266,7 +2424,9 @@ async def groups_delete(
     if row:
         if _is_reserved_support_group(row):
             raise HTTPException(403, "Системную группу нельзя удалить")
+        gid, gname = row.id, row.name
         await session.delete(row)
+        await _maybe_log_admin_crud(session, user, "group", "delete", {"id": gid, "name": gname})
     return RedirectResponse("/groups", status_code=303)
 
 
@@ -2275,6 +2435,7 @@ async def users_list(
     request: Request,
     q: str = "",
     group_id: int | None = None,
+    highlight_user_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ):
     user = getattr(request.state, "current_user", None)
@@ -2318,6 +2479,7 @@ async def users_list(
             "groups_by_id": groups_by_id,
             "q": q,
             "group_filter": group_id,
+            "highlight_user_id": highlight_user_id,
             "list_total": len(rows),
         },
     )
@@ -2449,7 +2611,7 @@ async def users_create(
     csrf_token: Annotated[str, Form()] = "",
     session: AsyncSession = Depends(get_session),
 ):
-    notify_catalog, _versions_catalog = await _load_catalogs(session)
+    notify_catalog, versions_catalog = await _load_catalogs(session)
     notify_allowed = [item["key"] for item in notify_catalog]
     _verify_csrf(request, csrf_token)
     user = getattr(request.state, "current_user", None)
@@ -2503,7 +2665,18 @@ async def users_create(
         if ex.scalar_one_or_none():
             continue
         session.add(UserVersionRoute(bot_user_id=row.id, version_key=vkey, room_id=row.room))
-    return RedirectResponse(f"/users/{row.id}/edit?saved=1", status_code=303)
+    await _maybe_log_admin_crud(
+        session,
+        user,
+        "bot_user",
+        "create",
+        {
+            "id": row.id,
+            "redmine_id": redmine_id,
+            "group_id": row.group_id,
+        },
+    )
+    return RedirectResponse(f"/users?highlight_user_id={row.id}", status_code=303)
 
 
 @app.get("/users/{user_id}/edit", response_class=HTMLResponse)
@@ -2520,7 +2693,6 @@ async def users_edit(
         raise HTTPException(404)
     version_err = (request.query_params.get("version_err") or "").strip()
     version_msg = (request.query_params.get("version_msg") or "").strip()
-    saved = (request.query_params.get("saved") or "").strip()
     uv_stmt = (
         select(UserVersionRoute)
         .where(UserVersionRoute.bot_user_id == user_id)
@@ -2558,7 +2730,6 @@ async def users_edit(
             "versions_catalog": versions_catalog,
             "selected_version_keys": selected_versions,
             "version_preset": _version_preset(selected_versions, versions_catalog),
-            "saved": saved,
         },
     )
 
@@ -2653,7 +2824,14 @@ async def users_update(
             .where(UserVersionRoute.bot_user_id == user_id, UserVersionRoute.room_id == old_room)
             .values(room_id=new_room)
         )
-    return RedirectResponse(f"/users/{user_id}/edit?saved=1", status_code=303)
+    await _maybe_log_admin_crud(
+        session,
+        user,
+        "bot_user",
+        "update",
+        {"id": user_id, "redmine_id": redmine_id},
+    )
+    return RedirectResponse(f"/users?highlight_user_id={user_id}", status_code=303)
 
 
 @app.post("/users/{user_id}/version-routes/add")
@@ -2686,6 +2864,13 @@ async def user_version_route_add(
     if exists.scalar_one_or_none():
         return RedirectResponse(f"/users/{user_id}/edit?version_err=exists", status_code=303)
     session.add(UserVersionRoute(bot_user_id=user_id, version_key=key, room_id=room))
+    await _maybe_log_admin_crud(
+        session,
+        user,
+        "user_version_route",
+        "create",
+        {"bot_user_id": user_id, "version_key": key},
+    )
     return RedirectResponse(f"/users/{user_id}/edit?version_msg=added", status_code=303)
 
 
@@ -2704,7 +2889,15 @@ async def user_version_route_delete(
     rte = await session.get(UserVersionRoute, route_row_id)
     if not rte or rte.bot_user_id != user_id:
         raise HTTPException(404, "Маршрут не найден")
+    vkey = rte.version_key
     await session.delete(rte)
+    await _maybe_log_admin_crud(
+        session,
+        user,
+        "user_version_route",
+        "delete",
+        {"bot_user_id": user_id, "version_key": vkey, "route_id": route_row_id},
+    )
     return RedirectResponse(f"/users/{user_id}/edit?version_msg=deleted", status_code=303)
 
 
@@ -2721,7 +2914,9 @@ async def users_delete(
         raise HTTPException(403, "Только admin")
     row = await session.get(BotUser, user_id)
     if row:
+        uid, rmid = row.id, row.redmine_id
         await session.delete(row)
+        await _maybe_log_admin_crud(session, user, "bot_user", "delete", {"id": uid, "redmine_id": rmid})
     return RedirectResponse("/users", status_code=303)
 
 
@@ -2984,7 +3179,16 @@ async def routes_version_add(
     user = getattr(request.state, "current_user", None)
     if not user or getattr(user, "role", "") != "admin":
         raise HTTPException(403, "Только admin")
-    session.add(VersionRoomRoute(version_key=version_key.strip(), room_id=room_id.strip()))
+    vr = VersionRoomRoute(version_key=version_key.strip(), room_id=room_id.strip())
+    session.add(vr)
+    await session.flush()
+    await _maybe_log_admin_crud(
+        session,
+        user,
+        "route/version_global",
+        "create",
+        {"id": vr.id, "version_key": vr.version_key},
+    )
     return RedirectResponse("/routes/version", status_code=303)
 
 
@@ -2999,19 +3203,156 @@ async def routes_version_del(
     user = getattr(request.state, "current_user", None)
     if not user or getattr(user, "role", "") != "admin":
         raise HTTPException(403, "Только admin")
+    vr = await session.get(VersionRoomRoute, row_id)
+    vkey = vr.version_key if vr else ""
     await session.execute(delete(VersionRoomRoute).where(VersionRoomRoute.id == row_id))
+    await _maybe_log_admin_crud(
+        session,
+        user,
+        "route/version_global",
+        "delete",
+        {"id": row_id, "version_key": vkey},
+    )
     return RedirectResponse("/routes/version", status_code=303)
 
 
 # --- События (хвост файла лога бота) ---
 
 
+def _parse_audit_date_param(raw: str) -> date | None:
+    s = (raw or "").strip()
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s[:10])
+    except ValueError:
+        return None
+
+
+def _build_audit_where(
+    *,
+    actor_substr: str = "",
+    entity_type_substr: str = "",
+    action_kind: str = "",
+    date_from_s: str = "",
+    date_to_s: str = "",
+):
+    parts: list = []
+    a = actor_substr.strip().lower()
+    if a:
+        parts.append(BotOpsAudit.actor_login.ilike(f"%{a}%"))
+    et = entity_type_substr.strip()
+    if et:
+        parts.append(BotOpsAudit.entity_type.ilike(f"%{et}%"))
+    ak = action_kind.strip().lower()
+    if ak == "crud":
+        parts.append(BotOpsAudit.action == "ADMIN_CRUD")
+    elif ak == "ops":
+        parts.append(BotOpsAudit.action != "ADMIN_CRUD")
+    df = _parse_audit_date_param(date_from_s)
+    d_to = _parse_audit_date_param(date_to_s)
+    tz = bot_display_timezone()
+    if df:
+        start_utc = datetime.combine(df, time.min, tzinfo=tz).astimezone(timezone.utc)
+        parts.append(BotOpsAudit.created_at >= start_utc)
+    if d_to:
+        end_excl = datetime.combine(d_to + timedelta(days=1), time.min, tzinfo=tz).astimezone(timezone.utc)
+        parts.append(BotOpsAudit.created_at < end_excl)
+    if not parts:
+        return None
+    return and_(*parts)
+
+
+def _audit_filter_query_dict(
+    actor: str,
+    entity_type: str,
+    action_kind: str,
+    date_from: str,
+    date_to: str,
+    page_size: int,
+) -> dict[str, str]:
+    d: dict[str, str] = {"page_size": str(page_size)}
+    if actor.strip():
+        d["actor"] = actor.strip()
+    if entity_type.strip():
+        d["entity_type"] = entity_type.strip()
+    if action_kind.strip():
+        d["action_kind"] = action_kind.strip()
+    if date_from.strip():
+        d["date_from"] = date_from.strip()
+    if date_to.strip():
+        d["date_to"] = date_to.strip()
+    return d
+
+
 @app.get("/events", response_class=HTMLResponse)
-async def events_page(request: Request):
+async def events_page(
+    request: Request,
+    actor: str = "",
+    entity_type: str = "",
+    action_kind: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    page: int = 1,
+    page_size: int = 50,
+    session: AsyncSession = Depends(get_session),
+):
     user = getattr(request.state, "current_user", None)
     if not user or getattr(user, "role", "") != "admin":
         raise HTTPException(403, "Только admin")
-    return templates.TemplateResponse(request, "events.html", {})
+    try:
+        page_i = max(1, int(page))
+    except (TypeError, ValueError):
+        page_i = 1
+    try:
+        page_size_i = int(page_size)
+    except (TypeError, ValueError):
+        page_size_i = 50
+    page_size_i = min(200, max(5, page_size_i))
+
+    wc = _build_audit_where(
+        actor_substr=actor,
+        entity_type_substr=entity_type,
+        action_kind=action_kind,
+        date_from_s=date_from,
+        date_to_s=date_to,
+    )
+    cnt_stmt = select(func.count()).select_from(BotOpsAudit)
+    if wc is not None:
+        cnt_stmt = cnt_stmt.where(wc)
+    total = int((await session.execute(cnt_stmt)).scalar_one() or 0)
+    total_pages = max(1, (total + page_size_i - 1) // page_size_i) if total > 0 else 1
+    page_i = max(1, min(page_i, total_pages))
+    offset = (page_i - 1) * page_size_i
+
+    stmt = select(BotOpsAudit).order_by(BotOpsAudit.created_at.desc())
+    if wc is not None:
+        stmt = stmt.where(wc)
+    stmt = stmt.offset(offset).limit(page_size_i)
+    rows = list((await session.execute(stmt)).scalars().all())
+
+    qdict = _audit_filter_query_dict(actor, entity_type, action_kind, date_from, date_to, page_size_i)
+    qs_base = urlencode(qdict)
+    events_filter_link_prefix = f"/events?{qs_base}&" if qs_base else "/events?"
+
+    return templates.TemplateResponse(
+        request,
+        "events.html",
+        {
+            "rows": rows,
+            "total": total,
+            "page": page_i,
+            "page_size": page_size_i,
+            "total_pages": total_pages,
+            "filter_actor": actor,
+            "filter_entity_type": entity_type,
+            "filter_action_kind": action_kind,
+            "filter_date_from": date_from,
+            "filter_date_to": date_to,
+            "events_filter_link_prefix": events_filter_link_prefix,
+            "export_qs": qs_base,
+        },
+    )
 
 
 @app.get("/events/tail", response_class=HTMLResponse)
@@ -3022,6 +3363,113 @@ async def events_log_tail(request: Request):
     raw = _read_log_tail(_admin_events_log_path())
     text = format_events_log_for_ui(raw)
     return HTMLResponse(f'<pre class="log-tail" id="events-log-pre">{html_escape(text)}</pre>')
+
+
+@app.get("/audit")
+async def audit_legacy_redirect(request: Request):
+    """Старый URL: журнал перенесён на /events."""
+    user = getattr(request.state, "current_user", None)
+    if not user or getattr(user, "role", "") != "admin":
+        raise HTTPException(403, "Только admin")
+    q = request.url.query
+    loc = f"/events?{q}" if q else "/events"
+    return RedirectResponse(loc, status_code=303)
+
+
+@app.get("/events/export.csv")
+async def events_export_csv(
+    request: Request,
+    actor: str = "",
+    entity_type: str = "",
+    action_kind: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    session: AsyncSession = Depends(get_session),
+):
+    user = getattr(request.state, "current_user", None)
+    if not user or getattr(user, "role", "") != "admin":
+        raise HTTPException(403, "Только admin")
+    wc = _build_audit_where(
+        actor_substr=actor,
+        entity_type_substr=entity_type,
+        action_kind=action_kind,
+        date_from_s=date_from,
+        date_to_s=date_to,
+    )
+    stmt = select(BotOpsAudit).order_by(BotOpsAudit.created_at.desc())
+    if wc is not None:
+        stmt = stmt.where(wc)
+    stmt = stmt.limit(5000)
+    rows = list((await session.execute(stmt)).scalars().all())
+
+    import csv
+    import io
+
+    def gen_bytes():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(
+            [
+                "created_at_utc",
+                "actor",
+                "action",
+                "status",
+                "entity_type",
+                "entity_id",
+                "crud_action",
+                "detail",
+                "details_json",
+            ]
+        )
+        yield buf.getvalue().encode("utf-8")
+        buf.seek(0)
+        buf.truncate(0)
+        for row in rows:
+            dj = row.details_json
+            if dj is None:
+                dj_s = ""
+            elif isinstance(dj, dict):
+                dj_s = json.dumps(dj, ensure_ascii=False)
+            else:
+                dj_s = str(dj)
+            writer.writerow(
+                [
+                    row.created_at.isoformat() if row.created_at else "",
+                    row.actor_login or "",
+                    row.action,
+                    row.status,
+                    row.entity_type or "",
+                    row.entity_id if row.entity_id is not None else "",
+                    row.crud_action or "",
+                    (row.detail or "").replace("\n", " ")[:2000],
+                    dj_s,
+                ]
+            )
+            yield buf.getvalue().encode("utf-8")
+            buf.seek(0)
+            buf.truncate(0)
+
+    def gen_bom():
+        yield "\ufeff".encode("utf-8")
+        yield from gen_bytes()
+
+    stamp = _now_utc().strftime("%Y%m%d")
+    return StreamingResponse(
+        gen_bom(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="events_audit_{stamp}.csv"'},
+    )
+
+
+@app.get("/audit/export.csv")
+async def audit_export_legacy_redirect(request: Request):
+    """Старый URL: выгрузка перенесена на /events/export.csv."""
+    user = getattr(request.state, "current_user", None)
+    if not user or getattr(user, "role", "") != "admin":
+        raise HTTPException(403, "Только admin")
+    q = request.url.query
+    loc = f"/events/export.csv?{q}" if q else "/events/export.csv"
+    return RedirectResponse(loc, status_code=303)
 
 
 # --- User self-service: настройки ---
@@ -3176,4 +3624,11 @@ async def me_settings_post(
     bot_user.dnd = dnd in ("on", "true", "1")
     await session.flush()
 
+    await _maybe_log_admin_crud(
+        session,
+        user,
+        "self_settings",
+        "update",
+        {"bot_user_id": bot_user.id, "redmine_id": redmine_id},
+    )
     return RedirectResponse("/me/settings", status_code=303)

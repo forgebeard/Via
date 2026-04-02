@@ -2,7 +2,123 @@
 {% from "macros.html" import page_head %}
 {% block title %}События{% endblock %}
 {% block content %}
-{{ page_head("События") }}
+{% call page_head("События", "Таблица журнала панели (БД bot_ops_audit): Docker и CRUD при включённом аудите. Ниже — хвост файла лога бота (часто тот же data/bot.log). Даты фильтра — в BOT_TIMEZONE.") %}
+  <a class="btn btn-ghost" href="/events/export.csv{% if export_qs %}?{{ export_qs }}{% endif %}"><i class="fa-solid fa-download"></i> CSV (до 5000 строк)</a>
+{% endcall %}
+
+<form method="get" action="/events" class="card form" style="margin-bottom:1rem;">
+  <div class="filter-row" style="flex-wrap:wrap;">
+    <div class="field">
+      <label for="actor">Актор (логин)</label>
+      <input id="actor" name="actor" value="{{ filter_actor or '' }}" placeholder="подстрока" autocomplete="off"/>
+    </div>
+    <div class="field">
+      <label for="entity_type">Тип сущности</label>
+      <input id="entity_type" name="entity_type" value="{{ filter_entity_type or '' }}" placeholder="bot_user, group, …" list="audit-entity-suggestions" autocomplete="off"/>
+      <datalist id="audit-entity-suggestions">
+        <option value="bot_user"/>
+        <option value="group"/>
+        <option value="group_version_route"/>
+        <option value="group_status_route"/>
+        <option value="user_version_route"/>
+        <option value="route/version_global"/>
+        <option value="self_settings"/>
+      </datalist>
+    </div>
+    <div class="field">
+      <label for="action_kind">Тип записи</label>
+      <select id="action_kind" name="action_kind">
+        <option value="" {% if not filter_action_kind %}selected{% endif %}>Все</option>
+        <option value="crud" {% if filter_action_kind == 'crud' %}selected{% endif %}>CRUD панели (ADMIN_CRUD)</option>
+        <option value="ops" {% if filter_action_kind == 'ops' %}selected{% endif %}>Операции бота (Docker и др.)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="date_from">С даты</label>
+      <input id="date_from" type="date" name="date_from" value="{{ filter_date_from or '' }}"/>
+    </div>
+    <div class="field">
+      <label for="date_to">По дату</label>
+      <input id="date_to" type="date" name="date_to" value="{{ filter_date_to or '' }}"/>
+    </div>
+    <div class="field">
+      <label for="page_size">На странице</label>
+      <select id="page_size" name="page_size">
+        {% for n in [25, 50, 100, 200] %}
+        <option value="{{ n }}" {% if page_size == n %}selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="page-actions" style="align-self:flex-end;">
+      <button type="submit" class="btn btn-primary">Применить</button>
+      <a class="btn btn-ghost" href="/events">Сбросить</a>
+    </div>
+  </div>
+</form>
+
+<p class="muted" style="margin-bottom:0.75rem;">Всего по фильтру: <strong>{{ total }}</strong>{% if total_pages > 1 %} · страница {{ page }} из {{ total_pages }}{% endif %}</p>
+
+<div class="card table-wrap">
+  <table class="audit-table">
+    <thead>
+      <tr>
+        <th>Время</th>
+        <th>Актор</th>
+        <th>Действие</th>
+        <th>Статус</th>
+        <th>Сущность</th>
+        <th>CRUD</th>
+        <th>Детали</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td class="nowrap">{{ row.created_at | dt_ui }}</td>
+        <td><code class="mono-truncate" title="{{ row.actor_login or '' }}">{{ row.actor_login or "—" }}</code></td>
+        <td><code>{{ row.action }}</code></td>
+        <td>{{ row.status }}</td>
+        <td>
+          {% if row.entity_type %}
+            <code>{{ row.entity_type }}</code>
+            {% if row.entity_id is not none %}<span class="muted">#{{ row.entity_id }}</span>{% endif %}
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ row.crud_action or "—" }}</td>
+        <td class="audit-detail-cell">
+          {% if row.detail %}
+            <span class="muted">{{ row.detail[:200] }}{% if row.detail|length > 200 %}…{% endif %}</span>
+          {% endif %}
+          {% if row.details_json %}
+          <details class="audit-json">
+            <summary>details_json</summary>
+            <pre class="log-tail audit-json-pre">{{ row.details_json | audit_json }}</pre>
+          </details>
+          {% endif %}
+          {% if not row.detail and not row.details_json %}—{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">Нет записей</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_pages > 1 %}
+<nav class="pagination card" style="margin-top:1rem;padding:0.75rem 1rem;display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;" aria-label="Страницы">
+  {% if page > 1 %}
+  <a class="btn btn-ghost" href="{{ events_filter_link_prefix }}page={{ page - 1 }}">← Назад</a>
+  {% endif %}
+  <span class="muted">Страница {{ page }} / {{ total_pages }}</span>
+  {% if page < total_pages %}
+  <a class="btn btn-ghost" href="{{ events_filter_link_prefix }}page={{ page + 1 }}">Вперёд →</a>
+  {% endif %}
+</nav>
+{% endif %}
+
+<h2 class="page-subsection-title" style="margin-top:1.75rem;margin-bottom:0.5rem;font-size:1.05rem;font-weight:600;">Хвост файла лога</h2>
+<p class="muted" style="margin-bottom:0.75rem;font-size:0.9rem;">Источник: <code>ADMIN_EVENTS_LOG_PATH</code> или <code>data/bot.log</code>. Обновление каждые 3 с.</p>
 <div class="card events-log-card">
   <div
     id="events-log"
