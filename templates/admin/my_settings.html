@@ -3,7 +3,7 @@
 {% block title %}Мои настройки{% endblock %}
 {% block content %}
 <div class="page-settings">
-{{ page_head("Мои настройки", "Редактируйте расписание DND и правила уведомлений для вашей Redmine-учётки.") }}
+{{ page_head("Мои настройки", "Редактируйте расписание и режим «Не беспокоить» для вашей Redmine-учётки.") }}
 
 {% if error %}
 <p class="error" role="alert">{{ error }}</p>
@@ -36,9 +36,7 @@
       <legend class="settings-legend">Типы уведомлений</legend>
       <div class="radio-stack">
         <label class="choice choice--radio"><input type="radio" name="notify_preset" value="all" {% if notify_preset == "all" %}checked{% endif %}/> Все уведомления</label>
-        <label class="choice choice--radio"><input type="radio" name="notify_preset" value="new_only" {% if notify_preset == "new_only" %}checked{% endif %}/> Только новые задачи</label>
-        <label class="choice choice--radio"><input type="radio" name="notify_preset" value="overdue_only" {% if notify_preset == "overdue_only" %}checked{% endif %}/> Только просроченные</label>
-        <label class="choice choice--radio"><input type="radio" name="notify_preset" value="custom" {% if notify_preset == "custom" %}checked{% endif %}/> Кастомный набор</label>
+        <label class="choice choice--radio"><input type="radio" name="notify_preset" value="custom" {% if notify_preset == "custom" %}checked{% endif %}/> Выбрать уведомления</label>
       </div>
       <div id="notify_custom_box" class="sub-panel sub-panel--notify">
         <span class="field-hint">Расширенный режим: выберите нужные события.</span>
@@ -61,7 +59,18 @@
         <span class="sep">—</span>
         <input type="time" id="work_hours_to" name="work_hours_to" value="{{ work_hours_to or '' }}"/>
       </div>
-      <p class="field-hint">Таймзона расписания: <strong>{{ bot_timezone() }}</strong>.</p>
+    </div>
+    <div class="field">
+      <label class="field-label" for="timezone_name">Таймзона</label>
+      <input type="search" id="timezone_search_me" placeholder="Поиск таймзоны"/>
+      <select id="timezone_name" name="timezone_name">
+        {% if timezone_name and timezone_name not in timezone_top_options %}
+        <option value="{{ timezone_name }}" selected>{{ timezone_labels.get(timezone_name, timezone_name) }}</option>
+        {% endif %}
+        {% for tz_name in timezone_top_options %}
+        <option value="{{ tz_name }}" {% if tz_name == timezone_name %}selected{% endif %}>{{ timezone_labels.get(tz_name, tz_name) }}</option>
+        {% endfor %}
+      </select>
     </div>
     <input type="hidden" name="work_hours" value="{{ work_hours or '' }}"/>
 
@@ -80,7 +89,7 @@
 
     <div class="field field-check field-dnd">
       <input type="checkbox" name="dnd" value="on" id="dnd" {% if dnd %}checked{% endif %}/>
-      <label for="dnd">DND (не беспокоить)</label>
+      <label for="dnd">Не беспокоить</label>
     </div>
 
     <div class="settings-actions">
@@ -104,5 +113,13 @@
     radios.forEach(r => r.addEventListener('change', refresh));
     refresh();
   })();
+
+  initTimezoneSelect({
+    searchId: 'timezone_search_me',
+    selectId: 'timezone_name',
+    zones: {{ timezone_all_options | tojson }},
+    defaultLimit: 30,
+    filterLimit: 50
+  });
 </script>
 {% endblock %}

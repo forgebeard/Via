@@ -50,6 +50,7 @@ class BotUser(Base):
     department: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     room: Mapped[str] = mapped_column(Text, nullable=False)
     notify: Mapped[list] = mapped_column(JSONB, nullable=False, default=lambda: ["all"])
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     work_hours: Mapped[str | None] = mapped_column(String(32), nullable=True)
     work_days: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     dnd: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

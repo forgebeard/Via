@@ -3,89 +3,128 @@
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
 {{ page_head(title) }}
-<div class="card content-stack">
+<div class="user-form-root">
   <form class="form" method="post" action="{% if g %}/groups/{{ g.id }}{% else %}/groups{% endif %}">
     <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
-    <div class="field">
-      <label for="name">Название группы</label>
-      <input id="name" name="name" required value="{{ g.name if g else '' }}" placeholder="Отдел технической поддержки РЕД ОС"/>
-    </div>
-    <div class="field">
-      <label for="room_id">ID комнаты группы</label>
-      <input id="room_id" name="room_id" value="{{ g.room_id if g else '' }}" placeholder="!group-room:server" {% if not g %}required{% endif %}/>
-      <p class="field-hint">Куда дублировать групповые уведомления в Matrix. Это не токен бота: учётные данные Matrix/Redmine задаются в разделе «Настройки».</p>
-    </div>
-    <div class="field">
-      <label for="timezone_name">Таймзона группы</label>
-      <input id="timezone_name" name="timezone_name" value="{{ g.timezone if g and g.timezone else '' }}" placeholder="{{ bot_tz }}"/>
-      <p class="field-hint">Если пусто, используется таймзона системы ({{ bot_tz }}).</p>
-    </div>
-    <div class="field field-check">
-      <input type="checkbox" id="is_active" name="is_active" value="1" {% if not g or g.is_active %}checked{% endif %}/>
-      <label for="is_active">Группа активна</label>
-    </div>
+    <div class="user-form-layout">
+      <section class="user-form-main">
+        <article class="card user-form-section">
+          <h2 class="section-title">Основные данные</h2>
+          <div class="user-form-row-2">
+            <div class="field">
+              <label for="name">Название группы</label>
+              <input id="name" name="name" required value="{{ g.name if g else '' }}"/>
+            </div>
+            <div class="field">
+              <label for="room_id">ID комнаты группы</label>
+              <input id="room_id" name="room_id" value="{{ g.room_id if g else '' }}" placeholder="!group-room:server" {% if not g %}required{% endif %}/>
+            </div>
+          </div>
+          <div class="field field-check">
+            <input type="checkbox" id="is_active" name="is_active" value="1" {% if not g or g.is_active %}checked{% endif %}/>
+            <label for="is_active">Группа активна</label>
+          </div>
+        </article>
 
-    <fieldset>
-      <legend>Типы уведомлений (для комнаты группы)</legend>
-      <label class="choice"><input type="radio" name="notify_preset" value="all" {% if notify_preset == "all" %}checked{% endif %}/> Все уведомления</label>
-      <label class="choice"><input type="radio" name="notify_preset" value="new_only" {% if notify_preset == "new_only" %}checked{% endif %}/> Только новые задачи</label>
-      <label class="choice"><input type="radio" name="notify_preset" value="overdue_only" {% if notify_preset == "overdue_only" %}checked{% endif %}/> Только просроченные</label>
-      <label class="choice"><input type="radio" name="notify_preset" value="custom" {% if notify_preset == "custom" %}checked{% endif %}/> Кастомный набор</label>
-      <div id="notify_custom_box_group" class="sub-panel">
-        <span class="field-hint">В расширенном режиме выберите типы:</span>
-        <div class="choice-grid">
-          {% for key, label in [
-            ("new", "Новая задача"), ("info", "Информация предоставлена"), ("reminder", "Напоминание"),
-            ("overdue", "Просроченная"), ("status_change", "Смена статуса"), ("issue_updated", "Обновление"), ("reopened", "Переоткрыта")
-          ] %}
-            <label class="choice"><input type="checkbox" name="notify_values" value="{{ key }}" {% if key in notify_selected %}checked{% endif %}/> {{ label }}</label>
-          {% endfor %}
-        </div>
-        <input type="hidden" name="notify_json" value="{{ notify_json }}"/>
-      </div>
-    </fieldset>
+        <article class="card user-form-section">
+          <h2 class="section-title">Типы уведомлений</h2>
+          <fieldset>
+            <legend>Типы уведомлений</legend>
+            <div class="notify-presets-inline">
+              <label class="choice"><input type="radio" name="notify_preset" value="all" {% if notify_preset == "all" %}checked{% endif %}/> Все уведомления</label>
+              <label class="choice"><input type="radio" name="notify_preset" value="custom" {% if notify_preset == "custom" %}checked{% endif %}/> Выбрать уведомления</label>
+            </div>
+            <div id="notify_custom_box_group" class="sub-panel">
+              <div class="choice-grid">
+                {% for key, label in [
+                  ("new", "Новая задача"), ("info", "Информация предоставлена"), ("reminder", "Напоминание"),
+                  ("overdue", "Просроченная"), ("status_change", "Смена статуса"), ("issue_updated", "Обновление"), ("reopened", "Переоткрыта")
+                ] %}
+                  <label class="choice"><input type="checkbox" name="notify_values" value="{{ key }}" {% if key in notify_selected %}checked{% endif %}/> {{ label }}</label>
+                {% endfor %}
+              </div>
+              <input type="hidden" name="notify_json" value="{{ notify_json }}"/>
+            </div>
+          </fieldset>
+          {% if not g %}
+          <fieldset>
+            <legend>Версии</legend>
+            <div class="sub-panel">
+              <div class="field">
+                <label for="initial_version_keys">Ключи версий</label>
+                <textarea id="initial_version_keys" name="initial_version_keys" rows="3" placeholder="Подстрока в названии версии задачи в Redmine — с новой строки или через запятую"></textarea>
+              </div>
+            </div>
+          </fieldset>
+          {% endif %}
+        </article>
 
-    <div class="field">
-      <label for="work_hours_from_group">Рабочие часы (для комнаты группы)</label>
-      <div class="inline-range">
-        <input type="time" id="work_hours_from_group" name="work_hours_from" value="{% if g and g.work_hours and '-' in g.work_hours %}{{ g.work_hours.split('-')[0] }}{% endif %}"/>
-        <span class="sep">—</span>
-        <input type="time" id="work_hours_to_group" name="work_hours_to" value="{% if g and g.work_hours and '-' in g.work_hours %}{{ g.work_hours.split('-')[1] }}{% endif %}"/>
-      </div>
-      <p class="field-hint">Таймзона: <strong>{{ bot_tz }}</strong>. Если интервал пуст — круглосуточно (как у пользователей без расписания).</p>
-    </div>
+        <article class="card user-form-section">
+          <h2 class="section-title">График</h2>
+          <div class="user-form-row-2">
+            <div class="field">
+              <label for="work_hours_from_group">Рабочие часы</label>
+              <div class="inline-range">
+                <input type="time" id="work_hours_from_group" name="work_hours_from" value="{% if g and g.work_hours and '-' in g.work_hours %}{{ g.work_hours.split('-')[0] }}{% else %}09:00{% endif %}"/>
+                <span class="sep">—</span>
+                <input type="time" id="work_hours_to_group" name="work_hours_to" value="{% if g and g.work_hours and '-' in g.work_hours %}{{ g.work_hours.split('-')[1] }}{% else %}18:00{% endif %}"/>
+              </div>
+            </div>
+            <div class="field">
+              <label>Рабочие дни</label>
+              <div class="day-pills" role="group" aria-label="Рабочие дни недели">
+                {% set _gdays = (g.work_days if g and g.work_days is not none else [0,1,2,3,4]) %}
+                {% for idx, label in [(0,"Пн"),(1,"Вт"),(2,"Ср"),(3,"Чт"),(4,"Пт"),(5,"Сб"),(6,"Вс")] %}
+                <label class="day-pill">
+                  <input type="checkbox" class="day-pill__input" name="work_days_values" value="{{ idx }}" {% if idx in _gdays %}checked{% endif %}/>
+                  <span class="day-pill__text">{{ label }}</span>
+                </label>
+                {% endfor %}
+              </div>
+              <input type="hidden" name="work_days_json" value="{% if g and g.work_days is not none %}{{ g.work_days }}{% endif %}"/>
+            </div>
+          </div>
+          <div class="user-form-row-2">
+            <div class="field">
+              {% set current_tz = (g.timezone if g and g.timezone else bot_tz) %}
+              <label for="timezone_name">Таймзона</label>
+              <select id="timezone_name" name="timezone_name">
+                {% if current_tz and current_tz not in timezone_all_options %}
+                <option value="{{ current_tz }}" selected>{{ timezone_labels.get(current_tz, current_tz) }}</option>
+                {% endif %}
+                {% for tz_name in timezone_all_options %}
+                <option value="{{ tz_name }}" {% if tz_name == current_tz %}selected{% endif %}>{{ timezone_labels.get(tz_name, tz_name) }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="field field-switch">
+              <label class="switch" for="dnd_group">
+                <input type="checkbox" name="dnd" value="on" id="dnd_group" {% if g and g.dnd %}checked{% endif %}/>
+                <span class="switch-ui" aria-hidden="true"></span>
+                <span class="switch-text">Не беспокоить для комнаты группы</span>
+              </label>
+            </div>
+          </div>
+        </article>
 
-    <fieldset>
-      <legend>Рабочие дни (для комнаты группы)</legend>
-      <div class="choice-grid">
-        {% set _gdays = (g.work_days if g and g.work_days is not none else [0,1,2,3,4]) %}
-        {% for idx, label in [(0,"Пн"),(1,"Вт"),(2,"Ср"),(3,"Чт"),(4,"Пт"),(5,"Сб"),(6,"Вс")] %}
-          <label class="choice"><input type="checkbox" name="work_days_values" value="{{ idx }}" {% if idx in _gdays %}checked{% endif %}/> {{ label }}</label>
-        {% endfor %}
-      </div>
-      <input type="hidden" name="work_days_json" value="{% if g and g.work_days is not none %}{{ g.work_days }}{% endif %}"/>
-    </fieldset>
+      </section>
 
-    <div class="field field-check">
-      <input type="checkbox" name="dnd" value="on" id="dnd_group" {% if g and g.dnd %}checked{% endif %}/>
-      <label for="dnd_group">Не беспокоить (DND) для комнаты группы</label>
-    </div>
-
-    {% if not g %}
-    <div class="field">
-      <label for="initial_status_keys">Статусы</label>
-      <textarea id="initial_status_keys" name="initial_status_keys" rows="4" required placeholder="Точное имя статуса в Redmine — каждое с новой строки или через запятую"></textarea>
-      <p class="field-hint">Обязательно: хотя бы один статус. После сохранения список можно менять в блоке ниже.</p>
-    </div>
-    <div class="field">
-      <label for="initial_version_keys">Версии (необязательно)</label>
-      <textarea id="initial_version_keys" name="initial_version_keys" rows="3" placeholder="Подстрока в названии версии задачи в Redmine — с новой строки или через запятую"></textarea>
-      <p class="field-hint">Дополнительные уведомления в комнату группы, если в версии задачи встречается этот фрагмент (без учёта регистра).</p>
-    </div>
-    {% endif %}
-    <div class="page-actions">
-      <button class="btn btn-primary" type="submit">Сохранить</button>
-      <a class="btn btn-ghost" href="/groups">Отмена</a>
+      <aside>
+        <article class="card user-form-summary">
+          <h2 style="margin-top:0;">Краткий итог</h2>
+          <div class="summary-line"><span class="k">Группа</span><span class="v" id="summary_group_name">—</span></div>
+          <div class="summary-line"><span class="k">Комната</span><span class="v" id="summary_group_room">—</span></div>
+          <div class="summary-line"><span class="k">Таймзона</span><span class="v" id="summary_group_tz">—</span></div>
+          <div class="summary-line"><span class="k">Активна</span><span class="v" id="summary_group_active">Да</span></div>
+          <div class="summary-line"><span class="k">Уведомления</span><span class="v" id="summary_group_notify">—</span></div>
+          <div class="summary-line"><span class="k">Часы</span><span class="v" id="summary_group_hours">—</span></div>
+          <div class="summary-line"><span class="k">Не беспокоить</span><span class="v" id="summary_group_dnd">—</span></div>
+          <div class="page-actions" style="margin-top:1rem;">
+            <button class="btn btn-primary" type="submit" style="width:100%;">Сохранить</button>
+            <a class="btn btn-ghost" href="/groups" style="width:100%;">Отмена</a>
+          </div>
+        </article>
+      </aside>
     </div>
   </form>
 </div>
@@ -99,9 +138,60 @@
       if (!box) return;
       box.style.display = current && current.value === 'custom' ? 'block' : 'none';
     }
-    radios.forEach(r => r.addEventListener('change', refresh));
+    radios.forEach(r => r.addEventListener('change', function () { refresh(); refreshSummary(); }));
     refresh();
   })();
+
+  function textOrDash(v) {
+    const value = String(v || '').trim();
+    return value || '—';
+  }
+  function selectedNotifyLabel() {
+    const active = document.querySelector('input[name="notify_preset"]:checked');
+    if (!active) return '—';
+    if (active.value === 'all') return 'Все уведомления';
+    return 'Выбрать уведомления';
+  }
+  function selectedHours() {
+    const from = document.getElementById('work_hours_from_group');
+    const to = document.getElementById('work_hours_to_group');
+    const fv = from ? String(from.value || '').trim() : '';
+    const tv = to ? String(to.value || '').trim() : '';
+    if (fv && tv) return fv + ' - ' + tv;
+    return 'Не задано';
+  }
+  function dndLabel() {
+    const dnd = document.getElementById('dnd_group');
+    return dnd && dnd.checked ? 'Включено' : 'Выключено';
+  }
+  function activeLabel() {
+    const active = document.getElementById('is_active');
+    return active && active.checked ? 'Да' : 'Нет';
+  }
+  function setSummary(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+  }
+  function refreshSummary() {
+    setSummary('summary_group_name', textOrDash(document.getElementById('name')?.value));
+    setSummary('summary_group_room', textOrDash(document.getElementById('room_id')?.value));
+    setSummary('summary_group_tz', textOrDash(document.getElementById('timezone_name')?.value || '{{ bot_tz }}'));
+    setSummary('summary_group_active', activeLabel());
+    setSummary('summary_group_notify', selectedNotifyLabel());
+    setSummary('summary_group_hours', selectedHours());
+    setSummary('summary_group_dnd', dndLabel());
+  }
+  ['name', 'room_id', 'timezone_name', 'work_hours_from_group', 'work_hours_to_group', 'dnd_group', 'is_active'].forEach(function (id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const evt = (id === 'dnd_group' || id === 'is_active' || id === 'timezone_name') ? 'change' : 'input';
+    el.addEventListener(evt, refreshSummary);
+    if (evt !== 'change') el.addEventListener('change', refreshSummary);
+  });
+  Array.from(document.querySelectorAll('input[name="notify_preset"]')).forEach(function (el) {
+    el.addEventListener('change', refreshSummary);
+  });
+  refreshSummary();
 </script>
 
 {% if g %}

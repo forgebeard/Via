@@ -20,10 +20,12 @@ import time
 import unicodedata
 import uuid
 from collections import defaultdict, deque
+from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo, available_timezones
 from jinja2 import Environment, FileSystemLoader
 
 _ROOT = Path(__file__).resolve().parent
@@ -155,6 +157,89 @@ AUTH_TOKEN_SALT = os.getenv("AUTH_TOKEN_SALT", "dev-token-salt")
 SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "86400"))
 RESET_TOKEN_TTL_SECONDS = int(os.getenv("RESET_TOKEN_TTL_SECONDS", "1800"))
 RESET_COOLDOWN_SECONDS = int(os.getenv("RESET_COOLDOWN_SECONDS", "90"))
+
+
+@lru_cache(maxsize=1)
+def _standard_timezone_options() -> list[str]:
+    """IANA timezone list with RU priority zones first."""
+    preferred = [
+        "Europe/Moscow",
+        "Asia/Ufa",
+        "Asia/Omsk",
+        "Asia/Krasnoyarsk",
+        "Asia/Irkutsk",
+        "Asia/Vladivostok",
+    ]
+    values = sorted(tz for tz in available_timezones() if "/" in tz and not tz.startswith(("Etc/", "posix/", "right/")))
+    ordered = [tz for tz in preferred if tz in values]
+    preferred_set = set(ordered)
+    ordered.extend([tz for tz in values if tz not in preferred_set])
+    return ordered
+
+
+@lru_cache(maxsize=1)
+def _top_timezone_options() -> list[str]:
+    """Frequently used timezones for the default compact select list."""
+    preferred = [
+        "Europe/Moscow",
+        "Europe/Kaliningrad",
+        "Europe/Samara",
+        "Europe/Volgograd",
+        "Europe/Astrakhan",
+        "Europe/Ulyanovsk",
+        "Europe/Kirov",
+        "Europe/Simferopol",
+        "Europe/Minsk",
+        "Europe/Kyiv",
+        "Europe/Riga",
+        "Europe/Vilnius",
+        "Europe/Tallinn",
+        "Europe/Warsaw",
+        "Europe/Berlin",
+        "Europe/Paris",
+        "Europe/London",
+        "Europe/Madrid",
+        "Europe/Rome",
+        "Europe/Istanbul",
+        "Asia/Yerevan",
+        "Asia/Tbilisi",
+        "Asia/Baku",
+        "Asia/Almaty",
+        "Asia/Tashkent",
+        "Asia/Yekaterinburg",
+        "Asia/Omsk",
+        "Asia/Novosibirsk",
+        "Asia/Krasnoyarsk",
+        "Asia/Vladivostok",
+    ]
+    all_set = set(_standard_timezone_options())
+    result = [tz for tz in preferred if tz in all_set]
+    if len(result) < 30:
+        for tz in _standard_timezone_options():
+            if tz in result:
+                continue
+            result.append(tz)
+            if len(result) >= 30:
+                break
+    return result[:30]
+
+
+def _timezone_labels(options: list[str]) -> dict[str, str]:
+    """Readable timezone labels with UTC offset and local time."""
+    labels: dict[str, str] = {}
+    for tz_name in options:
+        try:
+            now_local = datetime.now(ZoneInfo(tz_name))
+            delta = now_local.utcoffset() or timedelta(0)
+            total_minutes = int(delta.total_seconds() // 60)
+            sign = "+" if total_minutes >= 0 else "-"
+            abs_minutes = abs(total_minutes)
+            hh = abs_minutes // 60
+            mm = abs_minutes % 60
+            labels[tz_name] = f"{tz_name} (UTC{sign}{hh:02d}:{mm:02d}, {now_local:%H:%M})"
+        except Exception:
+            labels[tz_name] = tz_name
+    return labels
 
 APP_MASTER_KEY_FILE = os.getenv("APP_MASTER_KEY_FILE", "/run/secrets/app_master_key")
 SHOW_DEV_TOKENS = os.getenv("SHOW_DEV_TOKENS", "0").strip().lower() in ("1", "true", "yes", "on")
@@ -1497,6 +1582,9 @@ async def groups_new(
             "title": "Новая группа",
             "g": None,
             "bot_tz": os.getenv("BOT_TIMEZONE", "Europe/Moscow"),
+            "timezone_top_options": _top_timezone_options(),
+            "timezone_all_options": _standard_timezone_options(),
+            "timezone_labels": _timezone_labels(_standard_timezone_options()),
             "status_routes": [],
             "status_err": "",
             "status_msg": "",
@@ -1542,6 +1630,9 @@ async def groups_edit(
             "title": "Редактирование группы",
             "g": row,
             "bot_tz": os.getenv("BOT_TIMEZONE", "Europe/Moscow"),
+            "timezone_top_options": _top_timezone_options(),
+            "timezone_all_options": _standard_timezone_options(),
+            "timezone_labels": _timezone_labels(_standard_timezone_options()),
             "status_routes": status_rows,
             "status_err": status_err,
             "status_msg": status_msg,
@@ -1589,8 +1680,6 @@ async def groups_create(
     if not room:
         raise HTTPException(400, "Укажите ID комнаты группы")
     status_keys = _parse_status_keys_list(initial_status_keys)
-    if not status_keys:
-        raise HTTPException(400, "Добавьте хотя бы один статус")
     if work_hours_from and work_hours_to:
         wh = f"{work_hours_from.strip()}-{work_hours_to.strip()}"
     else:
@@ -1913,6 +2002,9 @@ async def users_new(
             "groups": _groups_assignable(groups_rows),
             "group_unassigned_display": GROUP_UNASSIGNED_DISPLAY,
             "bot_tz": os.getenv("BOT_TIMEZONE", "Europe/Moscow"),
+            "timezone_top_options": _top_timezone_options(),
+            "timezone_all_options": _standard_timezone_options(),
+            "timezone_labels": _timezone_labels(_standard_timezone_options()),
         },
     )
 
@@ -1972,6 +2064,7 @@ async def users_create(
     notify_json: Annotated[str, Form()] = "",
     notify_preset: Annotated[str, Form()] = "all",
     notify_values: Annotated[list[str], Form()] = [],
+    timezone_name: Annotated[str, Form()] = "",
     work_hours: Annotated[str, Form()] = "",
     work_hours_from: Annotated[str, Form()] = "",
     work_hours_to: Annotated[str, Form()] = "",
@@ -2010,6 +2103,7 @@ async def users_create(
         department=None,
         room=room.strip(),
         notify=notify,
+        timezone=(timezone_name or "").strip() or None,
         work_hours=wh,
         work_days=wd,
         dnd=dnd in ("on", "true", "1"),
@@ -2052,6 +2146,9 @@ async def users_edit(
             "groups": _groups_assignable(groups_rows),
             "group_unassigned_display": GROUP_UNASSIGNED_DISPLAY,
             "bot_tz": os.getenv("BOT_TIMEZONE", "Europe/Moscow"),
+            "timezone_top_options": _top_timezone_options(),
+            "timezone_all_options": _standard_timezone_options(),
+            "timezone_labels": _timezone_labels(_standard_timezone_options()),
             "version_routes": version_rows,
             "version_err": version_err,
             "version_msg": version_msg,
@@ -2070,6 +2167,7 @@ async def users_update(
     notify_json: Annotated[str, Form()] = "",
     notify_preset: Annotated[str, Form()] = "all",
     notify_values: Annotated[list[str], Form()] = [],
+    timezone_name: Annotated[str, Form()] = "",
     work_hours: Annotated[str, Form()] = "",
     work_hours_from: Annotated[str, Form()] = "",
     work_hours_to: Annotated[str, Form()] = "",
@@ -2092,6 +2190,7 @@ async def users_update(
     row.display_name = display_name.strip() or None
     row.group_id = int(group_id) if str(group_id).isdigit() else None
     row.room = new_room
+    row.timezone = (timezone_name or "").strip() or None
     if notify_preset == "all":
         row.notify = ["all"]
     elif notify_preset == "new_only":
@@ -2516,6 +2615,10 @@ async def me_settings_get(
                 "work_hours": "",
                 "work_hours_from": "",
                 "work_hours_to": "",
+                "timezone_name": os.getenv("BOT_TIMEZONE", "Europe/Moscow"),
+                "timezone_top_options": _top_timezone_options(),
+                "timezone_all_options": _standard_timezone_options(),
+                "timezone_labels": _timezone_labels(_standard_timezone_options()),
                 "work_days_json": "",
                 "work_days_selected": [0, 1, 2, 3, 4],
                 "dnd": False,
@@ -2551,6 +2654,10 @@ async def me_settings_get(
             "work_hours": bot_user.work_hours or "",
             "work_hours_from": _parse_work_hours_range(bot_user.work_hours or "")[0],
             "work_hours_to": _parse_work_hours_range(bot_user.work_hours or "")[1],
+            "timezone_name": bot_user.timezone or os.getenv("BOT_TIMEZONE", "Europe/Moscow"),
+            "timezone_top_options": _top_timezone_options(),
+            "timezone_all_options": _standard_timezone_options(),
+            "timezone_labels": _timezone_labels(_standard_timezone_options()),
             "work_days_json": json.dumps(bot_user.work_days, ensure_ascii=False)
             if bot_user.work_days is not None
             else "",
@@ -2572,6 +2679,7 @@ async def me_settings_post(
     notify_json: Annotated[str, Form()] = "",
     notify_preset: Annotated[str, Form()] = "all",
     notify_values: Annotated[list[str], Form()] = [],
+    timezone_name: Annotated[str, Form()] = "",
     work_hours: Annotated[str, Form()] = "",
     work_hours_from: Annotated[str, Form()] = "",
     work_hours_to: Annotated[str, Form()] = "",
@@ -2610,6 +2718,7 @@ async def me_settings_post(
         bot_user.notify = _normalize_notify(notify_values)
     else:
         bot_user.notify = _parse_notify(notify_json)
+    bot_user.timezone = (timezone_name or "").strip() or None
     if work_hours_from and work_hours_to:
         bot_user.work_hours = f"{work_hours_from.strip()}-{work_hours_to.strip()}"
     else:

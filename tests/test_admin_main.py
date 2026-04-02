@@ -389,7 +389,7 @@ def test_groups_create_reserved_name_rejected(client: TestClient):
     assert r.status_code == 400
 
 
-def test_groups_create_requires_room_and_statuses(client: TestClient):
+def test_groups_create_requires_room(client: TestClient):
     db_url = os.getenv("DATABASE_URL", "")
     if not db_url or not db_url.startswith("postgresql://"):
         pytest.skip("Тест требует Postgres (DATABASE_URL)")
@@ -408,12 +408,6 @@ def test_groups_create_requires_room_and_statuses(client: TestClient):
         follow_redirects=False,
     )
     assert r1.status_code == 400
-    r2 = client.post(
-        "/groups",
-        data={**base, "room_id": "!pytest:matrix", "initial_status_keys": ""},
-        follow_redirects=False,
-    )
-    assert r2.status_code == 400
 
 
 def test_groups_delete_unassigned_forbidden(client: TestClient):
