@@ -750,6 +750,8 @@ a.stat-card--link:focus-visible {
 }
 .field-switch {
   justify-content: flex-end;
+  align-self: end;
+  padding-bottom: 0.2rem;
 }
 .switch {
   display: inline-flex;
@@ -835,6 +837,8 @@ a.stat-card--link:focus-visible {
   }
   .field-switch {
     justify-content: flex-start;
+    align-self: auto;
+    padding-bottom: 0;
   }
 }
 @media (max-width: 700px) {
