@@ -82,7 +82,7 @@ _jinja_env.filters["dt_ui"] = format_datetime_ui
 def _admin_asset_version() -> str:
     """Query string для cache-bust ссылок на `/static/...` (см. `ADMIN_ASSET_VERSION`)."""
     v = (os.getenv("ADMIN_ASSET_VERSION") or "").strip()
-    return v if v else "5"
+    return v if v else "6"
 
 
 _jinja_env.globals["asset_version"] = _admin_asset_version
@@ -1939,10 +1939,8 @@ def _notify_preset(notify: list | None) -> str:
     data = _normalize_notify([str(x) for x in (notify or [])])
     if "all" in data:
         return "all"
-    if set(data) == {"new"}:
-        return "new_only"
-    if set(data) == {"overdue"}:
-        return "overdue_only"
+    # UI keeps only two presets: "all" and manual selection.
+    # Legacy stored values like ["new"] / ["overdue"] map to "custom".
     return "custom"
 
 

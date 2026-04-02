@@ -50,7 +50,7 @@ def test_forgot_password_redirects_to_login(client: TestClient):
 
 def test_admin_asset_version_helper(monkeypatch):
     monkeypatch.delenv("ADMIN_ASSET_VERSION", raising=False)
-    assert admin_main._admin_asset_version() == "5"
+    assert admin_main._admin_asset_version() == "6"
     monkeypatch.setenv("ADMIN_ASSET_VERSION", "build-xyz")
     assert admin_main._admin_asset_version() == "build-xyz"
 
@@ -179,8 +179,8 @@ def test_notify_presets_helpers():
     assert admin_main._normalize_notify(["new", "issue_updated"]) == ["new", "issue_updated"]
     assert admin_main._normalize_notify(["all", "new"]) == ["all"]
     assert admin_main._notify_preset(["all"]) == "all"
-    assert admin_main._notify_preset(["new"]) == "new_only"
-    assert admin_main._notify_preset(["overdue"]) == "overdue_only"
+    assert admin_main._notify_preset(["new"]) == "custom"
+    assert admin_main._notify_preset(["overdue"]) == "custom"
     assert admin_main._notify_preset(["new", "issue_updated"]) == "custom"
 
 
