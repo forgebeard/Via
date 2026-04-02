@@ -14,7 +14,7 @@
 | PostgreSQL (Docker) | Сервис в **`docker-compose.yml`**; конфиг пользователей/маршрутов и **state** — в Postgres через **админку** |
 | `src/preferences.py` (DND / рабочие часы) | **`can_notify()`** вызывается из **`send_safe`** и для утреннего отчёта: для личной комнаты — поля пользователя из Postgres; для **комнаты группы** — настройки группы (`group_delivery` в рантайме); приоритет «Аварийный» пробивает ограничения |
 
-Разделы ниже про **`config.yaml`**, **91 тест** и пути вроде `data/` относятся к целевой/альтернативной схеме и постепенно приводятся к виду выше.
+Ниже — рабочая документация по текущей схеме (`bot.py` + Postgres + admin UI).
 
 ---
 
@@ -30,7 +30,7 @@
 | 6 | **Информация предоставлена** | Уведомление при переходе в этот статус |
 | 7 | **Маршрутизация** | Разные статусы / версии / команды → разные комнаты Matrix |
 | 8 | **Мультипользовательность** | Поддержка нескольких пользователей с индивидуальными настройками |
-| 9 | **Рабочие часы и DND** | Заложено в `src/preferences.py`; **подключение к `bot.py` — в планах** |
+| 9 | **Рабочие часы и DND** | Применяются через `src/preferences.py` в `send_safe` и утреннем отчёте |
 
 ---
 
@@ -204,7 +204,7 @@ python3 bot.py
 | **bot** | Образ из `Dockerfile` (корневой `bot.py` + `src/`), том `./data` → `/app/data`, `.env` только для чтения; healthcheck: `python -c "import bot"` |
 | **postgres** | PostgreSQL 16, том `postgres_data`; `DATABASE_URL` в **bot** и **admin** |
 | **docker-socket-proxy** | Ограниченный прокси к Docker API для runtime-control из admin (без прямого монтирования raw socket в admin). Если Start/Stop не срабатывают, на дашборде в уведомлении показывается текст ошибки Docker; см. комментарии к переменным `DOCKER_*` в `.env.example` (в том числе `DOCKER_TARGET_CONTAINER_SUBSTRING`). |
-| **admin** | Панель (`admin_main.py`, FastAPI + Jinja2 + HTMX): **дашборд** (`/dashboard`, тот же экран на `/`), **группы** (в т.ч. маршруты по статусу Redmine в комнату группы), **пользователи**, **настройки** (`/onboarding`), **события** (хвост лога: новые строки сверху, время в **`BOT_TIMEZONE`**, см. **`ADMIN_EVENTS_LOG_PATH`**, **`ADMIN_EVENTS_LOG_PARSE_AS_UTC`** / `data/bot.log`; в лог дописываются строки **`[ADMIN]`** при Start/Stop/Restart); маршруты по версии — URL **`/routes/version`** (без пункта в меню); runtime-control бота; **CSP** (`ADMIN_ENABLE_CSP` / `ADMIN_CSP_POLICY`); **`ADMIN_PORT`** (8080); при старте `alembic upgrade head`; том **`./data`** у сервиса **с записью** (чтобы дописывать события и читать `runtime_status.json`) |
+| **admin** | Панель (`admin_main.py`, FastAPI + Jinja2 + HTMX): **дашборд** (`/dashboard`, тот же экран на `/`), **группы** (в т.ч. маршруты по статусу Redmine в комнату группы), **пользователи**, **настройки** (`/onboarding`), **события** (`/events`: таблица **`bot_ops_audit`** с фильтрами и CSV **`/events/export.csv`**, ниже хвост файла лога — **`ADMIN_EVENTS_LOG_PATH`** / `data/bot.log`, **`ADMIN_EVENTS_LOG_PARSE_AS_UTC`**, строки **`[ADMIN]`** при Start/Stop/Restart); маршруты по версии — URL **`/routes/version`** (без пункта в меню); runtime-control бота; **CSP** (`ADMIN_ENABLE_CSP` / `ADMIN_CSP_POLICY`); **`ADMIN_PORT`** (8080); при старте `alembic upgrade head`; том **`./data`** у сервиса **с записью** (чтобы дописывать события и читать `runtime_status.json`) |
 
 ### Подготовка `.env`
 
@@ -243,6 +243,8 @@ docker compose down
 ### Админка и конфиг в БД
 
 **Пошаговое руководство для администраторов** (развёртывание, первый вход, пароли, порты, локальный `DATABASE_URL`): [docs/ADMINISTRATOR_GUIDE.md](docs/ADMINISTRATOR_GUIDE.md).
+
+Что попадает в раздел **События** (`[ADMIN]`, stdout, БД) и как устроен аудит: [docs/ADMIN_EVENTS_AND_AUDIT_PLAN.md](docs/ADMIN_EVENTS_AND_AUDIT_PLAN.md).
 
 Онбординг в **личке Matrix** (`!start`, шаги, шифрование ключа, `!change` / `!cancel`): [docs/MATRIX_ONBOARDING_PLAN.md](docs/MATRIX_ONBOARDING_PLAN.md). Включение: `MATRIX_ONBOARDING_ENABLED`, мастер-ключ `APP_MASTER_KEY` (32 байта) у **bot** и **admin**.
 
@@ -317,6 +319,8 @@ REDMINE_API_KEY=your_redmine_api_key
 | `ADMIN_LOGINS` | Список разрешённых логинов панели (через запятую); пусто = без ограничения |
 | `ADMIN_EVENTS_LOG_PATH` | Файл лога для `/events` в админке; пусто → `data/bot.log` от корня приложения админки |
 | `ADMIN_EVENTS_LOG_PARSE_AS_UTC` | `1` (по умолчанию): префикс `YYYY-MM-DD` в файле считать UTC и показывать в `BOT_TIMEZONE`; `0` — время в файле уже в `BOT_TIMEZONE` |
+| `ADMIN_EVENTS_LOG_CRUD` | `1` / `true` / `yes` / `on` — дописывать в тот же файл строки `CRUD …` (пользователи, группы, маршруты, «Мои настройки»); по умолчанию выкл. |
+| `ADMIN_AUDIT_CRUD_DB` | Не задано — дублировать CRUD в **`bot_ops_audit`** (как при включённом файле); `0` — не писать в БД; `1` — писать в БД (можно без `ADMIN_EVENTS_LOG_CRUD`). |
 | `AUTH_TOKEN_SALT` | Соль для hash reset-токенов |
 | `SESSION_TTL_SECONDS` | Время жизни admin-сессии |
 | `RESET_TOKEN_TTL_SECONDS` | TTL токена сброса пароля |
@@ -340,7 +344,6 @@ python scripts/reset_admin_password.py --login admin --password 'NewStrongPasswo
 
 Полный регламент отката: `docs/rollback-runbook.md`.
 Smoke-чеклист UI перед merge: `docs/ui-smoke-checklist.md`.
-План глобального редизайна админ-панели: `docs/ui-global-overhaul-plan.md`.
 
 ### Расписание и DND (из Postgres)
 

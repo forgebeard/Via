@@ -33,14 +33,14 @@
     </thead>
     <tbody>
       {% for g in items %}
-      <tr>
+      <tr {% if highlight_group_id and g.id == highlight_group_id %}id="highlight-group-row" class="is-highlighted-row"{% endif %}>
         <td>{{ g.name }}</td>
         <td><code>{{ g.room_id or "—" }}</code></td>
         <td>{{ g.timezone or "—" }}</td>
         <td>{{ "да" if g.is_active else "нет" }}</td>
         <td class="table-actions">
           <a class="btn btn-ghost" href="/groups/{{ g.id }}/edit">Изменить</a>
-          <form method="post" action="/groups/{{ g.id }}/delete" style="display:inline;" hx-confirm="Удалить группу?">
+          <form method="post" action="/groups/{{ g.id }}/delete" style="display:inline;" data-inline-delete-form>
             <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
             <button type="submit" class="btn btn-danger">Удалить</button>
           </form>
@@ -52,4 +52,67 @@
     </tbody>
   </table>
 </div>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const row = document.getElementById('highlight-group-row');
+    if (!row) return;
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(function () {
+      row.classList.remove('is-highlighted-row');
+    }, 2200);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('highlight_group_id')) {
+      url.searchParams.delete('highlight_group_id');
+      window.history.replaceState({}, '', url.pathname + (url.search || ''));
+    }
+
+    const bindInlineDelete = function (form, entityLabel) {
+      const deleteBtn = form.querySelector('button[type="submit"]');
+      if (!deleteBtn) return;
+      form.addEventListener('submit', function (e) {
+        if (form.dataset.confirmed === '1') return;
+        e.preventDefault();
+        if (form.dataset.confirming === '1') return;
+        form.dataset.confirming = '1';
+        deleteBtn.style.display = 'none';
+
+        const confirmWrap = document.createElement('span');
+        confirmWrap.className = 'inline-delete-confirm';
+
+        const ask = document.createElement('span');
+        ask.className = 'muted';
+        ask.textContent = 'Удалить ' + entityLabel + '?';
+
+        const yesBtn = document.createElement('button');
+        yesBtn.type = 'button';
+        yesBtn.className = 'btn btn-danger btn-small';
+        yesBtn.textContent = 'Удалить';
+
+        const noBtn = document.createElement('button');
+        noBtn.type = 'button';
+        noBtn.className = 'btn btn-ghost btn-small';
+        noBtn.textContent = 'Отмена';
+
+        yesBtn.addEventListener('click', function () {
+          form.dataset.confirmed = '1';
+          form.submit();
+        });
+        noBtn.addEventListener('click', function () {
+          delete form.dataset.confirming;
+          confirmWrap.remove();
+          deleteBtn.style.display = '';
+        });
+
+        confirmWrap.appendChild(ask);
+        confirmWrap.appendChild(yesBtn);
+        confirmWrap.appendChild(noBtn);
+        deleteBtn.insertAdjacentElement('afterend', confirmWrap);
+      });
+    };
+
+    Array.from(document.querySelectorAll('form[data-inline-delete-form]')).forEach(function (form) {
+      bindInlineDelete(form, 'группу');
+    });
+  });
+</script>
 {% endblock %}

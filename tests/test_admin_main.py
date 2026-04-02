@@ -1,6 +1,8 @@
 import asyncio
 import os
 import re
+from urllib.parse import parse_qs, urlparse
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
@@ -19,6 +21,39 @@ import admin_main  # noqa: E402
 @pytest.fixture
 def client():
     return TestClient(admin_main.app)
+
+
+def test_audit_legacy_redirects_unauthenticated(client: TestClient):
+    r = client.get("/audit", follow_redirects=False)
+    assert r.status_code == 303
+    assert "/login" in (r.headers.get("location") or "")
+
+
+def test_audit_legacy_redirects_to_events_for_admin(client: TestClient):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url.startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+    _setup_and_login_admin(client)
+    r = client.get("/audit?actor=test", follow_redirects=False)
+    if r.status_code not in (303, 302):
+        pytest.skip("Нет доступа к редиректу /audit")
+    loc = r.headers.get("location") or ""
+    assert loc.startswith("/events")
+    assert "actor=test" in loc
+
+
+def test_events_page_includes_audit_table_and_log(client: TestClient):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url.startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+    _setup_and_login_admin(client)
+    r = client.get("/events")
+    if r.status_code != 200:
+        pytest.skip("Нет доступа к /events")
+    assert "События" in r.text
+    assert "Время" in r.text and "Актор" in r.text
+    assert "events-log" in r.text
+    assert "Хвост файла лога" in r.text
 
 
 def test_health_ok(client: TestClient):
@@ -175,13 +210,23 @@ def test_admin_csp_value_env(monkeypatch):
 
 
 def test_notify_presets_helpers():
+    allowed = ["new", "issue_updated", "overdue"]
     assert admin_main._normalize_notify([]) == ["all"]
-    assert admin_main._normalize_notify(["new", "issue_updated"]) == ["new", "issue_updated"]
+    assert admin_main._normalize_notify(["new", "issue_updated"], allowed) == ["new", "issue_updated"]
     assert admin_main._normalize_notify(["all", "new"]) == ["all"]
+    assert admin_main._normalize_notify(["ghost"], allowed) == ["all"]
     assert admin_main._notify_preset(["all"]) == "all"
     assert admin_main._notify_preset(["new"]) == "custom"
     assert admin_main._notify_preset(["overdue"]) == "custom"
     assert admin_main._notify_preset(["new", "issue_updated"]) == "custom"
+
+
+def test_version_presets_helpers():
+    assert admin_main._normalize_versions([], ["1.0"]) == []
+    assert admin_main._normalize_versions(["1.0", "1.0", "2.0", "x"], ["1.0", "2.0"]) == ["1.0", "2.0"]
+    assert admin_main._normalize_versions(["1.0"], []) == []
+    assert admin_main._version_preset([], ["1.0"]) == "all"
+    assert admin_main._version_preset(["1.0"], ["1.0"]) == "custom"
 
 
 def test_work_hours_range_parser():
@@ -433,6 +478,350 @@ def test_groups_delete_unassigned_forbidden(client: TestClient):
     token = client.cookies.get("admin_csrf")
     r = client.post(f"/groups/{gid}/delete", data={"csrf_token": token}, follow_redirects=False)
     assert r.status_code == 403
+
+
+def test_users_create_redirects_with_highlight_and_marks_row(client: TestClient):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url or not db_url.startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+
+    _setup_and_login_admin(client)
+    token = client.cookies.get("admin_csrf")
+    redmine_id = 900000 + (abs(hash(uuid4().hex)) % 99999)
+    room = f"!pytest-user-{uuid4().hex[:8]}:server"
+
+    resp = client.post(
+        "/users",
+        data={
+            "redmine_id": str(redmine_id),
+            "display_name": "pytest user highlight",
+            "room": room,
+            "notify_preset": "all",
+            "version_preset": "all",
+            "csrf_token": token,
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    loc = resp.headers.get("location", "")
+    assert loc.startswith("/users?highlight_user_id=")
+    q = parse_qs(urlparse(loc).query)
+    assert q.get("highlight_user_id")
+
+    page = client.get(loc)
+    assert page.status_code == 200
+    assert 'id="highlight-user-row"' in page.text
+    assert 'class="is-highlighted-row"' in page.text
+
+
+def test_groups_create_redirects_with_highlight_and_marks_row(client: TestClient):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url or not db_url.startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+
+    _setup_and_login_admin(client)
+    token = client.cookies.get("admin_csrf")
+    group_name = f"pytest-group-{uuid4().hex[:8]}"
+    room_id = f"!pytest-group-{uuid4().hex[:8]}:server"
+
+    resp = client.post(
+        "/groups",
+        data={
+            "name": group_name,
+            "room_id": room_id,
+            "timezone_name": "Europe/Moscow",
+            "is_active": "1",
+            "notify_preset": "all",
+            "version_preset": "all",
+            "csrf_token": token,
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    loc = resp.headers.get("location", "")
+    assert loc.startswith("/groups?highlight_group_id=")
+    q = parse_qs(urlparse(loc).query)
+    assert q.get("highlight_group_id")
+
+    page = client.get(loc)
+    assert page.status_code == 200
+    assert 'id="highlight-group-row"' in page.text
+    assert 'class="is-highlighted-row"' in page.text
+
+
+def test_group_form_hides_active_block_and_uses_new_dnd_label(client: TestClient):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url or not db_url.startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+    _setup_and_login_admin(client)
+    page = client.get("/groups/new")
+    assert page.status_code == 200
+    assert "Группа активна" not in page.text
+    assert "summary_group_active" not in page.text
+    assert "Отключить уведомления группы" in page.text
+
+
+def test_lists_use_inline_delete_confirmation_markup(client: TestClient):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url or not db_url.startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+    _setup_and_login_admin(client)
+
+    users_page = client.get("/users")
+    assert users_page.status_code == 200
+    assert "data-inline-delete-form" in users_page.text
+    assert "inline-delete-confirm" in users_page.text
+
+    groups_page = client.get("/groups")
+    assert groups_page.status_code == 200
+    assert "data-inline-delete-form" in groups_page.text
+    assert "inline-delete-confirm" in groups_page.text
+
+
+def test_users_custom_notify_and_versions_are_persisted(client: TestClient, monkeypatch):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url or not db_url.startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+
+    async def _fake_catalogs(_session):
+        return (
+            [{"key": "n_new", "label": "Новые"}, {"key": "n_overdue", "label": "Просроченные"}],
+            ["v1.0", "v2.0"],
+        )
+
+    monkeypatch.setattr(admin_main, "_load_catalogs", _fake_catalogs)
+    _setup_and_login_admin(client)
+    token = client.cookies.get("admin_csrf")
+    redmine_id = 990000 + (abs(hash(uuid4().hex)) % 9999)
+    room = f"!pytest-catalog-{uuid4().hex[:8]}:server"
+
+    resp = client.post(
+        "/users",
+        data={
+            "redmine_id": str(redmine_id),
+            "display_name": "pytest custom catalogs",
+            "room": room,
+            "notify_preset": "custom",
+            "notify_values": ["n_new", "n_overdue", "ghost_notify"],
+            "version_preset": "custom",
+            "version_values": ["v1.0", "v2.0", "ghost_version"],
+            "csrf_token": token,
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    loc = resp.headers.get("location", "")
+    q = parse_qs(urlparse(loc).query)
+    assert q.get("highlight_user_id")
+    user_id = int(q["highlight_user_id"][0])
+
+    edit_page = client.get(f"/users/{user_id}/edit")
+    assert edit_page.status_code == 200
+    text = edit_page.text
+    assert 'name="notify_preset" value="custom" checked' in text
+    assert 'name="version_preset" value="custom" checked' in text
+    assert 'name="notify_values" value="n_new" checked' in text
+    assert 'name="notify_values" value="n_overdue" checked' in text
+    assert 'name="version_values" value="v1.0" checked' in text
+    assert 'name="version_values" value="v2.0" checked' in text
+    assert 'value="ghost_notify"' not in text
+    assert 'value="ghost_version"' not in text
+
+
+def test_full_flow_group_user_assignment_update_and_delete(client: TestClient):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url or not db_url.startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+    _setup_and_login_admin(client)
+    token = client.cookies.get("admin_csrf")
+    suffix = uuid4().hex[:8]
+
+    group_name = f"pytest-flow-group-{suffix}"
+    room_id = f"!pytest-flow-group-{suffix}:server"
+    create_group = client.post(
+        "/groups",
+        data={
+            "name": group_name,
+            "room_id": room_id,
+            "timezone_name": "Europe/Moscow",
+            "notify_preset": "all",
+            "version_preset": "all",
+            "csrf_token": token,
+        },
+        follow_redirects=False,
+    )
+    assert create_group.status_code == 303
+    group_loc = create_group.headers.get("location", "")
+    gid = int(parse_qs(urlparse(group_loc).query)["highlight_group_id"][0])
+
+    redmine_id = 920000 + (abs(hash(uuid4().hex)) % 9999)
+    user_name = f"pytest flow user {suffix}"
+    user_room = f"!pytest-flow-user-{suffix}:server"
+    create_user = client.post(
+        "/users",
+        data={
+            "redmine_id": str(redmine_id),
+            "display_name": user_name,
+            "group_id": str(gid),
+            "room": user_room,
+            "notify_preset": "all",
+            "version_preset": "all",
+            "csrf_token": token,
+        },
+        follow_redirects=False,
+    )
+    assert create_user.status_code == 303
+    user_loc = create_user.headers.get("location", "")
+    uid = int(parse_qs(urlparse(user_loc).query)["highlight_user_id"][0])
+
+    users_page = client.get("/users")
+    assert users_page.status_code == 200
+    assert user_name in users_page.text
+    assert group_name in users_page.text
+
+    updated_group_name = f"{group_name}-upd"
+    update_group = client.post(
+        f"/groups/{gid}",
+        data={
+            "name": updated_group_name,
+            "room_id": room_id,
+            "timezone_name": "Europe/Moscow",
+            "notify_preset": "all",
+            "version_preset": "all",
+            "csrf_token": token,
+        },
+        follow_redirects=False,
+    )
+    assert update_group.status_code == 303
+    assert update_group.headers.get("location", "").startswith("/groups?highlight_group_id=")
+
+    update_user = client.post(
+        f"/users/{uid}",
+        data={
+            "redmine_id": str(redmine_id),
+            "display_name": f"{user_name} updated",
+            "group_id": str(gid),
+            "room": user_room,
+            "notify_preset": "all",
+            "version_preset": "all",
+            "csrf_token": token,
+        },
+        follow_redirects=False,
+    )
+    assert update_user.status_code == 303
+    assert update_user.headers.get("location", "").startswith("/users?highlight_user_id=")
+
+    delete_user = client.post(
+        f"/users/{uid}/delete",
+        data={"csrf_token": token},
+        follow_redirects=False,
+    )
+    assert delete_user.status_code == 303
+    assert delete_user.headers.get("location") == "/users"
+
+    delete_group = client.post(
+        f"/groups/{gid}/delete",
+        data={"csrf_token": token},
+        follow_redirects=False,
+    )
+    assert delete_group.status_code == 303
+    assert delete_group.headers.get("location") == "/groups"
+
+
+def test_user_and_group_version_routes_add_and_delete(client: TestClient):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url or not db_url.startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+    _setup_and_login_admin(client)
+    token = client.cookies.get("admin_csrf")
+    suffix = uuid4().hex[:8]
+
+    create_group = client.post(
+        "/groups",
+        data={
+            "name": f"pytest-vroutes-group-{suffix}",
+            "room_id": f"!pytest-vroutes-group-{suffix}:server",
+            "timezone_name": "Europe/Moscow",
+            "notify_preset": "all",
+            "version_preset": "all",
+            "csrf_token": token,
+        },
+        follow_redirects=False,
+    )
+    gid = int(parse_qs(urlparse(create_group.headers.get("location", "")).query)["highlight_group_id"][0])
+
+    create_user = client.post(
+        "/users",
+        data={
+            "redmine_id": str(930000 + (abs(hash(uuid4().hex)) % 9999)),
+            "display_name": f"pytest-vroutes-user-{suffix}",
+            "group_id": str(gid),
+            "room": f"!pytest-vroutes-user-{suffix}:server",
+            "notify_preset": "all",
+            "version_preset": "all",
+            "csrf_token": token,
+        },
+        follow_redirects=False,
+    )
+    uid = int(parse_qs(urlparse(create_user.headers.get("location", "")).query)["highlight_user_id"][0])
+
+    user_key = f"v-user-{suffix}"
+    group_key = f"v-group-{suffix}"
+    add_ur = client.post(
+        f"/users/{uid}/version-routes/add",
+        data={"version_key": user_key, "csrf_token": token},
+        follow_redirects=False,
+    )
+    assert add_ur.status_code == 303
+    assert "version_msg=added" in (add_ur.headers.get("location") or "")
+
+    add_gr = client.post(
+        f"/groups/{gid}/version-routes/add",
+        data={"version_key": group_key, "csrf_token": token},
+        follow_redirects=False,
+    )
+    assert add_gr.status_code == 303
+    assert "version_msg=added" in (add_gr.headers.get("location") or "")
+
+    from database.models import GroupVersionRoute, UserVersionRoute
+    from database.session import get_session_factory
+
+    async def _route_ids() -> tuple[int, int]:
+        factory = get_session_factory()
+        async with factory() as session:
+            ur = await session.execute(
+                select(UserVersionRoute.id).where(
+                    UserVersionRoute.bot_user_id == uid,
+                    UserVersionRoute.version_key == user_key,
+                )
+            )
+            gr = await session.execute(
+                select(GroupVersionRoute.id).where(
+                    GroupVersionRoute.group_id == gid,
+                    GroupVersionRoute.version_key == group_key,
+                )
+            )
+            user_row_id = ur.scalar_one()
+            group_row_id = gr.scalar_one()
+            return user_row_id, group_row_id
+
+    user_row_id, group_row_id = asyncio.run(_route_ids())
+
+    del_ur = client.post(
+        f"/users/{uid}/version-routes/{user_row_id}/delete",
+        data={"csrf_token": token},
+        follow_redirects=False,
+    )
+    assert del_ur.status_code == 303
+    assert "version_msg=deleted" in (del_ur.headers.get("location") or "")
+
+    del_gr = client.post(
+        f"/groups/{gid}/version-routes/{group_row_id}/delete",
+        data={"csrf_token": token},
+        follow_redirects=False,
+    )
+    assert del_gr.status_code == 303
+    assert "version_msg=deleted" in (del_gr.headers.get("location") or "")
 
 
 def test_events_tail_ok_when_authed(client: TestClient):

@@ -3,7 +3,7 @@
 {% block title %}Мои настройки{% endblock %}
 {% block content %}
 <div class="page-settings">
-{{ page_head("Мои настройки", "Редактируйте расписание и режим «Не беспокоить» для вашей Redmine-учётки.") }}
+{{ page_head("Мои настройки", "Редактируйте расписание и режим отключения уведомлений для вашей Redmine-учётки.") }}
 
 {% if error %}
 <p class="error" role="alert">{{ error }}</p>
@@ -86,7 +86,7 @@
 
     <div class="field field-check field-dnd">
       <input type="checkbox" name="dnd" value="on" id="dnd" {% if dnd %}checked{% endif %}/>
-      <label for="dnd">Не беспокоить</label>
+      <label for="dnd">Отключить уведомления пользователя</label>
     </div>
 
     <div class="settings-actions">

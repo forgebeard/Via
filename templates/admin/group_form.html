@@ -20,10 +20,6 @@
               <input id="room_id" name="room_id" value="{{ g.room_id if g else '' }}" placeholder="!group-room:server" {% if not g %}required{% endif %}/>
             </div>
           </div>
-          <div class="field field-check">
-            <input type="checkbox" id="is_active" name="is_active" value="1" {% if not g or g.is_active %}checked{% endif %}/>
-            <label for="is_active">Группа активна</label>
-          </div>
         </article>
 
         <article class="card user-form-section">
@@ -116,7 +112,7 @@
               <label class="switch" for="dnd_group">
                 <input type="checkbox" name="dnd" value="on" id="dnd_group" {% if g and g.dnd %}checked{% endif %}/>
                 <span class="switch-ui" aria-hidden="true"></span>
-                <span class="switch-text">Не беспокоить для комнаты группы</span>
+                <span class="switch-text">Отключить уведомления группы</span>
               </label>
             </div>
           </div>
@@ -130,11 +126,10 @@
           <div class="summary-line"><span class="k">Группа</span><span class="v" id="summary_group_name">—</span></div>
           <div class="summary-line"><span class="k">Комната</span><span class="v" id="summary_group_room">—</span></div>
           <div class="summary-line"><span class="k">Таймзона</span><span class="v" id="summary_group_tz">—</span></div>
-          <div class="summary-line"><span class="k">Активна</span><span class="v" id="summary_group_active">Да</span></div>
           <div class="summary-line"><span class="k">Уведомления</span><span class="v" id="summary_group_notify">—</span></div>
           <div class="summary-line"><span class="k">Версии</span><span class="v" id="summary_group_versions">—</span></div>
           <div class="summary-line"><span class="k">Часы</span><span class="v" id="summary_group_hours">—</span></div>
-          <div class="summary-line"><span class="k">Не беспокоить</span><span class="v" id="summary_group_dnd">—</span></div>
+          <div class="summary-line"><span class="k">Отключить уведомления группы</span><span class="v" id="summary_group_dnd">—</span></div>
           <div class="page-actions" style="margin-top:1rem;">
             <button class="btn btn-primary" type="submit" style="width:100%;">Сохранить</button>
             <a class="btn btn-ghost" href="/groups" style="width:100%;">Отмена</a>
@@ -223,10 +218,6 @@
     const dnd = document.getElementById('dnd_group');
     return dnd && dnd.checked ? 'Включено' : 'Выключено';
   }
-  function activeLabel() {
-    const active = document.getElementById('is_active');
-    return active && active.checked ? 'Да' : 'Нет';
-  }
   function setSummary(id, value) {
     const el = document.getElementById(id);
     if (!el) return;
@@ -237,16 +228,15 @@
     setSummary('summary_group_name', textOrDash(document.getElementById('name')?.value));
     setSummary('summary_group_room', textOrDash(document.getElementById('room_id')?.value));
     setSummary('summary_group_tz', textOrDash(document.getElementById('timezone_name')?.value || '{{ bot_tz }}'));
-    setSummary('summary_group_active', activeLabel());
     setSummary('summary_group_notify', selectedNotifyLabel());
     setSummary('summary_group_versions', selectedVersionsLabel());
     setSummary('summary_group_hours', selectedHours());
     setSummary('summary_group_dnd', dndLabel());
   }
-  ['name', 'room_id', 'timezone_name', 'work_hours_from_group', 'work_hours_to_group', 'dnd_group', 'is_active'].forEach(function (id) {
+  ['name', 'room_id', 'timezone_name', 'work_hours_from_group', 'work_hours_to_group', 'dnd_group'].forEach(function (id) {
     const el = document.getElementById(id);
     if (!el) return;
-    const evt = (id === 'dnd_group' || id === 'is_active' || id === 'timezone_name') ? 'change' : 'input';
+    const evt = (id === 'dnd_group' || id === 'timezone_name') ? 'change' : 'input';
     el.addEventListener(evt, refreshSummary);
     if (evt !== 'change') el.addEventListener('change', refreshSummary);
   });

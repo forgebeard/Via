@@ -142,7 +142,7 @@
             <label class="switch" for="dnd">
               <input type="checkbox" name="dnd" value="on" id="dnd" {% if u and u.dnd %}checked{% endif %}/>
               <span class="switch-ui" aria-hidden="true"></span>
-              <span class="switch-text">Не беспокоить</span>
+              <span class="switch-text">Отключить уведомления пользователя</span>
             </label>
           </div>
         </div>
@@ -160,7 +160,7 @@
         <div class="summary-line"><span class="k">Версии</span><span class="v" id="summary_versions">—</span></div>
         <div class="summary-line"><span class="k">Таймзона</span><span class="v" id="summary_timezone">—</span></div>
         <div class="summary-line"><span class="k">Часы</span><span class="v" id="summary_hours">—</span></div>
-        <div class="summary-line"><span class="k">Не беспокоить</span><span class="v" id="summary_dnd">—</span></div>
+        <div class="summary-line"><span class="k">Отключить уведомления пользователя</span><span class="v" id="summary_dnd">—</span></div>
         <div class="page-actions" style="margin-top:1rem;">
           <button type="submit" class="btn btn-primary" style="width:100%;">Сохранить</button>
           <a class="btn btn-ghost" href="/users" style="width:100%;">Отмена</a>
@@ -170,17 +170,6 @@
   </div>
 </form>
 </div>
-{% if saved == "1" %}
-<div class="backdrop show" id="user-saved-backdrop" style="display:block;"></div>
-<div class="save-modal" id="user-saved-modal" role="dialog" aria-modal="true" aria-label="Пользователь сохранен">
-  <h3 style="margin-top:0;">Пользователь сохранен</h3>
-  <p class="muted" style="margin:0 0 0.9rem;">Создать нового?</p>
-  <div class="page-actions" style="margin-top:0;">
-    <a class="btn btn-primary" href="/users/new">Создать нового</a>
-    <button class="btn btn-ghost" type="button" id="user-saved-cancel">Отмена</button>
-  </div>
-</div>
-{% endif %}
 <script>
   document.addEventListener('DOMContentLoaded', function () {
     const btn = document.getElementById('redmine_lookup_btn');
@@ -344,24 +333,6 @@
     Array.from(document.querySelectorAll('input[name="notify_values"], input[name="version_values"], input[name="version_preset"]')).forEach(function (el) {
       el.addEventListener('change', refreshSummary);
     });
-    const savedCancel = document.getElementById('user-saved-cancel');
-    if (savedCancel) {
-      const closeSavedModal = function () {
-        const modal = document.getElementById('user-saved-modal');
-        const backdrop = document.getElementById('user-saved-backdrop');
-        if (modal) modal.style.display = 'none';
-        if (backdrop) backdrop.style.display = 'none';
-        const url = new URL(window.location.href);
-        url.searchParams.delete('saved');
-        window.history.replaceState({}, '', url.pathname + (url.search || ''));
-      };
-      savedCancel.addEventListener('click', closeSavedModal);
-      const savedBackdrop = document.getElementById('user-saved-backdrop');
-      if (savedBackdrop) savedBackdrop.addEventListener('click', closeSavedModal);
-      document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape') closeSavedModal();
-      });
-    }
     refreshSummary();
   });
 </script>
