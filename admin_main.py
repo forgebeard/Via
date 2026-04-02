@@ -1339,7 +1339,22 @@ async def app_user_reset_password_admin(
         raise HTTPException(404, "Пользователь не найден")
     ok, reason = validate_password_policy(new_password, login=target.login)
     if not ok:
-        raise HTTPException(400, reason)
+        rows = await session.execute(select(BotAppUser).order_by(BotAppUser.login))
+        users = list(rows.scalars().all())
+        csrf_out, set_cookie = _ensure_csrf(request)
+        resp = templates.TemplateResponse(
+            request,
+            "app_users.html",
+            {
+                "users": users,
+                "csrf_token": csrf_out,
+                "password_reset_error": reason or "Пароль не соответствует требованиям",
+                "password_reset_login": target.login,
+            },
+        )
+        if set_cookie:
+            resp.set_cookie(CSRF_COOKIE_NAME, csrf_out, httponly=True, secure=COOKIE_SECURE, samesite="lax")
+        return resp
     target.password_hash = hash_password(new_password)
     target.session_version = (target.session_version or 1) + 1
     await session.execute(delete(BotSession).where(BotSession.user_id == target.id))

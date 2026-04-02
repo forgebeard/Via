@@ -6,6 +6,7 @@ import pytest
 
 from dash_service_display import (
     bot_status_label_ru,
+    format_local_started_at,
     humanize_uptime_ru,
     parse_docker_started_at,
     service_card_context,
@@ -44,6 +45,11 @@ def test_humanize_no_trailing_zero_seconds():
 
 def test_bot_status_restarting():
     assert bot_status_label_ru({"docker_status": "restarting", "running": False}) == "Рестарт"
+
+
+def test_format_local_started_at_dmy():
+    dt = datetime(2026, 4, 2, 6, 42, 44, tzinfo=timezone.utc)
+    assert format_local_started_at(dt, "Europe/Moscow") == "02.04.2026 09:42:44"
 
 
 def test_service_card_stopped_no_uptime():

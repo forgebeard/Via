@@ -85,6 +85,30 @@ def test_dash_service_strip_redirects_without_auth(client: TestClient):
     assert r.status_code in (301, 302, 303)
 
 
+def test_app_users_reset_password_policy_error_is_html_not_json(client: TestClient):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url or not db_url.startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+    _setup_and_login_admin(client)
+    r = client.get("/app-users")
+    if r.status_code != 200:
+        pytest.skip("Нет доступа к /app-users")
+    m = re.search(r'action="/app-users/([a-f0-9-]{36})/reset-password-admin"', r.text)
+    assert m, "ожидали форму сброса пароля с UUID"
+    uid = m.group(1)
+    token = client.cookies.get("admin_csrf", "")
+    pr = client.post(
+        f"/app-users/{uid}/reset-password-admin",
+        data={"new_password": "short", "csrf_token": token},
+        follow_redirects=False,
+    )
+    assert pr.status_code == 200
+    ct = (pr.headers.get("content-type") or "").lower()
+    assert "text/html" in ct
+    assert "application/json" not in ct
+    assert "Пароль должен содержать минимум 12 символов" in pr.text
+
+
 def test_dash_service_strip_for_admin(client: TestClient, monkeypatch):
     db_url = os.getenv("DATABASE_URL", "")
     if not db_url or not db_url.startswith("postgresql://"):

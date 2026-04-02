@@ -105,7 +105,7 @@ def format_local_started_at(started_at: datetime | None, tz_name: str) -> str:
     except Exception:
         tz = ZoneInfo("Europe/Moscow")
     local = started_at.astimezone(tz)
-    return local.strftime("%Y-%m-%d %H:%M:%S")
+    return local.strftime("%d.%m.%Y %H:%M:%S")
 
 
 def bot_status_label_ru(docker: dict[str, Any]) -> str:

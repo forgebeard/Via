@@ -3,6 +3,14 @@
 {% block title %}Аккаунты панели{% endblock %}
 {% block content %}
 {{ page_head("Аккаунты панели", "Управление пользователями, которые входят в admin UI.") }}
+{% if password_reset_error %}
+<div class="warning" role="alert">
+  {{ password_reset_error }}
+  {% if password_reset_login %}
+  <span class="muted"> (логин: {{ password_reset_login }})</span>
+  {% endif %}
+</div>
+{% endif %}
 <div class="table-wrap">
 <table>
   <thead>
