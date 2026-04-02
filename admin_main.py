@@ -23,6 +23,7 @@ from collections import defaultdict, deque
 from pathlib import Path
 from typing import Annotated
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 from jinja2 import Environment, FileSystemLoader
 
 _ROOT = Path(__file__).resolve().parent
@@ -247,6 +248,23 @@ def _read_log_tail(path: Path, *, max_lines: int = 400, max_bytes: int = 256_000
         return f"Не удалось прочитать лог: {e}"
 
 
+def _append_ops_to_events_log(message: str) -> None:
+    """
+    Дублирует операции Docker из панели в файл «Событий» (по умолчанию data/bot.log),
+    чтобы страница /events показывала то же, что видит админ в UI (лог бота при этом не заменяется).
+    """
+    try:
+        path = _admin_events_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        now = _now_utc()
+        ts = now.strftime("%Y-%m-%d %H:%M:%S") + f",{now.microsecond // 1000:03d}"
+        safe = (message or "").replace("\n", " ").replace("\r", " ").strip()[:800]
+        with path.open("a", encoding="utf-8") as f:
+            f.write(f"{ts} [ADMIN] {safe}\n")
+    except OSError:
+        logger.debug("append ops to events log failed", exc_info=True)
+
+
 def _dash_events_tail_line_count(*, max_lines: int = 400) -> int:
     """Число непустых строк в хвосте лога событий (как на /events), без учёта отсутствующего файла."""
     path = _admin_events_log_path()
@@ -353,11 +371,27 @@ _OPS_FLASH_MESSAGES: dict[str, str] = {
     "ops_commit_error": "Не удалось сохранить запись в журнал операций (БД). Состояние Docker смотрите в выводе compose / на дашборде.",
 }
 
+_OPS_FLASH_WITH_DETAIL = frozenset({"stop_error", "start_error", "ops_commit_error"})
 
-def _ops_flash_message(ops: str | None) -> str | None:
+
+def _truncate_ops_detail(s: str, max_len: int = 400) -> str:
+    t = (s or "").replace("\n", " ").replace("\r", " ")
+    if len(t) > max_len:
+        return t[: max_len - 1] + "…"
+    return t
+
+
+def _ops_flash_message(ops: str | None, detail: str | None = None) -> str | None:
     if not ops:
         return None
-    return _OPS_FLASH_MESSAGES.get(ops.strip())
+    key = ops.strip()
+    base = _OPS_FLASH_MESSAGES.get(key)
+    if not base:
+        return None
+    d = (detail or "").strip()
+    if d and key in _OPS_FLASH_WITH_DETAIL:
+        return f"{base} Подробнее: {d}"
+    return base
 
 
 def _ensure_csrf(request: Request) -> tuple[str, bool]:
@@ -1036,7 +1070,10 @@ async def index(
         runtime_docker = {"state": "error", "detail": str(e), "service": os.getenv("DOCKER_TARGET_SERVICE", "bot")}
     dash = await _dashboard_counts(session)
     integration_status = await _integration_status(session)
-    ops_flash = _ops_flash_message(request.query_params.get("ops"))
+    ops_flash = _ops_flash_message(
+        request.query_params.get("ops"),
+        request.query_params.get("ops_detail"),
+    )
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -1053,6 +1090,32 @@ async def index(
             "ops_flash": ops_flash,
         },
     )
+
+
+@app.get("/dash/service-strip", response_class=HTMLResponse)
+async def dash_service_strip(request: Request):
+    """Фрагмент дашборда: uptime процесса admin, Docker-состояние бота, хвост runtime_status (для HTMX poll)."""
+    user = getattr(request.state, "current_user", None)
+    if not user or getattr(user, "role", "") != "admin":
+        raise HTTPException(403, "Только admin")
+    runtime_file = _runtime_status_from_file()
+    try:
+        runtime_docker = get_service_status()
+    except DockerControlError as e:
+        runtime_docker = {"state": "error", "detail": str(e), "service": os.getenv("DOCKER_TARGET_SERVICE", "bot")}
+    uptime_s = int(time.monotonic() - _process_started_at)
+    svc = html_escape(str(runtime_docker.get("service", "bot")))
+    st = html_escape(str(runtime_docker.get("state", "unknown")))
+    cycle = runtime_file or {}
+    last_at = html_escape(str(cycle.get("last_cycle_at") or "—"))
+    dur = html_escape(str(cycle.get("last_cycle_duration_s") or "—"))
+    err_n = html_escape(str(cycle.get("error_count") or 0))
+    html = (
+        f'<p class="muted">Процесс uptime: <strong>{uptime_s}с</strong>, '
+        f'Docker service: <strong>{svc}</strong>, state: <strong>{st}</strong>.</p>'
+        f'<p class="muted">Последний цикл: {last_at}; длительность: {dur}с; ошибок: {err_n}.</p>'
+    )
+    return HTMLResponse(html)
 
 
 def _restart_in_background(actor_login: str | None) -> None:
@@ -1104,22 +1167,26 @@ async def bot_ops_action(
     if action == "restart":
         await _audit_op(session, "BOT_RESTART", "accepted", actor_login=actor, detail="scheduled")
         await session.commit()
+        _append_ops_to_events_log(f"Docker bot/restart scheduled by={actor}")
         _restart_in_background(actor)
         return RedirectResponse("/?ops=restart_accepted", status_code=303)
 
     ops_q = f"{action}_error"
+    ops_detail_err: str | None = None
+    res_ok: dict | None = None
     try:
-        res = control_service(action)
+        res_ok = control_service(action)
         await _audit_op(
             session,
             f"BOT_{action.upper()}",
             "ok",
             actor_login=actor,
-            detail=json.dumps(res, ensure_ascii=False),
+            detail=json.dumps(res_ok, ensure_ascii=False),
         )
         ops_q = f"{action}_ok"
     except DockerControlError as e:
         logger.warning("bot_ops DockerControlError action=%s: %s", action, e)
+        ops_detail_err = str(e)
         await _audit_op(
             session,
             f"BOT_{action.upper()}",
@@ -1129,6 +1196,7 @@ async def bot_ops_action(
         )
     except Exception as e:  # noqa: BLE001
         logger.exception("bot_ops unexpected error action=%s", action)
+        ops_detail_err = str(e)
         await _audit_op(
             session,
             f"BOT_{action.upper()}",
@@ -1142,7 +1210,18 @@ async def bot_ops_action(
         logger.exception("bot_ops commit failed action=%s", action)
         await session.rollback()
         return RedirectResponse("/?ops=ops_commit_error", status_code=303)
-    return RedirectResponse(f"/?ops={ops_q}", status_code=303)
+    if action in ("start", "stop"):
+        if ops_q == f"{action}_ok" and res_ok:
+            cid = str(res_ok.get("container_id") or "")
+            _append_ops_to_events_log(f"Docker bot/{action} ok by={actor} container_id={cid[:20]}")
+        elif ops_q == f"{action}_error":
+            _append_ops_to_events_log(
+                f"Docker bot/{action} failed by={actor}: {_truncate_ops_detail(ops_detail_err or 'unknown', 400)}"
+            )
+    q: dict[str, str] = {"ops": ops_q}
+    if ops_detail_err and ops_q.endswith("_error"):
+        q["ops_detail"] = _truncate_ops_detail(ops_detail_err)
+    return RedirectResponse("/?" + urlencode(q), status_code=303)
 
 
 @app.get("/secrets", response_class=HTMLResponse)

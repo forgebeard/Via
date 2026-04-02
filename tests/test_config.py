@@ -162,3 +162,27 @@ class TestLogPaths:
         from config import log_file_backup_count
 
         assert log_file_backup_count() == 1
+
+
+class TestEnvPlaceholderHints:
+    def test_clean_env_no_hints(self, monkeypatch):
+        monkeypatch.setenv("MATRIX_HOMESERVER", "https://matrix.example.org")
+        monkeypatch.setenv("MATRIX_USER_ID", "@bot:example.org")
+        monkeypatch.setenv("MATRIX_ACCESS_TOKEN", "secret")
+        monkeypatch.setenv("REDMINE_URL", "https://rm.example.org")
+        monkeypatch.setenv("REDMINE_API_KEY", "key")
+        from config import env_placeholder_hints
+
+        assert env_placeholder_hints() == []
+
+    def test_detects_example_matrix_user(self, monkeypatch):
+        monkeypatch.setenv("MATRIX_USER_ID", "@bot:your-matrix-server.example.com")
+        from config import env_placeholder_hints
+
+        assert any("MATRIX_USER_ID" in h for h in env_placeholder_hints())
+
+    def test_detects_example_token(self, monkeypatch):
+        monkeypatch.setenv("MATRIX_ACCESS_TOKEN", "your_access_token_here")
+        from config import env_placeholder_hints
+
+        assert any("MATRIX_ACCESS_TOKEN" in h for h in env_placeholder_hints())

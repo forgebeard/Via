@@ -31,6 +31,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 # До импорта admin_main / database.session (иначе engine создастся без NullPool).
 os.environ.setdefault("SQLALCHEMY_NULL_POOL", "1")
 
+# Не писать лог в data/bot.log во время pytest — иначе админка «События» показывает
+# строки из тестов (!room:server, Matrix send failed из моков и т.д.).
+os.environ["LOG_TO_FILE"] = "0"
+
 
 # ── Вспомогательные классы ──────────────────────────────────────────────
 

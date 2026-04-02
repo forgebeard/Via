@@ -127,7 +127,8 @@ services:
     working_dir: /app
     user: bot
     volumes:
-      - ./data:/app/data:ro
+      # rw: бот пишет runtime_status.json; админка дописывает строки [ADMIN] в лог событий (см. ADMIN_EVENTS_LOG_PATH).
+      - ./data:/app/data
 
 volumes:
   postgres_data:

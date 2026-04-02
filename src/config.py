@@ -81,6 +81,30 @@ MATRIX_ACCESS_TOKEN = os.getenv("MATRIX_ACCESS_TOKEN")
 MATRIX_USER_ID = os.getenv("MATRIX_USER_ID")
 MATRIX_DEVICE_ID = (os.getenv("MATRIX_DEVICE_ID") or "").strip() or "redmine_bot"
 
+
+def env_placeholder_hints() -> list[str]:
+    """
+    Значения как в .env.example — для предупреждения в логе при старте бота.
+    Не вызывать до load_dotenv() в точке входа.
+    """
+    hints: list[str] = []
+    hs = (os.getenv("MATRIX_HOMESERVER") or "").lower()
+    uid = (os.getenv("MATRIX_USER_ID") or "").lower()
+    tok = (os.getenv("MATRIX_ACCESS_TOKEN") or "").strip()
+    ru = (os.getenv("REDMINE_URL") or "").lower()
+    rk = (os.getenv("REDMINE_API_KEY") or "").strip()
+    if "your-matrix-server.example.com" in hs:
+        hints.append("MATRIX_HOMESERVER всё ещё как в .env.example")
+    if "your-matrix-server.example.com" in uid:
+        hints.append("MATRIX_USER_ID всё ещё как в .env.example")
+    if tok == "your_access_token_here":
+        hints.append("MATRIX_ACCESS_TOKEN не заменён (your_access_token_here)")
+    if "your-redmine.example.com" in ru:
+        hints.append("REDMINE_URL всё ещё как в .env.example")
+    if rk == "your_api_key_here":
+        hints.append("REDMINE_API_KEY не заменён (your_api_key_here)")
+    return hints
+
 # ═══════════════════════════════════════════════════════════════
 # REDMINE
 # ═══════════════════════════════════════════════════════════════

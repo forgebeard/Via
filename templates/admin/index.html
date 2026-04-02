@@ -59,16 +59,21 @@
 
   <article class="card demo-card">
     <h2 style="margin-top:0;">Сервис</h2>
+    {% set cycle = runtime_status.cycle or {} %}
+    <div id="dash-service-metrics"
+         hx-get="/dash/service-strip"
+         hx-trigger="load, every 10s"
+         hx-swap="innerHTML">
     <p class="muted">
       Процесс uptime: <strong>{{ runtime_status.uptime_s }}с</strong>,
       Docker service: <strong>{{ runtime_status.docker.service }}</strong>,
       state: <strong>{{ runtime_status.docker.state }}</strong>.
     </p>
-    {% set cycle = runtime_status.cycle or {} %}
     <p class="muted">
       Последний цикл: {{ cycle.last_cycle_at or "—" }}; длительность: {{ cycle.last_cycle_duration_s or "—" }}с;
       ошибок: {{ cycle.error_count or 0 }}.
     </p>
+    </div>
     <div class="page-actions">
       <form method="post" action="/ops/bot/start">
         <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>

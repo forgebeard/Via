@@ -41,7 +41,13 @@ if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 from utils import safe_html
 from matrix_send import room_send_with_retry, MAX_RETRIES
-from config import LOG_FILE, log_file_backup_count, log_file_max_bytes, want_log_file
+from config import (
+    LOG_FILE,
+    env_placeholder_hints,
+    log_file_backup_count,
+    log_file_max_bytes,
+    want_log_file,
+)
 from preferences import can_notify
 from redminelib.exceptions import AuthError, BaseRedmineError, ForbiddenError
 
@@ -1096,6 +1102,9 @@ async def main():
     global USERS, STATUS_ROOM_MAP, VERSION_ROOM_MAP
 
     logger.info("🚀 Бот запущен")
+
+    for hint in env_placeholder_hints():
+        logger.warning("⚠ Похоже на плейсхолдер из .env.example (замените в .env): %s", hint)
 
     # --- Проверка обязательных настроек ---
     if not all([HOMESERVER, ACCESS_TOKEN, MATRIX_USER_ID, REDMINE_URL, REDMINE_KEY]):

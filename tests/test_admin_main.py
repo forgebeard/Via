@@ -62,6 +62,47 @@ def test_static_admin_css_served(client: TestClient):
     assert b":root" in r.content
 
 
+def test_ops_flash_includes_docker_detail():
+    msg = admin_main._ops_flash_message("stop_error", "Docker API HTTP 403: denied")
+    assert msg is not None
+    assert "403" in msg
+    assert "denied" in msg
+
+
+def test_append_ops_to_events_log(tmp_path, monkeypatch):
+    monkeypatch.setattr(admin_main, "_admin_events_log_path", lambda: tmp_path / "ev.log")
+    admin_main._append_ops_to_events_log("Docker bot/stop ok")
+    text = (tmp_path / "ev.log").read_text(encoding="utf-8")
+    assert "[ADMIN]" in text
+    assert "Docker bot/stop ok" in text
+
+
+def test_dash_service_strip_redirects_without_auth(client: TestClient):
+    r = client.get("/dash/service-strip", follow_redirects=False)
+    assert r.status_code in (301, 302, 303)
+
+
+def test_dash_service_strip_for_admin(client: TestClient, monkeypatch):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url or not db_url.startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+    _setup_and_login_admin(client)
+    monkeypatch.setattr(
+        admin_main,
+        "get_service_status",
+        lambda: {"service": "bot", "state": "running", "running": True, "container_id": "deadbeef"},
+    )
+    monkeypatch.setattr(
+        admin_main,
+        "_runtime_status_from_file",
+        lambda: {"last_cycle_at": "2026-01-01T00:00:00Z", "last_cycle_duration_s": 1.2, "error_count": 0},
+    )
+    r = client.get("/dash/service-strip")
+    assert r.status_code == 200
+    assert "Процесс uptime" in r.text
+    assert "running" in r.text
+
+
 def test_admin_csp_value_env(monkeypatch):
     monkeypatch.delenv("ADMIN_CSP_POLICY", raising=False)
     monkeypatch.delenv("ADMIN_ENABLE_CSP", raising=False)
