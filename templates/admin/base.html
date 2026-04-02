@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="csrf-token" content="{{ request.state._state.get('csrf_token', '') }}"/>
-  <title>{% block title %}Панель{% endblock %} — Matrix</title>
+  <title>{% block title %}Панель{% endblock %} — Via</title>
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
@@ -21,9 +21,13 @@
 <div class="app-shell">
   <aside id="app-sidebar" class="sidebar" aria-label="Основная навигация">
     <div class="sidebar-head">
-      <div class="sidebar-logo" aria-hidden="true">M</div>
+      <div class="sidebar-logo sidebar-logo--v" aria-hidden="true">
+        <svg class="v-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4.3 5.2C4.95 6.15 5.45 7.1 6 8L12 18.85L18 8C18.55 7.1 19.05 6.15 19.7 5.2" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
       <div>
-        <div class="sidebar-title">Matrix</div>
+        <div class="sidebar-title">Via</div>
         <div class="sidebar-sub">Панель управления</div>
       </div>
     </div>
@@ -32,8 +36,9 @@
         <a class="nav-link {% if _path == '/' %}active{% endif %}" href="/"><i class="fa-solid fa-gauge-high"></i><span>Дашборд</span></a>
         <a class="nav-link {% if _path.startswith('/groups') %}active{% endif %}" href="/groups"><i class="fa-solid fa-layer-group"></i><span>Группы</span></a>
         <a class="nav-link {% if _path.startswith('/users') %}active{% endif %}" href="/users"><i class="fa-solid fa-users"></i><span>Пользователи</span></a>
-        <a class="nav-link {% if _path.startswith('/onboarding') or _path.startswith('/secrets') %}active{% endif %}" href="/onboarding"><i class="fa-solid fa-gear"></i><span>Настройки</span></a>
+        <a class="nav-link {% if _path.startswith('/onboarding') or _path.startswith('/secrets') %}active{% endif %}" href="/onboarding"><i class="fa-solid fa-gear"></i><span>Настройки подключений</span></a>
         {% if _current_user and _current_user.role == 'admin' %}
+        <a class="nav-link {% if _path.startswith('/app-users') %}active{% endif %}" href="/app-users"><i class="fa-solid fa-user-shield"></i><span>Аккаунты панели</span></a>
         <a class="nav-link {% if _path.startswith('/events') %}active{% endif %}" href="/events"><i class="fa-solid fa-bolt"></i><span>События</span></a>
         {% endif %}
       </div>
@@ -45,19 +50,12 @@
       <div class="topbar-left">
         <button type="button" class="menu-btn" id="sidebar-toggle" aria-label="Открыть меню"><i class="fa-solid fa-bars"></i></button>
         {% if _current_user and _integration_status and (not _integration_status.configured) %}
-        <div class="integration-banner" id="integration-banner" data-storage-key="admin_integration_banner_v1">
+        <div class="integration-banner">
           <a class="banner-warn" href="/onboarding">
             <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
             <span class="banner-warn__text">Подключения не настроены — функционал ограничен.</span>
             <span class="banner-warn__cta">Открыть настройки</span>
           </a>
-          <a class="banner-warn banner-warn--compact" href="/onboarding" title="Подключения не настроены — открыть настройки">
-            <i class="fa-solid fa-gear" aria-hidden="true"></i>
-            <span>Настройки</span>
-          </a>
-          <button type="button" class="integration-banner__collapse" id="integration-banner-collapse" aria-expanded="true" aria-label="Свернуть напоминание">
-            <i class="fa-solid fa-chevron-up" aria-hidden="true"></i>
-          </button>
         </div>
         {% endif %}
       </div>
@@ -74,7 +72,6 @@
           {% if _current_user.role != 'admin' %}
           <a href="/me/settings" role="menuitem"><i class="fa-solid fa-sliders"></i> Мои настройки</a>
           {% endif %}
-          <a href="/matrix/bind" role="menuitem"><i class="fa-solid fa-link"></i> Привязка Matrix</a>
           {% if _current_user.role == 'admin' %}
           <a href="/app-users" role="menuitem"><i class="fa-solid fa-user-shield"></i> Аккаунты панели</a>
           {% endif %}
@@ -208,39 +205,6 @@
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') closeSidebar();
     });
-  }
-})();
-
-(function () {
-  var ib = document.getElementById('integration-banner');
-  var btn = document.getElementById('integration-banner-collapse');
-  var key = ib && ib.getAttribute('data-storage-key');
-  function applyCollapsed(collapsed) {
-    if (!ib) return;
-    ib.classList.toggle('integration-banner--collapsed', collapsed);
-    if (btn) {
-      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-      btn.setAttribute('aria-label', collapsed ? 'Развернуть напоминание' : 'Свернуть напоминание');
-      var icon = btn.querySelector('i');
-      if (icon) {
-        icon.className = collapsed ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-up';
-      }
-    }
-  }
-  if (ib && key) {
-    try {
-      if (localStorage.getItem(key) === '1') applyCollapsed(true);
-    } catch (e) {}
-    if (btn) {
-      btn.addEventListener('click', function (e) {
-        e.preventDefault();
-        var collapsed = !ib.classList.contains('integration-banner--collapsed');
-        applyCollapsed(collapsed);
-        try {
-          localStorage.setItem(key, collapsed ? '1' : '0');
-        } catch (err) {}
-      });
-    }
   }
 })();
 </script>

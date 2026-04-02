@@ -138,3 +138,27 @@ class TestLogPaths:
         from config import resolved_log_file, BASE_DIR
 
         assert resolved_log_file() == BASE_DIR / "logs" / "app.log"
+
+    def test_log_file_max_bytes_default(self, monkeypatch):
+        monkeypatch.delenv("LOG_MAX_BYTES", raising=False)
+        from config import log_file_max_bytes
+
+        assert log_file_max_bytes() == 5 * 1024 * 1024
+
+    def test_log_file_max_bytes_custom(self, monkeypatch):
+        monkeypatch.setenv("LOG_MAX_BYTES", "1048576")
+        from config import log_file_max_bytes
+
+        assert log_file_max_bytes() == 1048576
+
+    def test_log_file_backup_count_default(self, monkeypatch):
+        monkeypatch.delenv("LOG_BACKUP_COUNT", raising=False)
+        from config import log_file_backup_count
+
+        assert log_file_backup_count() == 5
+
+    def test_log_file_backup_count_clamped_to_min_one(self, monkeypatch):
+        monkeypatch.setenv("LOG_BACKUP_COUNT", "0")
+        from config import log_file_backup_count
+
+        assert log_file_backup_count() == 1

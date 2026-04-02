@@ -12,13 +12,12 @@
   --warning-bg: rgba(250, 204, 21, 0.12);
   --warning-border: rgba(250, 204, 21, 0.45);
   --radius: 0.75rem;
-  /* Шире сайдбар — ближе к референсу «панели» */
-  --sidebar-w: 20rem;
-  /* Основной контент: заметно крупнее на десктопе (в паре с html font-size) */
-  --font-main: clamp(1.0625rem, 0.94rem + 0.45vw, 1.3125rem);
-  --control-pad-y: 0.75rem;
-  --control-pad-x: 0.95rem;
-  --control-min-h: 3.125rem;
+  --sidebar-w: 18rem;
+  /* Заметно крупнее базовый текст (в паре с html font-size) */
+  --font-main: 1.15rem;
+  --control-pad-y: 0.8rem;
+  --control-pad-x: 1rem;
+  --control-min-h: 3.25rem;
   /* Сетка: узкие формы vs широкие таблицы на ультрашироких экранах */
   --content-form-max: min(56rem, 100%);
   --content-table-max: min(85rem, 100%);
@@ -31,15 +30,9 @@
   --choice-active-border: rgba(6, 182, 212, 0.5);
 }
 * { box-sizing: border-box; }
-/* Глобальный масштаб UI (~как на референсе панели: крупнее подписи, поля и кнопки) */
 html {
-  font-size: 115%;
+  font-size: 112%;
   scroll-behavior: smooth;
-}
-@media (max-width: 768px) {
-  html {
-    font-size: 100%;
-  }
 }
 body {
   margin: 0;
@@ -61,7 +54,8 @@ body {
   flex-direction: column;
   position: fixed;
   inset: 0 auto 0 0;
-  z-index: 40;
+  /* Выше .topbar (50), чтобы выезжающее меню на мобильных не перекрывалось шапкой */
+  z-index: 55;
   transform: translateX(0);
   transition: transform 0.2s ease;
 }
@@ -73,20 +67,28 @@ body {
   gap: 0.75rem;
 }
 .sidebar-logo {
-  width: 2.5rem;
-  height: 2.5rem;
-  border-radius: 0.65rem;
-  background: linear-gradient(135deg, var(--cyan), #8b5cf6);
+  position: relative;
+  overflow: hidden;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.9rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
-  color: #fff;
-  font-size: 1.15rem;
-  box-shadow: 0 8px 24px rgba(6, 182, 212, 0.25);
 }
-.sidebar-title { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; }
-.sidebar-sub { font-size: 0.78rem; color: var(--muted); margin-top: 0.1rem; }
+.sidebar-logo--v {
+  background: #2f83e2;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: none;
+}
+.v-mark {
+  width: 1.95rem;
+  height: 1.95rem;
+  display: block;
+  filter: none;
+}
+.sidebar-title { font-size: 1.36rem; font-weight: 600; letter-spacing: -0.015em; }
+.sidebar-sub { font-size: 0.8rem; color: var(--muted); margin-top: 0.1rem; }
 .sidebar-nav {
   flex: 1;
   padding: 0.75rem;
@@ -105,12 +107,14 @@ body {
   display: flex;
   align-items: center;
   gap: 0.65rem;
-  padding: 0.72rem 0.9rem;
-  margin-bottom: 0.25rem;
-  border-radius: var(--radius);
+  min-height: 2.75rem;
+  padding: 0.66rem 0.9rem;
+  margin-bottom: 0.28rem;
+  border-radius: 0.7rem;
   color: var(--muted);
   text-decoration: none;
-  font-size: 1rem;
+  font-size: 0.99rem;
+  line-height: 1.25;
   font-weight: 500;
   transition: background 0.15s, color 0.15s, transform 0.15s;
 }
@@ -122,7 +126,12 @@ body {
   margin-left: -3px;
   padding-left: calc(0.85rem - 3px);
 }
-.nav-link i { width: 1.35rem; text-align: center; opacity: 0.9; font-size: 1.05em; }
+.nav-link i {
+  width: 1.35rem;
+  text-align: center;
+  opacity: 0.92;
+  font-size: 1.05rem;
+}
 /* Main column */
 .app-main {
   flex: 1;
@@ -132,6 +141,9 @@ body {
   min-width: 0;
 }
 .topbar {
+  position: relative;
+  /* Над колонкой контента; меню не должно прятаться под карточками с backdrop-filter */
+  z-index: 50;
   min-height: 4rem;
   padding: 0.55rem 1.35rem;
   border-bottom: 1px solid var(--border);
@@ -147,47 +159,8 @@ body {
 .integration-banner {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
   flex: 1;
   min-width: 0;
-}
-.integration-banner__collapse {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.35rem;
-  height: 2.35rem;
-  padding: 0;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.2);
-  color: #fde68a;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-.integration-banner__collapse:hover {
-  background: rgba(250, 204, 21, 0.12);
-  color: #fef9c3;
-}
-.integration-banner__collapse:focus-visible {
-  outline: 2px solid var(--cyan);
-  outline-offset: 2px;
-}
-.integration-banner--collapsed .banner-warn:not(.banner-warn--compact) {
-  display: none;
-}
-.banner-warn--compact {
-  display: none;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.38rem 0.75rem;
-  font-size: 0.88rem;
-  font-weight: 500;
-  max-width: 100%;
-}
-.integration-banner--collapsed .banner-warn--compact {
-  display: inline-flex;
 }
 .menu-btn {
   display: none;
@@ -216,6 +189,10 @@ body {
   text-decoration: none;
   max-width: 100%;
 }
+.banner-warn i {
+  font-size: 1.05rem;
+  opacity: 0.95;
+}
 .banner-warn:hover { filter: brightness(1.06); }
 .banner-warn__text { color: #d6d3d1; }
 .banner-warn__cta {
@@ -224,7 +201,10 @@ body {
   color: #fde68a;
   font-weight: 600;
 }
-.user-menu-wrap { position: relative; }
+.user-menu-wrap {
+  position: relative;
+  z-index: 2;
+}
 .user-trigger {
   display: flex;
   align-items: center;
@@ -239,15 +219,16 @@ body {
 .user-meta .name { font-size: 0.95rem; font-weight: 600; }
 .user-meta .login { font-size: 0.78rem; color: var(--muted); max-width: 14rem; overflow: hidden; text-overflow: ellipsis; }
 .avatar {
-  width: 2.35rem;
-  height: 2.35rem;
-  border-radius: 0.5rem;
-  background: linear-gradient(135deg, #8b5cf6, #6366f1);
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.55rem;
+  background: #2f83e2;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 600;
-  font-size: 0.92rem;
+  font-size: 0.98rem;
   color: #fff;
 }
 .dropdown {
@@ -261,7 +242,7 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: 0 20px 40px rgba(0,0,0,0.45);
-  z-index: 50;
+  z-index: 1000;
 }
 .dropdown.open { display: block; animation: fadeIn 0.15s ease-out; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
@@ -289,23 +270,27 @@ body {
 .dropdown hr { border: none; border-top: 1px solid var(--border); margin: 0.35rem 0; }
 .main-content {
   flex: 1;
-  padding: clamp(1.25rem, 1rem + 1vw, 2.25rem) clamp(1.25rem, 0.75rem + 1.5vw, 2.5rem) 2.5rem;
-  max-width: 90rem;
-  margin: 0 auto;
+  padding: clamp(1.25rem, 1rem + 1vw, 2.25rem) 2rem 2.5rem;
+  max-width: none;
+  margin: 0;
   width: 100%;
   font-size: var(--font-main);
+  /* Изолируем слой контента: карточки с backdrop-filter не перекрывают шапку и выпадающее меню */
+  position: relative;
+  z-index: 0;
+  isolation: isolate;
 }
 /* Центрированная колонка для длинных форм (таблицы и сетки статистики остаются на полную ширину main-content) */
 .content-stack {
   max-width: var(--content-form-max);
-  margin-left: auto;
-  margin-right: auto;
+  margin-left: 0;
+  margin-right: 0;
   width: 100%;
 }
 .page-head {
-  max-width: var(--content-table-max);
-  margin-left: auto;
-  margin-right: auto;
+  max-width: none;
+  margin-left: 0;
+  margin-right: 0;
 }
 .backdrop {
   display: none;
@@ -316,6 +301,11 @@ body {
 }
 .backdrop.show { display: block; }
 @media (max-width: 768px) {
+  html {
+    font-size: 100%;
+  }
+  :root { --font-main: 1rem; }
+  .main-content { padding-left: 1rem; padding-right: 1rem; }
   .menu-btn { display: inline-flex; }
   .sidebar {
     transform: translateX(-100%);
@@ -325,8 +315,8 @@ body {
   .app-main { margin-left: 0; }
 }
 /* Legacy utility classes used across admin templates */
-h1 { margin: 0 0 0.75rem; font-size: 2rem; font-weight: 600; letter-spacing: -0.02em; }
-h2 { margin: 0 0 0.5rem; font-size: 1.3rem; font-weight: 600; }
+h1 { margin: 0 0 0.75rem; font-size: 2.125rem; font-weight: 600; letter-spacing: -0.02em; }
+h2 { margin: 0 0 0.5rem; font-size: 1.35rem; font-weight: 600; }
 .page-head {
   margin-bottom: 1.5rem;
 }
@@ -343,7 +333,7 @@ h2 { margin: 0 0 0.5rem; font-size: 1.3rem; font-weight: 600; }
 }
 .page-head h1 {
   margin: 0 0 0.35rem;
-  font-size: 2rem;
+  font-size: 2.125rem;
   font-weight: 600;
   letter-spacing: -0.02em;
 }
@@ -351,7 +341,7 @@ h2 { margin: 0 0 0.5rem; font-size: 1.3rem; font-weight: 600; }
   margin: 0;
   max-width: 48rem;
   color: var(--muted);
-  font-size: 1.0625rem;
+  font-size: 1.08rem;
   line-height: 1.6;
 }
 .page-head-actions {
@@ -370,8 +360,8 @@ table {
   overflow: hidden;
   border: 1px solid var(--border);
 }
-th, td { text-align: left; padding: 0.72rem 0.95rem; border-bottom: 1px solid var(--border); vertical-align: top; }
-th { background: rgba(255,255,255,0.04); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+th, td { text-align: left; padding: 0.8rem 1rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: rgba(255,255,255,0.04); font-weight: 600; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 tr:last-child td { border-bottom: none; }
 th.table-actions,
 td.table-actions {
@@ -459,11 +449,11 @@ input:focus, textarea:focus, select:focus {
   font-size: 1.0625rem;
 }
 .main-content .btn {
-  padding: 0.65rem 1.35rem;
-  min-height: 3rem;
-  font-size: 1.05rem;
+  padding: 0.68rem 1.4rem;
+  min-height: 3.125rem;
+  font-size: 1.0625rem;
 }
-label { display: block; font-weight: 500; font-size: 1rem; }
+label { display: block; font-weight: 500; font-size: 1.02rem; }
 /* Вертикальный ритм форм: без «плавающих» margin у label */
 .form {
   display: flex;
@@ -541,7 +531,7 @@ form:not(.form) > label:first-of-type,
 .card {
   background: var(--glass);
   backdrop-filter: blur(12px);
-  padding: 1.5rem;
+  padding: 1.55rem;
   border-radius: 1rem;
   border: 1px solid var(--border);
   box-shadow: 0 4px 24px rgba(0,0,0,0.2);
@@ -588,9 +578,9 @@ details.card > summary::after { content: " ▼"; font-size: 0.7rem; opacity: 0.6
 details.card[open] > summary::after { content: " ▲"; }
 .grid-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-  gap: 1rem;
-  margin-top: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1.1rem;
+  margin-top: 1.1rem;
 }
 .dash-link-grid {
   grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
@@ -632,11 +622,11 @@ a.dash-link-tile:focus-visible {
   align-items: center;
   gap: 0.5rem;
   margin-left: 0.75rem;
-  padding: 0.28rem 0.75rem;
+  padding: 0.32rem 0.8rem;
   border-radius: var(--choice-radius-pill);
   background: var(--choice-surface);
   border: 1px solid var(--border);
-  font-size: 0.88rem;
+  font-size: 0.92rem;
   color: var(--muted);
   vertical-align: middle;
 }
@@ -648,9 +638,27 @@ a.dash-link-tile:focus-visible {
   position: relative;
   overflow: hidden;
 }
-.stat-card .stat-value { font-size: 2rem; font-weight: 700; margin: 0.35rem 0 0; letter-spacing: -0.02em; }
-.stat-card .stat-label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
-.stat-card .stat-icon { position: absolute; right: 1rem; top: 1rem; font-size: 1.75rem; opacity: 0.35; color: var(--cyan); }
+.stat-card .stat-value {
+  font-size: 2.25rem;
+  font-weight: 700;
+  margin: 0.4rem 0 0;
+  letter-spacing: -0.02em;
+}
+.stat-card .stat-label {
+  font-size: 0.82rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+/* Как в ui_demo: крупнее декоративная иконка на плитке */
+.stat-card .stat-icon {
+  position: absolute;
+  right: 1.05rem;
+  top: 1.05rem;
+  font-size: 2rem;
+  opacity: 0.38;
+  color: var(--cyan);
+}
 a.stat-card--link {
   text-decoration: none;
   color: inherit;
@@ -660,17 +668,72 @@ a.stat-card--link {
 a.stat-card--link:hover {
   border-color: rgba(6, 182, 212, 0.35);
   background: rgba(6, 182, 212, 0.07);
-  transform: translateY(-1px);
 }
 a.stat-card--link:focus-visible {
   outline: 2px solid var(--cyan);
   outline-offset: 3px;
 }
+.grid-stats > a.stat-card--link {
+  display: block;
+  min-height: 7.35rem;
+  padding-top: 1.4rem;
+}
+/* Дашборд: две колонки как в ui_demo_balanced_other_pages.html */
+.demo-grid {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 1.1rem;
+  margin-top: 1.1rem;
+  align-items: stretch;
+}
+.demo-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.demo-card .page-actions {
+  margin-top: auto;
+}
+.demo-list {
+  margin: 0 0 0.75rem;
+  padding-left: 1.15rem;
+  display: grid;
+  gap: 0.52rem;
+  color: var(--muted);
+}
+.demo-list strong {
+  color: var(--fg);
+}
+.demo-list a {
+  color: var(--cyan);
+}
+.demo-hint {
+  margin: 0 0 0.7rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+@media (max-width: 1024px) {
+  .demo-grid { grid-template-columns: 1fr; }
+}
 .page-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-top: 1rem; }
+.page-actions--onboarding-submit {
+  justify-content: center;
+  margin-top: 1.5rem;
+}
+.page-actions--onboarding-submit .btn--wide {
+  width: 100%;
+  max-width: 22rem;
+  justify-content: center;
+}
 .filter-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 0.75rem; align-items: end; }
+/* Одно поле поиска + кнопки: строка на всю ширину карточки (страница «Группы»). */
+.filter-row--grow-search {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
 .filter-row .page-actions { margin-top: 0; }
 @media (max-width: 640px) {
   .filter-row { grid-template-columns: 1fr; }
+  .filter-row--grow-search { grid-template-columns: 1fr; }
 }
 .card-nested { background: rgba(0,0,0,0.2); border-style: dashed; }
 
@@ -911,12 +974,19 @@ fieldset.settings-fieldset > legend {
   text-decoration: underline;
 }
 
+.events-log-card {
+  max-width: none;
+  width: 100%;
+}
 .events-log-wrap {
   min-height: 12rem;
+  width: 100%;
 }
 pre.log-tail {
   margin: 0;
   padding: 1rem;
+  width: 100%;
+  box-sizing: border-box;
   font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
   font-size: 0.8125rem;
   line-height: 1.45;

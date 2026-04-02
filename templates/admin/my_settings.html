@@ -5,6 +5,10 @@
 <div class="page-settings">
 {{ page_head("Мои настройки", "Редактируйте расписание DND и правила уведомлений для вашей Redmine-учётки.") }}
 
+{% if error %}
+<p class="error" role="alert">{{ error }}</p>
+{% endif %}
+
 <div class="card card--settings">
   <form class="form form--settings" method="post" action="/me/settings">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
@@ -19,10 +23,13 @@
           name="room"
           readonly
           value="{{ room or '' }}"
-          {% if not room %}placeholder="Не привязана"{% endif %}
+          {% if not room %}placeholder="Не задана"{% endif %}
         />
-        <a class="room-field__action" href="/matrix/bind">Привязать комнату</a>
       </div>
+      <p class="field-hint">
+        Комнату для уведомлений задаёт диалог с ботом в Matrix{% if matrix_bot_mxid %} (<code>{{ matrix_bot_mxid }}</code>){% endif %}
+        или администратор в разделе «Пользователи». Подробнее: <code>docs/MATRIX_ONBOARDING_PLAN.md</code>.
+      </p>
     </div>
 
     <fieldset class="settings-fieldset">
@@ -78,8 +85,8 @@
 
     <div class="settings-actions">
       <button type="submit" class="btn btn-settings-save">Сохранить</button>
-      <p class="settings-footnote">
-        <a href="/matrix/bind">Нужна другая комната? Привязать или сменить</a>
+      <p class="settings-footnote muted">
+        Смена личной комнаты — через бота в Matrix или администратора.
       </p>
     </div>
   </form>

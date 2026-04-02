@@ -49,6 +49,29 @@ def resolved_log_file() -> Path:
 
 LOG_FILE = resolved_log_file()
 
+
+def log_file_max_bytes() -> int:
+    """Максимальный размер `bot.log` до ротации (`RotatingFileHandler`). По умолчанию 5 МБ."""
+    raw = os.getenv("LOG_MAX_BYTES", "").strip()
+    if not raw:
+        return 5 * 1024 * 1024
+    try:
+        return max(1024, int(raw))
+    except ValueError:
+        return 5 * 1024 * 1024
+
+
+def log_file_backup_count() -> int:
+    """Число архивных файлов `bot.log.1` … (минимум 1, иначе ротация бессмысленна). По умолчанию 5."""
+    raw = os.getenv("LOG_BACKUP_COUNT", "").strip()
+    if not raw:
+        return 5
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 5
+
+
 # ═══════════════════════════════════════════════════════════════
 # MATRIX
 # ═══════════════════════════════════════════════════════════════

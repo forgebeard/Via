@@ -58,6 +58,12 @@ def user_orm_to_cfg(
         d["work_days"] = row.work_days
     if row.dnd:
         d["dnd"] = True
+    ciph = getattr(row, "redmine_api_key_ciphertext", None)
+    nonce = getattr(row, "redmine_api_key_nonce", None)
+    if ciph and nonce:
+        # Только для выбора Redmine-клиента в bot.py; не логировать эти ключи.
+        d["_redmine_key_cipher"] = ciph
+        d["_redmine_key_nonce"] = nonce
     vr: list[dict[str, str]] = []
     vr.extend(uv_by_user.get(row.id, []))
     if row.group_id is not None:

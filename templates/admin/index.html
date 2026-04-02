@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Дашборд{% endblock %}
 {% block content %}
+{% if ops_flash %}
+<div class="warning" role="status">{{ ops_flash }}</div>
+{% endif %}
 <header class="page-head">
   <div class="page-head-row">
     <div class="page-head-text">
@@ -9,55 +12,77 @@
   </div>
 </header>
 
-<div class="grid-stats dash-link-grid">
-  <a class="card dash-link-tile" href="/users" aria-label="Пользователи">
-    <i class="fa-solid fa-users dash-link-tile__icon" aria-hidden="true"></i>
-    <span class="dash-link-tile__label">Пользователи</span>
+<div class="grid-stats">
+  <a class="card stat-card stat-card--link" href="/users" aria-label="Пользователи: {{ dash.user_count }}">
+    <div class="stat-label">Пользователи</div>
+    <div class="stat-value">{{ dash.user_count }}</div>
+    <i class="fa-solid fa-users stat-icon" aria-hidden="true"></i>
   </a>
-  <a class="card dash-link-tile" href="/groups" aria-label="Группы">
-    <i class="fa-solid fa-layer-group dash-link-tile__icon" aria-hidden="true"></i>
-    <span class="dash-link-tile__label">Группы</span>
+  <a class="card stat-card stat-card--link" href="/groups" aria-label="Группы: {{ dash.group_count }}">
+    <div class="stat-label">Группы</div>
+    <div class="stat-value">{{ dash.group_count }}</div>
+    <i class="fa-solid fa-layer-group stat-icon" aria-hidden="true"></i>
   </a>
-  <a class="card dash-link-tile" href="/events" aria-label="События">
-    <i class="fa-solid fa-bolt dash-link-tile__icon" aria-hidden="true"></i>
-    <span class="dash-link-tile__label">События</span>
+  <a class="card stat-card stat-card--link" href="/events" aria-label="События: строк в хвосте лога {{ dash.events_tail_lines }}" title="Число непустых строк в последних ~400 строках файла лога (ADMIN_EVENTS_LOG_PATH)">
+    <div class="stat-label">События</div>
+    <div class="stat-value">{{ dash.events_tail_lines }}</div>
+    <i class="fa-solid fa-bolt stat-icon" aria-hidden="true"></i>
   </a>
 </div>
 
-<div class="card" style="margin-top:1.25rem;">
-  <h2 style="margin-top:0;">Быстрые действия</h2>
-  <p class="page-actions">
-    <a class="btn btn-primary" href="/users"><i class="fa-solid fa-users"></i> Управление пользователями</a>
-    <a class="btn btn-ghost" href="/onboarding"><i class="fa-solid fa-gear"></i> Настройки подключений</a>
-    <a class="btn btn-ghost" href="/app-users"><i class="fa-solid fa-user-shield"></i> Аккаунты панели</a>
-  </p>
-</div>
+<div class="demo-grid">
+  <article class="card demo-card">
+    <h2 style="margin-top:0;">Что сделать сейчас</h2>
+    <ul class="demo-list">
+      {% if integration_status.configured %}
+      <li><strong>Подключения:</strong> обязательные секреты заданы.</li>
+      {% elif integration_status.skipped %}
+      <li><strong>Подключения:</strong> онбординг пропущен — при необходимости дозаполните секреты в <a href="/onboarding">настройках</a>.</li>
+      {% else %}
+      <li><strong>Подключения:</strong> не хватает {{ integration_status.missing|length }} обязательных параметров — <a href="/onboarding">открыть настройки</a>.</li>
+      {% endif %}
+      {% if dash.users_without_group > 0 %}
+      <li><strong>Пользователи без группы:</strong> {{ dash.users_without_group }} (пустой group_id или системная «{{ GROUP_UNASSIGNED_DISPLAY }}») — <a href="/users">открыть список</a>.</li>
+      {% else %}
+      <li><strong>Пользователи:</strong> нет записей с пустой группой или в «{{ GROUP_UNASSIGNED_DISPLAY }}».</li>
+      {% endif %}
+      {% set cycle = runtime_status.cycle or {} %}
+      {% set err_n = cycle.error_count or 0 %}
+      <li><strong>События и цикл:</strong> {% if err_n %}в учёте рантайма есть ошибки цикла ({{ err_n }}).{% else %}по данным последнего цикла ошибок нет.{% endif %} <a href="/events">Открыть лог</a></li>
+    </ul>
+    <div class="page-actions">
+      <a class="btn btn-primary" href="/onboarding"><i class="fa-solid fa-gear"></i> Настройки подключений</a>
+      <a class="btn btn-ghost" href="/users"><i class="fa-solid fa-users"></i> Пользователи</a>
+      <a class="btn btn-ghost" href="/app-users"><i class="fa-solid fa-user-shield"></i> Аккаунты панели</a>
+    </div>
+  </article>
 
-<div class="card content-stack" style="margin-top:1.25rem;">
-  <h2 style="margin-top:0;">Состояние рантайма</h2>
-  <p class="muted">
-    Процесс uptime: <strong>{{ runtime_status.uptime_s }}с</strong>,
-    Docker service: <strong>{{ runtime_status.docker.service }}</strong>,
-    state: <strong>{{ runtime_status.docker.state }}</strong>.
-  </p>
-  {% set cycle = runtime_status.cycle or {} %}
-  <p class="muted">
-    Последний цикл: {{ cycle.last_cycle_at or "—" }}; длительность: {{ cycle.last_cycle_duration_s or "—" }}с;
-    ошибок: {{ cycle.error_count or 0 }}.
-  </p>
-  <div class="page-actions">
-    <form method="post" action="/ops/bot/start">
-      <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
-      <button class="btn btn-ghost" type="submit"><i class="fa-solid fa-play"></i> Start bot</button>
-    </form>
-    <form method="post" action="/ops/bot/stop" hx-confirm="Остановить bot?">
-      <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
-      <button class="btn btn-danger" type="submit"><i class="fa-solid fa-stop"></i> Stop bot</button>
-    </form>
-    <form method="post" action="/ops/bot/restart" hx-confirm="Перезапустить bot?">
-      <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
-      <button class="btn btn-primary" type="submit"><i class="fa-solid fa-rotate-right"></i> Restart bot</button>
-    </form>
-  </div>
+  <article class="card demo-card">
+    <h2 style="margin-top:0;">Сервис</h2>
+    <p class="muted">
+      Процесс uptime: <strong>{{ runtime_status.uptime_s }}с</strong>,
+      Docker service: <strong>{{ runtime_status.docker.service }}</strong>,
+      state: <strong>{{ runtime_status.docker.state }}</strong>.
+    </p>
+    {% set cycle = runtime_status.cycle or {} %}
+    <p class="muted">
+      Последний цикл: {{ cycle.last_cycle_at or "—" }}; длительность: {{ cycle.last_cycle_duration_s or "—" }}с;
+      ошибок: {{ cycle.error_count or 0 }}.
+    </p>
+    <div class="page-actions">
+      <form method="post" action="/ops/bot/start">
+        <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
+        <button class="btn btn-ghost" type="submit"><i class="fa-solid fa-play"></i> Start bot</button>
+      </form>
+      <form method="post" action="/ops/bot/stop" hx-confirm="Остановить bot?">
+        <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
+        <button class="btn btn-danger" type="submit"><i class="fa-solid fa-stop"></i> Stop bot</button>
+      </form>
+      <form method="post" action="/ops/bot/restart" hx-confirm="Перезапустить bot?">
+        <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
+        <button class="btn btn-primary" type="submit"><i class="fa-solid fa-rotate-right"></i> Restart bot</button>
+      </form>
+    </div>
+  </article>
 </div>
 {% endblock %}

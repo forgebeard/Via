@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>{% block title %}Вход{% endblock %} — Matrix</title>
+  <title>{% block title %}Вход{% endblock %} — Via</title>
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
@@ -18,7 +18,11 @@
 <body>
   <div class="auth-wrap">
     <div class="auth-card">
-      <div class="logo" aria-hidden="true">M</div>
+      <div class="auth-logo auth-logo--via" aria-hidden="true">
+        <svg class="auth-v-mark" viewBox="0 0 24 24" fill="none">
+          <path d="M4.3 5.2C4.95 6.15 5.45 7.1 6 8L12 18.85L18 8C18.55 7.1 19.05 6.15 19.7 5.2" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
       {% block content %}{% endblock %}
     </div>
   </div>

@@ -33,13 +33,9 @@
         <input id="secret_MATRIX_ACCESS_TOKEN" name="secret_MATRIX_ACCESS_TOKEN" type="text" placeholder="syt_xxxxxxxxxxxxxxxxxxx" autocomplete="off"/>
       </div>
     </div>
-    <div class="page-actions">
-      <button class="btn btn-primary" type="submit">Сохранить и продолжить</button>
+    <div class="page-actions page-actions--onboarding-submit">
+      <button class="btn btn-primary btn--wide" type="submit">Сохранить и продолжить</button>
     </div>
-  </form>
-  <form class="form" method="post" action="/onboarding/skip" style="margin-top:1rem;">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
-    <button class="btn btn-ghost" type="submit">Пропустить сейчас</button>
   </form>
 </div>
 {% endblock %}

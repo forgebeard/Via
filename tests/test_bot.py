@@ -29,6 +29,7 @@ os.environ.setdefault("MATRIX_DEVICE_ID", "TESTDEVICE")
 # Не setdefault: локальный REDMINE_URL из окружения не должен ломать проверки ссылок в HTML.
 os.environ["REDMINE_URL"] = "https://redmine.test"
 os.environ.setdefault("REDMINE_API_KEY", "test_api_key")
+os.environ.setdefault("MATRIX_ONBOARDING_ENABLED", "0")
 os.environ.setdefault("BOT_TIMEZONE", "Europe/Moscow")
 os.environ.setdefault("USERS", '[{"redmine_id": 1972, "room": "!test:server", "notify": ["all"]}]')
 

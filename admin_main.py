@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import re
 from html import escape as html_escape
@@ -18,6 +17,7 @@ import sys
 import secrets
 import threading
 import time
+import unicodedata
 import uuid
 from collections import defaultdict, deque
 from pathlib import Path
@@ -33,10 +33,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from nio import AsyncClient
 
 from database.models import (
     AppSecret,
@@ -45,7 +43,6 @@ from database.models import (
     BotSession,
     BotUser,
     GroupVersionRoute,
-    MatrixRoomBinding,
     PasswordResetToken,
     StatusRoomRoute,
     SupportGroup,
@@ -65,7 +62,6 @@ from security import (
     verify_password,
 )
 
-from matrix_send import room_send_with_retry
 from ops.docker_control import DockerControlError, control_service, get_service_status
 
 _templates_dir = str(_ROOT / "templates" / "admin")
@@ -145,6 +141,7 @@ GROUP_USERS_FILTER_ALL_LABEL = "Все группы"
 
 _jinja_env.globals["GROUP_UNASSIGNED_NAME"] = GROUP_UNASSIGNED_NAME
 _jinja_env.globals["GROUP_UNASSIGNED_DISPLAY"] = GROUP_UNASSIGNED_DISPLAY
+_jinja_env.globals["GROUP_USERS_FILTER_ALL_LABEL"] = GROUP_USERS_FILTER_ALL_LABEL
 
 AUTH_TOKEN_SALT = os.getenv("AUTH_TOKEN_SALT", "dev-token-salt")
 SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "86400"))
@@ -155,7 +152,6 @@ APP_MASTER_KEY_FILE = os.getenv("APP_MASTER_KEY_FILE", "/run/secrets/app_master_
 SHOW_DEV_TOKENS = os.getenv("SHOW_DEV_TOKENS", "0").strip().lower() in ("1", "true", "yes", "on")
 ADMIN_EXISTS_CACHE_TTL_SECONDS = int(os.getenv("ADMIN_EXISTS_CACHE_TTL_SECONDS", "20"))
 INTEGRATION_STATUS_CACHE_TTL_SECONDS = int(os.getenv("INTEGRATION_STATUS_CACHE_TTL_SECONDS", "30"))
-MATRIX_CODE_TTL_SECONDS = int(os.getenv("MATRIX_CODE_TTL_SECONDS", "300"))
 REQUIRED_SECRET_NAMES = [
     v.strip()
     for v in os.getenv(
@@ -166,6 +162,11 @@ REQUIRED_SECRET_NAMES = [
 ]
 MATRIX_DEFAULT_DEVICE_ID = (os.getenv("MATRIX_DEFAULT_DEVICE_ID") or "redmine_bot").strip() or "redmine_bot"
 ONBOARDING_SKIPPED_SECRET = "__onboarding_skipped"
+
+
+def _matrix_bot_mxid() -> str:
+    """MXID бота из .env — подсказка в «Мои настройки» (без отдельной страницы привязки)."""
+    return (os.getenv("MATRIX_USER_ID") or "").strip()
 NOTIFY_TYPES = [
     ("new", "Новая задача"),
     ("info", "Информация предоставлена"),
@@ -210,10 +211,6 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _token_hash(value: str) -> str:
-    return hashlib.sha256((value + AUTH_TOKEN_SALT).encode("utf-8")).hexdigest()
-
-
 def _generic_login_error() -> str:
     return "Неверный логин или пароль"
 
@@ -250,6 +247,54 @@ def _read_log_tail(path: Path, *, max_lines: int = 400, max_bytes: int = 256_000
         return f"Не удалось прочитать лог: {e}"
 
 
+def _dash_events_tail_line_count(*, max_lines: int = 400) -> int:
+    """Число непустых строк в хвосте лога событий (как на /events), без учёта отсутствующего файла."""
+    path = _admin_events_log_path()
+    if not path.is_file():
+        return 0
+    text = _read_log_tail(path, max_lines=max_lines)
+    return sum(1 for line in text.splitlines() if line.strip())
+
+
+async def _dashboard_counts(session: AsyncSession) -> dict[str, int]:
+    user_count = int(
+        (await session.execute(select(func.count()).select_from(BotUser))).scalar_one() or 0
+    )
+    group_count = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(SupportGroup)
+                .where(SupportGroup.name != GROUP_UNASSIGNED_NAME)
+            )
+        ).scalar_one()
+        or 0
+    )
+    users_ungrouped = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(BotUser)
+                .where(
+                    or_(
+                        BotUser.group_id.is_(None),
+                        BotUser.group_id.in_(
+                            select(SupportGroup.id).where(SupportGroup.name == GROUP_UNASSIGNED_NAME)
+                        ),
+                    )
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+    return {
+        "user_count": user_count,
+        "group_count": group_count,
+        "users_without_group": users_ungrouped,
+        "events_tail_lines": _dash_events_tail_line_count(),
+    }
+
+
 def _parse_status_keys_list(raw: str) -> list[str]:
     parts = [p.strip() for p in (raw or "").replace("\n", ",").split(",")]
     out: list[str] = []
@@ -262,13 +307,26 @@ def _parse_status_keys_list(raw: str) -> list[str]:
     return out
 
 
+def _normalized_group_filter_key(name: str) -> str:
+    """Нормализация имени для сравнения с подписью фильтра (без дублей «Все группы» в select)."""
+    return unicodedata.normalize("NFKC", name).strip().casefold()
+
+
+def _group_excluded_from_assignable_lists(name: str | None) -> bool:
+    if name is None:
+        return False
+    s = str(name).strip()
+    if not s:
+        return False
+    if s == GROUP_UNASSIGNED_NAME:
+        return True
+    if _normalized_group_filter_key(s) == _normalized_group_filter_key(GROUP_USERS_FILTER_ALL_LABEL):
+        return True
+    return False
+
+
 def _groups_assignable(groups: list) -> list:
-    return [
-        g
-        for g in groups
-        if getattr(g, "name", None) != GROUP_UNASSIGNED_NAME
-        and (getattr(g, "name", None) or "").strip() != GROUP_USERS_FILTER_ALL_LABEL
-    ]
+    return [g for g in groups if not _group_excluded_from_assignable_lists(getattr(g, "name", None))]
 
 
 def _is_reserved_support_group(row) -> bool:
@@ -284,6 +342,22 @@ def _group_display_name(groups_by_id: dict, group_id: int | None) -> str:
     if g.name == GROUP_UNASSIGNED_NAME:
         return GROUP_UNASSIGNED_DISPLAY
     return g.name
+
+
+_OPS_FLASH_MESSAGES: dict[str, str] = {
+    "stop_ok": "Команда остановки контейнера бота отправлена в Docker.",
+    "stop_error": "Не удалось остановить бот. Проверьте DOCKER_HOST, docker-socket-proxy и имя сервиса (DOCKER_TARGET_SERVICE, метки compose).",
+    "start_ok": "Команда запуска контейнера бота отправлена в Docker.",
+    "start_error": "Не удалось запустить бот. Проверьте Docker и настройки.",
+    "restart_accepted": "Перезапуск бота запланирован (команда уходит в фоне).",
+    "ops_commit_error": "Не удалось сохранить запись в журнал операций (БД). Состояние Docker смотрите в выводе compose / на дашборде.",
+}
+
+
+def _ops_flash_message(ops: str | None) -> str | None:
+    if not ops:
+        return None
+    return _OPS_FLASH_MESSAGES.get(ops.strip())
 
 
 def _ensure_csrf(request: Request) -> tuple[str, bool]:
@@ -854,79 +928,15 @@ async def onboarding_skip(
     return RedirectResponse("/", status_code=303)
 
 
-@app.get("/forgot-password", response_class=HTMLResponse)
-async def forgot_password_page(request: Request):
-    csrf_token, set_cookie = _ensure_csrf(request)
-    resp = templates.TemplateResponse(
-        request,
-        "forgot_password.html",
-        {"error": None, "ok": None, "csrf_token": csrf_token},
-    )
-    if set_cookie:
-        resp.set_cookie(CSRF_COOKIE_NAME, csrf_token, httponly=True, secure=COOKIE_SECURE, samesite="lax")
-    return resp
+@app.get("/forgot-password")
+async def forgot_password_page():
+    """Самообслуживания сброса нет: только администратор или скрипт с доступом к БД."""
+    return RedirectResponse("/login", status_code=303)
 
 
-@app.post("/forgot-password", response_class=HTMLResponse)
-async def forgot_password_post(
-    request: Request,
-    login: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    _verify_csrf(request, csrf_token)
-    login_n = _normalize_login(login)
-    ip = _client_ip(request)
-    if not _rate_limiter.hit(f"forgot:ip:{ip}", limit=5, window_seconds=60):
-        raise HTTPException(429, "Слишком много попыток, попробуйте позже")
-    if not _rate_limiter.hit(f"forgot:login:{login_n}", limit=3, window_seconds=3600):
-        return templates.TemplateResponse(
-            request,
-            "forgot_password.html",
-            {"error": "Слишком много запросов сброса, попробуйте позже", "ok": None, "csrf_token": csrf_token},
-            status_code=429,
-        )
-    r = await session.execute(select(BotAppUser).where(BotAppUser.login == login_n))
-    user = r.scalar_one_or_none()
-    _forgot_ok_message = (
-        "Если логин существует, сброс пароля — через администратора "
-        "или одноразовый токен при SHOW_DEV_TOKENS=1 (только для разработки)."
-    )
-    # Response must stay generic and not leak if user exists.
-    if user:
-        token = make_reset_token()
-        row = PasswordResetToken(
-            id=uuid.uuid4(),
-            user_id=user.id,
-            token_hash=token_hash(token, AUTH_TOKEN_SALT),
-            requested_login=login_n,
-            expires_at=_now_utc() + timedelta(seconds=RESET_TOKEN_TTL_SECONDS),
-            used_at=None,
-        )
-        session.add(row)
-        await session.flush()
-        logger.info(
-            "password_reset_requested login=%s dev_token=%s",
-            mask_identifier(login_n),
-            bool(SHOW_DEV_TOKENS),
-        )
-        # Dev-mode helper: show token in UI only if explicitly enabled.
-        dev_token = token if SHOW_DEV_TOKENS else None
-        return templates.TemplateResponse(
-            request,
-            "forgot_password.html",
-            {
-                "error": None,
-                "ok": _forgot_ok_message,
-                "dev_token": dev_token,
-                "csrf_token": csrf_token,
-            },
-        )
-    return templates.TemplateResponse(
-        request,
-        "forgot_password.html",
-        {"error": None, "ok": _forgot_ok_message, "csrf_token": csrf_token},
-    )
+@app.post("/forgot-password")
+async def forgot_password_post():
+    return RedirectResponse("/login", status_code=303)
 
 
 @app.get("/reset-password", response_class=HTMLResponse)
@@ -1024,6 +1034,9 @@ async def index(
         runtime_docker = get_service_status()
     except DockerControlError as e:
         runtime_docker = {"state": "error", "detail": str(e), "service": os.getenv("DOCKER_TARGET_SERVICE", "bot")}
+    dash = await _dashboard_counts(session)
+    integration_status = await _integration_status(session)
+    ops_flash = _ops_flash_message(request.query_params.get("ops"))
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -1035,6 +1048,9 @@ async def index(
                 "cycle": runtime_file,
                 "docker": runtime_docker,
             },
+            "dash": dash,
+            "integration_status": integration_status,
+            "ops_flash": ops_flash,
         },
     )
 
@@ -1091,6 +1107,7 @@ async def bot_ops_action(
         _restart_in_background(actor)
         return RedirectResponse("/?ops=restart_accepted", status_code=303)
 
+    ops_q = f"{action}_error"
     try:
         res = control_service(action)
         await _audit_op(
@@ -1100,18 +1117,32 @@ async def bot_ops_action(
             actor_login=actor,
             detail=json.dumps(res, ensure_ascii=False),
         )
-        await session.commit()
-        return RedirectResponse(f"/?ops={action}_ok", status_code=303)
+        ops_q = f"{action}_ok"
     except DockerControlError as e:
+        logger.warning("bot_ops DockerControlError action=%s: %s", action, e)
         await _audit_op(
             session,
             f"BOT_{action.upper()}",
             "error",
             actor_login=actor,
-            detail=str(e),
+            detail=str(e)[:2000],
         )
+    except Exception as e:  # noqa: BLE001
+        logger.exception("bot_ops unexpected error action=%s", action)
+        await _audit_op(
+            session,
+            f"BOT_{action.upper()}",
+            "error",
+            actor_login=actor,
+            detail=str(e)[:2000],
+        )
+    try:
         await session.commit()
-        return RedirectResponse(f"/?ops={action}_error", status_code=303)
+    except Exception:
+        logger.exception("bot_ops commit failed action=%s", action)
+        await session.rollback()
+        return RedirectResponse("/?ops=ops_commit_error", status_code=303)
+    return RedirectResponse(f"/?ops={ops_q}", status_code=303)
 
 
 @app.get("/secrets", response_class=HTMLResponse)
@@ -2261,171 +2292,6 @@ async def events_log_tail(request: Request):
     return HTMLResponse(f'<pre class="log-tail" id="events-log-pre">{html_escape(text)}</pre>')
 
 
-# --- Matrix room binding (one-time code) ---
-
-
-@app.get("/matrix/bind", response_class=HTMLResponse)
-async def matrix_bind_page(request: Request):
-    user = getattr(request.state, "current_user", None)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
-
-    redmine_id = getattr(user, "redmine_id", None) or ""
-    return templates.TemplateResponse(
-        request,
-        "matrix_bind.html",
-        {"redmine_id": redmine_id, "room_id": "", "code_sent": False, "dev_code": None, "error": None},
-    )
-
-
-@app.post("/matrix/bind/start")
-async def matrix_bind_start(
-    request: Request,
-    redmine_id: Annotated[int, Form()],
-    room_id: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    _verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
-
-    room_id = room_id.strip()
-    if not room_id:
-        raise HTTPException(400, "room_id пуст")
-
-    # Пользователь может связать комнату только для своей redmine_id.
-    # Если redmine_id ещё не задан — позволяем впервые.
-    if getattr(user, "redmine_id", None) is not None and getattr(user, "redmine_id", None) != redmine_id:
-        raise HTTPException(403, "Можно привязать комнату только для своей Redmine-учётки")
-
-    # 6-значный цифровой код.
-    code = "".join(secrets.choice("0123456789") for _ in range(6))
-    code_hash = _token_hash(code)
-    expires_at = _now_utc() + timedelta(seconds=MATRIX_CODE_TTL_SECONDS)
-
-    row = MatrixRoomBinding(
-        id=uuid.uuid4(),
-        user_id=user.id,
-        redmine_id=redmine_id,
-        room_id=room_id,
-        verify_code_hash=code_hash,
-        expires_at=expires_at,
-        used_at=None,
-    )
-    session.add(row)
-    await session.flush()
-
-    # Отправляем код в Matrix (если есть конфигурация).
-    try:
-        HOMESERVER = (os.getenv("MATRIX_HOMESERVER") or "").strip()
-        ACCESS_TOKEN = (os.getenv("MATRIX_ACCESS_TOKEN") or "").strip()
-        MATRIX_USER_ID = (os.getenv("MATRIX_USER_ID") or "").strip()
-        MATRIX_DEVICE_ID = (os.getenv("MATRIX_DEVICE_ID") or "").strip() or MATRIX_DEFAULT_DEVICE_ID
-        if HOMESERVER and ACCESS_TOKEN and MATRIX_USER_ID:
-            mclient = AsyncClient(HOMESERVER)
-            mclient.access_token = ACCESS_TOKEN
-            mclient.user_id = MATRIX_USER_ID
-            mclient.device_id = MATRIX_DEVICE_ID
-            await room_send_with_retry(
-                mclient,
-                room_id,
-                {
-                    "msgtype": "m.text",
-                    "body": f"Код подтверждения: {code}",
-                    "format": "org.matrix.custom.html",
-                    "formatted_body": f"<b>Код подтверждения:</b> {code}",
-                },
-            )
-            await mclient.close()
-    except Exception:
-        # В dev/CI может не быть Matrix-конфига — UI всё равно работает как верификация по коду.
-        pass
-
-    dev_echo = os.getenv("MATRIX_CODE_DEV_ECHO", "0").strip().lower() in ("1", "true", "yes", "on")
-
-    return templates.TemplateResponse(
-        request,
-        "matrix_bind.html",
-        {
-            "redmine_id": redmine_id,
-            "room_id": room_id,
-            "code_sent": True,
-            "dev_code": code if dev_echo else None,
-            "error": None,
-        },
-    )
-
-
-@app.post("/matrix/bind/confirm")
-async def matrix_bind_confirm(
-    request: Request,
-    redmine_id: Annotated[int, Form()],
-    room_id: Annotated[str, Form()],
-    code: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    _verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
-
-    room_id = room_id.strip()
-    code = (code or "").strip()
-    if not room_id or not code:
-        raise HTTPException(400, "room_id и code обязательны")
-
-    if getattr(user, "redmine_id", None) is not None and getattr(user, "redmine_id", None) != redmine_id:
-        raise HTTPException(403, "Can’t change redmine_id after it is set")
-
-    code_hash = _token_hash(code)
-    now = _now_utc()
-
-    r = await session.execute(
-        select(MatrixRoomBinding).where(
-            MatrixRoomBinding.user_id == user.id,
-            MatrixRoomBinding.redmine_id == redmine_id,
-            MatrixRoomBinding.room_id == room_id,
-            MatrixRoomBinding.used_at.is_(None),
-            MatrixRoomBinding.expires_at > now,
-            MatrixRoomBinding.verify_code_hash == code_hash,
-        )
-    )
-    binding = r.scalars().first()
-    if not binding:
-        return templates.TemplateResponse(
-            request,
-            "matrix_bind.html",
-            {
-                "redmine_id": redmine_id,
-                "room_id": room_id,
-                "code_sent": True,
-                "dev_code": None,
-                "error": "Неверный код или срок истёк.",
-            },
-            status_code=401,
-        )
-
-    binding.used_at = now
-
-    # Обновляем привязку в app-user (redmine_id можно поставить только 1 раз).
-    app_user = await session.get(BotAppUser, user.id)
-    if app_user and app_user.redmine_id is None:
-        app_user.redmine_id = redmine_id
-
-    # Upsert bot_user (комната для отправки).
-    r2 = await session.execute(select(BotUser).where(BotUser.redmine_id == redmine_id))
-    bot_user = r2.scalar_one_or_none()
-    if bot_user:
-        bot_user.room = room_id
-    else:
-        session.add(BotUser(redmine_id=redmine_id, room=room_id))
-
-    return RedirectResponse("/", status_code=303)
-
-
 # --- User self-service: настройки ---
 
 
@@ -2457,7 +2323,12 @@ async def me_settings_get(
                 "work_days_json": "",
                 "work_days_selected": [0, 1, 2, 3, 4],
                 "dnd": False,
-                "error": "Сначала привяжите комнату через Matrix binding.",
+                "error": (
+                    "Учётная запись в панели ещё не связана с Redmine. "
+                    "Подписка на уведомления настраивается через бота в Matrix "
+                    "(см. docs/MATRIX_ONBOARDING_PLAN.md) или попросите администратора завести вас в разделе «Пользователи»."
+                ),
+                "matrix_bot_mxid": _matrix_bot_mxid(),
                 "csrf_token": csrf_token,
             },
             status_code=400,
@@ -2490,6 +2361,7 @@ async def me_settings_get(
             "work_days_selected": bot_user.work_days if bot_user.work_days is not None else [0, 1, 2, 3, 4],
             "dnd": bool(bot_user.dnd),
             "error": None,
+            "matrix_bot_mxid": _matrix_bot_mxid(),
             "csrf_token": csrf_token,
         },
     )
@@ -2522,7 +2394,10 @@ async def me_settings_post(
 
     redmine_id = getattr(user, "redmine_id", None)
     if redmine_id is None:
-        raise HTTPException(400, "Сначала привяжите комнату через Matrix binding.")
+        raise HTTPException(
+            400,
+            "Нет привязки к Redmine: настройте подписку через бота в Matrix или обратитесь к администратору.",
+        )
 
     r = await session.execute(select(BotUser).where(BotUser.redmine_id == redmine_id))
     bot_user = r.scalar_one_or_none()

@@ -41,12 +41,12 @@ if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 from utils import safe_html
 from matrix_send import room_send_with_retry, MAX_RETRIES
-from config import LOG_FILE, want_log_file
+from config import LOG_FILE, log_file_backup_count, log_file_max_bytes, want_log_file
 from preferences import can_notify
 from redminelib.exceptions import AuthError, BaseRedmineError, ForbiddenError
 
 from dotenv import load_dotenv
-from nio import AsyncClient
+from nio import AsyncClient, RoomMessageText
 from redminelib import Redmine
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -130,6 +130,14 @@ BOT_INSTANCE_ID_UUID = uuid.UUID(_BOT_INSTANCE_ID_RAW) if _BOT_INSTANCE_ID_RAW e
 REMINDER_AFTER = 3600
 GROUP_REPEAT_SECONDS = int(os.getenv("GROUP_REPEAT_SECONDS", "1800").strip() or "1800")
 
+# Онбординг в Matrix DM (см. docs/MATRIX_ONBOARDING_PLAN.md)
+MATRIX_ONBOARDING_ENABLED = _parse_bool(os.getenv("MATRIX_ONBOARDING_ENABLED", "1"), True)
+MATRIX_ONBOARDING_SESSION_TTL = int(os.getenv("MATRIX_ONBOARDING_SESSION_TTL", "900").strip() or "900")
+MATRIX_ONBOARDING_SESSION_TTL = max(120, min(MATRIX_ONBOARDING_SESSION_TTL, 86400))
+
+# Кэш master key для расшифровки персональных ключей Redmine
+_BOT_MASTER_KEY: bytes | None = None
+
 # Обратная совместимость тестов (реальные константы — в matrix_send.py)
 MATRIX_SEND_MAX_RETRIES = MAX_RETRIES
 
@@ -156,14 +164,17 @@ STATUSES_TRANSFERRED = {
 logger = logging.getLogger("redmine_bot")
 logger.setLevel(logging.INFO)
 
-# Файл (ротация 5 МБ × 5 копий), если LOG_TO_FILE не отключён; иначе только stdout
+# Файл с ротацией (LOG_MAX_BYTES × LOG_BACKUP_COUNT), если LOG_TO_FILE не отключён; иначе только stdout
 if want_log_file():
     try:
         data_dir().mkdir(parents=True, exist_ok=True)
         _log_path = LOG_FILE
         _log_path.parent.mkdir(parents=True, exist_ok=True)
         _fh = logging.handlers.RotatingFileHandler(
-            _log_path, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
+            _log_path,
+            maxBytes=log_file_max_bytes(),
+            backupCount=log_file_backup_count(),
+            encoding="utf-8",
         )
         _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
         logger.addHandler(_fh)
@@ -860,6 +871,52 @@ async def check_user_issues(client, redmine, user_cfg, db_session):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# REDMINE: глобальный ключ + опционально персональный (из Postgres, AES-GCM)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _get_bot_master_key() -> bytes:
+    global _BOT_MASTER_KEY
+    if _BOT_MASTER_KEY is None:
+        from security import load_master_key
+
+        _BOT_MASTER_KEY = load_master_key()
+    return _BOT_MASTER_KEY
+
+
+def redmine_client_for_user(global_redmine: Redmine, user_cfg: dict) -> Redmine:
+    """Персональный API-ключ из bot_users, иначе глобальный REDMINE_API_KEY."""
+    ciph = user_cfg.get("_redmine_key_cipher")
+    nonce = user_cfg.get("_redmine_key_nonce")
+    if not ciph or not nonce:
+        return global_redmine
+    try:
+        from security import decrypt_secret
+
+        api_key = decrypt_secret(ciph, nonce, _get_bot_master_key())
+        return Redmine(REDMINE_URL, key=api_key)
+    except Exception as e:
+        logger.error(
+            "Персональный ключ Redmine недоступен (user redmine_id=%s): %s",
+            user_cfg.get("redmine_id"),
+            type(e).__name__,
+        )
+        return global_redmine
+
+
+async def reload_runtime_users_from_db() -> None:
+    """Перечитать USERS и маршруты из Postgres (после онбординга в Matrix)."""
+    global USERS, STATUS_ROOM_MAP, VERSION_ROOM_MAP
+    from database.load_config import fetch_runtime_config
+
+    u, sm, vm = await fetch_runtime_config()
+    USERS = u
+    STATUS_ROOM_MAP = sm or {}
+    VERSION_ROOM_MAP = vm or {}
+    logger.info("Конфиг из БД обновлён, пользователей: %s", len(USERS))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # ПЛАНИРОВЩИК: ПЕРИОДИЧЕСКИЕ ЗАДАЧИ
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -894,7 +951,8 @@ async def check_all_users(client, redmine):
                     continue
 
                 await session.commit()
-                await check_user_issues(client, redmine, user_cfg, db_session=session)
+                rm_user = redmine_client_for_user(redmine, user_cfg)
+                await check_user_issues(client, rm_user, user_cfg, db_session=session)
                 await session.commit()
             except Exception as e:
                 logger.error("❌ DB-state цикл проверки user %s: %s", uid, e, exc_info=True)
@@ -942,9 +1000,10 @@ async def daily_report(client, redmine):
 
         uid  = user_cfg["redmine_id"]
         room = user_cfg["room"]
+        rm_user = redmine_client_for_user(redmine, user_cfg)
 
         try:
-            issues = list(redmine.issue.filter(assigned_to_id=uid, status_id="open"))
+            issues = list(rm_user.issue.filter(assigned_to_id=uid, status_id="open"))
         except Exception as e:
             _log_redmine_list_error(uid, e, "утренний отчёт")
             continue
@@ -1008,9 +1067,10 @@ async def cleanup_state_files(redmine):
     async with session_factory() as session:
         for user_cfg in USERS:
             uid = user_cfg["redmine_id"]
+            rm_user = redmine_client_for_user(redmine, user_cfg)
             try:
                 open_issues = list(
-                    redmine.issue.filter(assigned_to_id=uid, status_id="open")
+                    rm_user.issue.filter(assigned_to_id=uid, status_id="open")
                 )
             except Exception as e:
                 _log_redmine_list_error(uid, e, "очистка state (db)")
@@ -1051,20 +1111,44 @@ async def main():
         logger.error("❌ Не удалось загрузить конфиг из БД: %s", e, exc_info=True)
         return
 
+    onboarding_wanted = MATRIX_ONBOARDING_ENABLED
+    need_master = onboarding_wanted or any(
+        x.get("_redmine_key_cipher") for x in (u or []) if isinstance(x, dict)
+    )
+    master_ok = False
+    if need_master:
+        try:
+            _get_bot_master_key()
+            master_ok = True
+        except Exception as e:
+            logger.warning(
+                "APP_MASTER_KEY недоступен (%s). Персональные ключи Redmine и онбординг Matrix отключены.",
+                type(e).__name__,
+            )
+            onboarding_wanted = False
+
     if not u:
-        logger.error("❌ В БД нет пользователей (bot_users пуст). Заполните через admin UI.")
-        return
+        if not onboarding_wanted:
+            logger.error(
+                "❌ В БД нет пользователей (bot_users пуст), онбординг Matrix выключен. "
+                "Заполните через admin UI или включите MATRIX_ONBOARDING_ENABLED и APP_MASTER_KEY."
+            )
+            return
+        logger.warning(
+            "⚠ В БД пока нет пользователей — работает только онбординг в Matrix (!start в личке с ботом)."
+        )
 
     USERS = u
     STATUS_ROOM_MAP = sm or {}
     VERSION_ROOM_MAP = vm or {}
 
     # FIX-4: валидация структуры USERS
-    valid, errors = validate_users(USERS)
-    if not valid:
-        for err in errors:
-            logger.error(f"❌ {err}")
-        return
+    if USERS:
+        valid, errors = validate_users(USERS)
+        if not valid:
+            for err in errors:
+                logger.error(f"❌ {err}")
+            return
 
     # --- Лог конфигурации ---
     for u in USERS:
@@ -1090,6 +1174,38 @@ async def main():
         logger.error(f"❌ Matrix подключение: {e}")
         await client.close()
         return
+
+    # --- Онбординг: входящие сообщения в DM ---
+    from matrix_onboarding import OnboardingRuntime, configure_onboarding, handle_matrix_message
+
+    if onboarding_wanted and master_ok:
+        configure_onboarding(
+            OnboardingRuntime(
+                master_key=_get_bot_master_key(),
+                redmine_url=REDMINE_URL,
+                reload_users=reload_runtime_users_from_db,
+                bot_matrix_user_id=MATRIX_USER_ID,
+                session_ttl_seconds=MATRIX_ONBOARDING_SESSION_TTL,
+            )
+        )
+
+        async def _onboarding_room_message(room, event):
+            try:
+                await handle_matrix_message(
+                    client,
+                    room.room_id,
+                    event.sender,
+                    getattr(event, "body", "") or "",
+                    getattr(event, "event_id", None),
+                )
+            except Exception:
+                logger.exception("Ошибка обработчика онбординга Matrix")
+
+        client.add_event_callback(_onboarding_room_message, RoomMessageText)
+        asyncio.create_task(client.sync_forever(timeout=30000))
+        logger.info("✅ Онбординг Matrix включён (sync + личные сообщения)")
+    else:
+        configure_onboarding(None)
 
     # --- Подключение к Redmine ---
     redmine = Redmine(REDMINE_URL, key=REDMINE_KEY)

@@ -7,8 +7,8 @@
   <a class="btn btn-primary" href="/groups/new"><i class="fa-solid fa-plus"></i> Добавить группу</a>
 {% endcall %}
 
-<form method="get" action="/groups" class="card form content-stack" style="margin-bottom:1rem;">
-  <div class="filter-row">
+<form method="get" action="/groups" class="card form" style="margin-bottom:1rem;">
+  <div class="filter-row filter-row--grow-search">
     <div class="field">
       <label for="q">Поиск</label>
       <input id="q" name="q" value="{{ q or '' }}" placeholder="Название или room_id"/>

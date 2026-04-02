@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UI Demo — Via (balanced pages)</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../static/admin/css/panel.css">
+  <style>
+    :root {
+      --sidebar-w: 18rem;
+      --font-main: 1.12rem;
+    }
+    .main-content {
+      max-width: none;
+      margin: 0;
+      padding-left: 2rem;
+      padding-right: 2rem;
+    }
+    .page-head,
+    .content-stack {
+      max-width: none;
+      margin-left: 0;
+      margin-right: 0;
+    }
+    .sidebar-title {
+      font-size: 1.36rem;
+      letter-spacing: -0.015em;
+    }
+    .sidebar-sub { font-size: 0.8rem; }
+    .sidebar-logo {
+      position: relative;
+      overflow: hidden;
+    }
+    .sidebar-logo--v {
+      width: 3rem;
+      height: 3rem;
+      border-radius: 0.9rem;
+      background: #2f83e2;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: none;
+    }
+    .v-mark {
+      width: 1.95rem;
+      height: 1.95rem;
+      display: block;
+      filter: none;
+    }
+    .nav-link {
+      min-height: 2.75rem;
+      padding: 0.66rem 0.9rem;
+      font-size: 0.99rem;
+      line-height: 1.25;
+      margin-bottom: 0.28rem;
+      border-radius: 0.7rem;
+    }
+    .nav-link i {
+      width: 1.25rem;
+      font-size: 0.98rem;
+    }
+    .demo-screen {
+      display: none;
+    }
+    .demo-screen.active {
+      display: block;
+    }
+    .demo-hint {
+      margin: 0 0 0.7rem;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .demo-log {
+      margin: 0;
+      padding: 1rem;
+      min-height: 10rem;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.22);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      color: var(--fg);
+      white-space: pre-wrap;
+    }
+    /* .demo-grid / .demo-list / .demo-card — в panel.css (как в проде) */
+    @media (max-width: 768px) {
+      :root { --font-main: 1rem; }
+      .main-content {
+        padding-left: 1rem;
+        padding-right: 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Основная навигация">
+      <div class="sidebar-head">
+        <div class="sidebar-logo sidebar-logo--v" aria-hidden="true">
+          <svg class="v-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4.3 5.2C4.95 6.15 5.45 7.1 6 8L12 18.85L18 8C18.55 7.1 19.05 6.15 19.7 5.2" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div>
+          <div class="sidebar-title">Via</div>
+          <div class="sidebar-sub">Панель управления</div>
+        </div>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="sidebar-nav-main">
+          <a class="nav-link" href="#" data-screen="dashboard"><i class="fa-solid fa-gauge-high"></i><span>Дашборд</span></a>
+          <a class="nav-link active" href="#" data-screen="groups"><i class="fa-solid fa-layer-group"></i><span>Группы</span></a>
+          <a class="nav-link" href="#" data-screen="users"><i class="fa-solid fa-users"></i><span>Пользователи</span></a>
+          <a class="nav-link" href="#" data-screen="settings"><i class="fa-solid fa-gear"></i><span>Настройки подключений</span></a>
+          <a class="nav-link" href="#" data-screen="accounts"><i class="fa-solid fa-user-shield"></i><span>Аккаунты панели</span></a>
+          <a class="nav-link" href="#" data-screen="events"><i class="fa-solid fa-bolt"></i><span>События</span></a>
+        </div>
+      </nav>
+    </aside>
+
+    <main class="app-main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <div class="integration-banner">
+            <a class="banner-warn" href="#">
+              <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+              <span class="banner-warn__text">Подключения не полностью настроены.</span>
+              <span class="banner-warn__cta">Открыть настройки</span>
+            </a>
+          </div>
+        </div>
+        <div class="user-menu-wrap">
+          <div class="user-trigger">
+            <div class="user-meta">
+              <div class="name">Администратор</div>
+              <div class="login">admin</div>
+            </div>
+            <div class="avatar" aria-hidden="true">A</div>
+          </div>
+        </div>
+      </header>
+
+      <div class="main-content">
+        <section id="screen-dashboard" class="demo-screen">
+          <header class="page-head">
+            <div class="page-head-row">
+              <div class="page-head-text"><h1>Дашборд</h1></div>
+            </div>
+          </header>
+          <div class="grid-stats">
+            <div class="card stat-card">
+              <div class="stat-label">Пользователи</div>
+              <div class="stat-value">127</div>
+              <i class="fa-solid fa-users stat-icon" aria-hidden="true"></i>
+            </div>
+            <div class="card stat-card">
+              <div class="stat-label">Группы</div>
+              <div class="stat-value">8</div>
+              <i class="fa-solid fa-layer-group stat-icon" aria-hidden="true"></i>
+            </div>
+            <div class="card stat-card">
+              <div class="stat-label">События</div>
+              <div class="stat-value">24</div>
+              <i class="fa-solid fa-bolt stat-icon" aria-hidden="true"></i>
+            </div>
+          </div>
+
+          <div class="demo-grid">
+            <article class="card demo-card">
+              <h2 style="margin-top:0;">Что сделать сейчас</h2>
+              <ul class="demo-list">
+                <li><strong>Проверить интеграции:</strong> заполнить 2 обязательных параметра Matrix.</li>
+                <li><strong>Синхронизировать пользователей:</strong> 3 новых сотрудника без группы.</li>
+                <li><strong>Просмотреть события:</strong> убедиться, что за последний цикл нет ошибок.</li>
+              </ul>
+              <div class="page-actions">
+                <a class="btn btn-primary" href="#"><i class="fa-solid fa-gear"></i> Перейти в настройки</a>
+                <a class="btn btn-ghost" href="#"><i class="fa-solid fa-users"></i> Открыть пользователей</a>
+              </div>
+            </article>
+
+            <article class="card demo-card">
+              <h2 style="margin-top:0;">Сервис</h2>
+              <p class="muted">Последний цикл: 42 сек назад, длительность 4.8 сек, ошибок 0.</p>
+              <div class="page-actions">
+                <button class="btn btn-ghost" type="button"><i class="fa-solid fa-play"></i> Start</button>
+                <button class="btn btn-danger" type="button"><i class="fa-solid fa-stop"></i> Stop</button>
+                <button class="btn btn-primary" type="button"><i class="fa-solid fa-rotate-right"></i> Restart</button>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="screen-groups" class="demo-screen active">
+          <header class="page-head">
+            <div class="page-head-row">
+              <div class="page-head-text"><h1>Группы</h1></div>
+              <div class="page-head-actions">
+                <span class="page-list-summary">В списке: <strong>8</strong></span>
+                <a class="btn btn-primary" href="#"><i class="fa-solid fa-plus"></i> Добавить группу</a>
+              </div>
+            </div>
+          </header>
+          <form class="card form" style="margin-bottom:1rem;">
+            <div class="filter-row">
+              <div class="field">
+                <label>Поиск</label>
+                <input placeholder="Название или room_id">
+              </div>
+              <div class="page-actions">
+                <button class="btn btn-primary" type="button">Применить</button>
+                <button class="btn btn-ghost" type="button">Сбросить</button>
+              </div>
+            </div>
+          </form>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Название</th>
+                  <th>ID комнаты группы</th>
+                  <th>Таймзона</th>
+                  <th>Активна</th>
+                  <th class="table-actions"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Support Core</td>
+                  <td><code>!support-core:matrix.company.local</code></td>
+                  <td>Europe/Moscow</td>
+                  <td>да</td>
+                  <td class="table-actions">
+                    <button class="btn btn-ghost" type="button">Изменить</button>
+                    <button class="btn btn-danger" type="button">Удалить</button>
+                  </td>
+                </tr>
+                <tr>
+                  <td>DevOps</td>
+                  <td><code>!devops:matrix.company.local</code></td>
+                  <td>Europe/Moscow</td>
+                  <td>да</td>
+                  <td class="table-actions">
+                    <button class="btn btn-ghost" type="button">Изменить</button>
+                    <button class="btn btn-danger" type="button">Удалить</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="screen-users" class="demo-screen">
+          <header class="page-head">
+            <div class="page-head-row">
+              <div class="page-head-text">
+                <h1>Пользователи</h1>
+                <p class="lead">Поиск, фильтры и группировка по группам.</p>
+              </div>
+              <div class="page-head-actions">
+                <span class="page-list-summary">В списке: <strong>127</strong></span>
+                <a class="btn btn-primary" href="#"><i class="fa-solid fa-plus"></i> Добавить</a>
+              </div>
+            </div>
+          </header>
+          <form class="card form" style="margin-bottom:1rem;">
+            <div class="filter-row">
+              <div class="field">
+                <label>Поиск</label>
+                <input placeholder="Имя, группа, комната">
+              </div>
+              <div class="field">
+                <label>Группа</label>
+                <select><option>Все группы</option><option>Support Core</option><option>DevOps</option></select>
+              </div>
+              <div class="page-actions">
+                <button class="btn btn-primary" type="button">Применить</button>
+                <button class="btn btn-ghost" type="button">Сбросить</button>
+              </div>
+            </div>
+          </form>
+          <details class="card" open>
+            <summary><strong>Support Core</strong> — 2 чел.</summary>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Имя</th>
+                    <th>Redmine ID</th>
+                    <th>Личная комната</th>
+                    <th>Группа</th>
+                    <th>DND</th>
+                    <th class="table-actions"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Иван Петров</td>
+                    <td>1972</td>
+                    <td><code class="mono-truncate" title="!u1972:matrix.company.local">!u1972:matrix.company.local</code></td>
+                    <td>Support Core</td>
+                    <td>нет</td>
+                    <td class="table-actions"><button class="btn btn-ghost" type="button">Изменить</button></td>
+                  </tr>
+                  <tr>
+                    <td>Анна Белова</td>
+                    <td>2281</td>
+                    <td><code class="mono-truncate" title="!u2281:matrix.company.local">!u2281:matrix.company.local</code></td>
+                    <td>Support Core</td>
+                    <td>да</td>
+                    <td class="table-actions"><button class="btn btn-ghost" type="button">Изменить</button></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+
+        <section id="screen-settings" class="demo-screen">
+          <header class="page-head">
+            <div class="page-head-row">
+              <div class="page-head-text"><h1>Настройки подключений</h1></div>
+            </div>
+          </header>
+          <div class="card content-stack">
+            <form class="form" style="margin-top:0;">
+              <div class="card card-nested stack">
+                <h2 style="margin-top:0;">Redmine</h2>
+                <div class="field">
+                  <label>Адрес Redmine</label>
+                  <input placeholder="https://redmine.company.local">
+                </div>
+                <div class="field">
+                  <label>API-ключ Redmine</label>
+                  <input placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                </div>
+              </div>
+              <div class="card card-nested stack">
+                <h2 style="margin-top:0;">Matrix</h2>
+                <div class="field">
+                  <label>Адрес Matrix</label>
+                  <input placeholder="https://matrix.company.local">
+                </div>
+                <div class="field">
+                  <label>Имя учётной записи</label>
+                  <input placeholder="@login:ваш.домен">
+                </div>
+                <div class="field">
+                  <label>Токен</label>
+                  <input placeholder="syt_xxxxxxxxxxxxxxxxxxx">
+                </div>
+              </div>
+              <div class="page-actions">
+                <button class="btn btn-primary" type="button">Сохранить и продолжить</button>
+                <button class="btn btn-ghost" type="button">Пропустить сейчас</button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <section id="screen-accounts" class="demo-screen">
+          <header class="page-head">
+            <div class="page-head-row">
+              <div class="page-head-text">
+                <h1>Аккаунты панели</h1>
+                <p class="lead">Управление пользователями, которые входят в admin UI.</p>
+              </div>
+            </div>
+          </header>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Логин</th>
+                  <th>Роль</th>
+                  <th>Верификация</th>
+                  <th>Сброс пароля админом</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>admin</td>
+                  <td>admin</td>
+                  <td>2026-03-20 10:40</td>
+                  <td class="cell-form">
+                    <form>
+                      <input type="password" placeholder="Новый пароль">
+                      <button class="btn btn-danger" type="button">Сбросить</button>
+                    </form>
+                  </td>
+                </tr>
+                <tr>
+                  <td>admin2</td>
+                  <td>admin</td>
+                  <td>2026-03-28 08:15</td>
+                  <td class="cell-form">
+                    <form>
+                      <input type="password" placeholder="Новый пароль">
+                      <button class="btn btn-danger" type="button">Сбросить</button>
+                    </form>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="screen-events" class="demo-screen">
+          <header class="page-head">
+            <div class="page-head-row">
+              <div class="page-head-text"><h1>События</h1></div>
+            </div>
+          </header>
+          <p class="demo-hint">Хвост файла лога бота (демо-замена auto-refresh).</p>
+          <div class="card content-stack">
+            <pre class="demo-log">2026-04-01 10:14:12 | INFO  | cycle_start issues=12
+2026-04-01 10:14:14 | INFO  | notify_sent redmine_id=1972 room=!u1972:...
+2026-04-01 10:14:15 | INFO  | notify_sent redmine_id=2281 room=!u2281:...
+2026-04-01 10:14:16 | INFO  | cycle_done duration_ms=4121 errors=0</pre>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      const links = Array.from(document.querySelectorAll('.sidebar .nav-link[data-screen]'));
+      const screens = Array.from(document.querySelectorAll('.demo-screen'));
+      function openScreen(name) {
+        screens.forEach((screen) => {
+          screen.classList.toggle('active', screen.id === 'screen-' + name);
+        });
+        links.forEach((link) => {
+          link.classList.toggle('active', link.getAttribute('data-screen') === name);
+        });
+      }
+      links.forEach((link) => {
+        link.addEventListener('click', function (event) {
+          event.preventDefault();
+          openScreen(link.getAttribute('data-screen'));
+        });
+      });
+      openScreen('dashboard');
+    })();
+  </script>
+</body>
+</html>

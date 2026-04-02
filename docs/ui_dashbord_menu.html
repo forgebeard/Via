@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UI Demo - Balanced Menu</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../static/admin/css/panel.css">
+  <style>
+    :root {
+      /* Средний размер между "слишком узко" и "слишком широко" */
+      --sidebar-w: 18rem;
+      /* Фиксируем базовый масштаб контента, чтобы не было ощущения скачков */
+      --font-main: 1.12rem;
+    }
+
+    /* Контент не зажат в центре */
+    .main-content {
+      max-width: none;
+      margin: 0;
+      padding-left: 2rem;
+      padding-right: 2rem;
+    }
+    .page-head,
+    .content-stack {
+      max-width: none;
+      margin-left: 0;
+      margin-right: 0;
+    }
+
+    /* Более ровный ритм меню: одинаковая высота, размер и отступы */
+    .sidebar-title {
+      font-size: 1.36rem;
+      letter-spacing: -0.015em;
+    }
+    .sidebar-sub {
+      font-size: 0.8rem;
+    }
+    .nav-link {
+      min-height: 2.75rem;
+      padding: 0.66rem 0.9rem;
+      font-size: 0.99rem;
+      line-height: 1.25;
+      margin-bottom: 0.28rem;
+      border-radius: 0.7rem;
+    }
+    .nav-link i {
+      width: 1.25rem;
+      font-size: 0.98rem;
+      opacity: 0.9;
+    }
+    .nav-link span {
+      flex: 1;
+      min-width: 0;
+      white-space: nowrap;
+    }
+
+    /* Секция демонстрации */
+    .demo-grid {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr;
+      gap: 1rem;
+      margin-top: 1rem;
+      align-items: stretch;
+    }
+    .demo-list {
+      margin: 0;
+      padding-left: 1rem;
+      display: grid;
+      gap: 0.48rem;
+      color: var(--muted);
+    }
+    .demo-list strong {
+      color: var(--fg);
+    }
+    .demo-card {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+    .demo-card .page-actions {
+      margin-top: auto;
+    }
+    .demo-caption {
+      margin: 0.85rem 0 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    @media (max-width: 1024px) {
+      .demo-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 768px) {
+      .main-content {
+        padding-left: 1rem;
+        padding-right: 1rem;
+      }
+      :root { --font-main: 1rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Основная навигация">
+      <div class="sidebar-head">
+        <div class="sidebar-logo" aria-hidden="true">M</div>
+        <div>
+          <div class="sidebar-title">Matrix</div>
+          <div class="sidebar-sub">Панель управления</div>
+        </div>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="sidebar-nav-main">
+          <a class="nav-link active" href="#"><i class="fa-solid fa-gauge-high"></i><span>Дашборд</span></a>
+          <a class="nav-link" href="#"><i class="fa-solid fa-layer-group"></i><span>Группы</span></a>
+          <a class="nav-link" href="#"><i class="fa-solid fa-users"></i><span>Пользователи</span></a>
+          <a class="nav-link" href="#"><i class="fa-solid fa-gear"></i><span>Настройки</span></a>
+          <a class="nav-link" href="#"><i class="fa-solid fa-bolt"></i><span>События</span></a>
+        </div>
+      </nav>
+    </aside>
+
+    <main class="app-main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <div class="integration-banner">
+            <a class="banner-warn" href="#">
+              <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+              <span class="banner-warn__text">Подключения не полностью настроены.</span>
+              <span class="banner-warn__cta">Открыть настройки</span>
+            </a>
+          </div>
+        </div>
+        <div class="user-menu-wrap">
+          <div class="user-trigger">
+            <div class="user-meta">
+              <div class="name">Администратор</div>
+              <div class="login">admin</div>
+            </div>
+            <div class="avatar" aria-hidden="true">A</div>
+          </div>
+        </div>
+      </header>
+
+      <div class="main-content">
+        <header class="page-head">
+          <div class="page-head-row">
+            <div class="page-head-text">
+              <h1>Дашборд</h1>
+              <p class="lead">Демо максимально близко к текущему виду: изменены только размерность и ритм меню, плюс более ровная сетка контента.</p>
+            </div>
+          </div>
+        </header>
+
+        <div class="grid-stats dash-link-grid">
+          <a class="card dash-link-tile" href="#" aria-label="Пользователи">
+            <i class="fa-solid fa-users dash-link-tile__icon" aria-hidden="true"></i>
+            <span class="dash-link-tile__label">Пользователи</span>
+          </a>
+          <a class="card dash-link-tile" href="#" aria-label="Группы">
+            <i class="fa-solid fa-layer-group dash-link-tile__icon" aria-hidden="true"></i>
+            <span class="dash-link-tile__label">Группы</span>
+          </a>
+          <a class="card dash-link-tile" href="#" aria-label="События">
+            <i class="fa-solid fa-bolt dash-link-tile__icon" aria-hidden="true"></i>
+            <span class="dash-link-tile__label">События</span>
+          </a>
+        </div>
+
+        <div class="demo-grid">
+          <article class="card demo-card">
+            <h2 style="margin-top:0;">Что сделать сейчас</h2>
+            <ul class="demo-list">
+              <li><strong>Проверить интеграции:</strong> заполнить 2 обязательных параметра Matrix.</li>
+              <li><strong>Синхронизировать пользователей:</strong> 3 новых сотрудника без группы.</li>
+              <li><strong>Просмотреть события:</strong> убедиться, что за последний цикл нет ошибок.</li>
+            </ul>
+            <div class="page-actions">
+              <a class="btn btn-primary" href="#"><i class="fa-solid fa-gear"></i> Перейти в настройки</a>
+              <a class="btn btn-ghost" href="#"><i class="fa-solid fa-users"></i> Открыть пользователей</a>
+            </div>
+          </article>
+
+          <article class="card demo-card">
+            <h2 style="margin-top:0;">Сервис</h2>
+            <p class="muted">Последний цикл: 42 сек назад, длительность 4.8 сек, ошибок 0.</p>
+            <div class="page-actions">
+              <button class="btn btn-ghost" type="button"><i class="fa-solid fa-play"></i> Start</button>
+              <button class="btn btn-danger" type="button"><i class="fa-solid fa-stop"></i> Stop</button>
+              <button class="btn btn-primary" type="button"><i class="fa-solid fa-rotate-right"></i> Restart</button>
+            </div>
+          </article>
+        </div>
+
+        <p class="demo-caption">
+          Фокус демо: меню "среднего" размера и одинаковый визуальный шаг между пунктами; остальной стиль оставлен максимально как у тебя.
+        </p>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

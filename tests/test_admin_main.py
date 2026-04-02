@@ -35,8 +35,17 @@ def test_login_page_ok(client: TestClient):
     assert "Вход в панель" in r.text
     assert "Логин" in r.text
     assert "Пароль" in r.text
-    assert "Забыли пароль?" in r.text
+    assert "Войти" in r.text
     assert "/static/admin/css/auth.css?v=" in r.text
+
+
+def test_forgot_password_redirects_to_login(client: TestClient):
+    r = client.get("/forgot-password", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers.get("location", "").endswith("/login")
+    p = client.post("/forgot-password", data={"login": "x"}, follow_redirects=False)
+    assert p.status_code == 303
+    assert p.headers.get("location", "").endswith("/login")
 
 
 def test_admin_asset_version_helper(monkeypatch):
@@ -166,6 +175,20 @@ def test_groups_assignable_excludes_filter_all_label():
     assert [g.name for g in out] == ["Линия поддержки"]
 
 
+def test_groups_assignable_excludes_filter_label_case_insensitive():
+    class _G:
+        def __init__(self, name: str):
+            self.name = name
+
+    rows = [
+        _G("ВСЕ ГРУППЫ"),
+        _G("все группы"),
+        _G("Линия"),
+    ]
+    out = admin_main._groups_assignable(rows)
+    assert [g.name for g in out] == ["Линия"]
+
+
 def test_redmine_lookup_requires_auth(client: TestClient):
     r = client.get("/redmine/users/lookup?user_id=1", follow_redirects=False)
     assert r.status_code in (301, 302, 303, 307, 308)
@@ -225,6 +248,15 @@ def test_read_log_tail_keeps_last_lines(monkeypatch, tmp_path):
     out = admin_main._read_log_tail(admin_main._admin_events_log_path(), max_lines=12)
     assert "L0499" in out
     assert "L0000" not in out
+
+
+def test_dash_events_tail_line_count(monkeypatch, tmp_path):
+    monkeypatch.setenv("ADMIN_EVENTS_LOG_PATH", str(tmp_path / "none.log"))
+    assert admin_main._dash_events_tail_line_count() == 0
+    logf = tmp_path / "bot.log"
+    monkeypatch.setenv("ADMIN_EVENTS_LOG_PATH", str(logf))
+    logf.write_text("a\n\nb\nc\n", encoding="utf-8")
+    assert admin_main._dash_events_tail_line_count(max_lines=400) == 3
 
 
 def test_me_settings_admin_redirects_home(client: TestClient):
