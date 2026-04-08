@@ -29,7 +29,7 @@ from urllib.parse import urlencode
 from zoneinfo import ZoneInfo, available_timezones
 from jinja2 import Environment, FileSystemLoader
 
-_ROOT = Path(__file__).resolve().parent
+_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT / "src"))
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
@@ -2144,12 +2144,9 @@ async def group_test_message(
     if not admin_user or getattr(admin_user, "role", "") != "admin":
         raise HTTPException(403, "Только admin")
 
-    # Загружаем секреты из БД
-    homeserver = await _load_secret_plain(session, "MATRIX_HOMESERVER")
-    access_token = await _load_secret_plain(session, "MATRIX_ACCESS_TOKEN")
-    bot_mxid = await _load_secret_plain(session, "MATRIX_USER_ID")
-
-    if not homeserver or not access_token or not bot_mxid:
+    # Получаем готовый клиент
+    client = await _get_matrix_client(session)
+    if not client:
         return JSONResponse({"ok": False, "error": "Matrix не настроен"}, status_code=400)
 
     try:
@@ -2157,13 +2154,17 @@ async def group_test_message(
         room_id = (form.get("room_id") or "").strip()
     except Exception as e:
         logger.error("Failed to parse form: %s", e)
+        await client.close()
         return JSONResponse({"ok": False, "error": "Не удалось прочитать данные формы"}, status_code=400)
 
     if not room_id:
+        await client.close()
         return JSONResponse({"ok": False, "error": "Не указан ID комнаты"}, status_code=400)
 
     # Формируем сообщение
     from datetime import datetime as _dt
+    from src.matrix_send import room_send_with_retry
+
     ts = _dt.now().strftime("%H:%M:%S")
     html = (
         f"<b>🧪 Тестовое сообщение группы</b><br>"
@@ -2174,19 +2175,11 @@ async def group_test_message(
     text_plain = f"🧪 Тестовое сообщение группы\nЭто тест от панели управления.\nОтправлено: {ts}"
 
     try:
-        from nio import AsyncClient
-        from src.matrix_send import room_send_with_retry
-
-        client = AsyncClient(homeserver, bot_mxid)
-        client.access_token = access_token
-        client.device_id = "redmine_bot_admin_test"
-
-        # Восстанавливаем сессию (важно для nio, чтобы работать с токеном)
-        client.restore_login(bot_mxid, "redmine_bot_admin_test", access_token)
-
-        # Синхронизируемся, чтобы получить список комнат и ключи шифрования
+        # Синхронизируемся, чтобы получить список комнат
         logger.info("group_test_message: syncing to find room %s...", room_id)
-        await client.sync(timeout=10000)
+        if not await _sync_matrix_client(client):
+            await client.close()
+            return JSONResponse({"ok": False, "error": "Не удалось синхронизироваться с Matrix"}, status_code=500)
 
         if room_id not in client.rooms:
             await client.close()
@@ -2199,9 +2192,9 @@ async def group_test_message(
         return JSONResponse({"ok": True})
     except Exception as e:
         import traceback as _tb
-        err_detail = _tb.format_exc()
-        logger.error("group_test_message_failed room_id=%s\n%s", room_id, err_detail)
-        return JSONResponse({"ok": False, "error": err_detail}, status_code=500)
+        logger.error("group_test_message_failed room_id=%s\n%s", room_id, _tb.format_exc())
+        await client.close()
+        return JSONResponse({"ok": False, "error": "Не удалось отправить сообщение. Проверьте логи админки."}, status_code=500)
 
 
 @app.get("/groups/{group_id}/edit", response_class=HTMLResponse)
@@ -2911,6 +2904,40 @@ async def users_create(
     return RedirectResponse(f"/users?highlight_user_id={row.id}", status_code=303)
 
 
+# --- Вспомогательные функции для Matrix (DRY) ---
+
+
+async def _get_matrix_client(session: AsyncSession) -> AsyncClient | None:
+    """
+    Создает и настраивает Matrix-клиент на основе секретов из БД.
+    Возвращает None, если секреты не настроены.
+    """
+    homeserver = await _load_secret_plain(session, "MATRIX_HOMESERVER")
+    access_token = await _load_secret_plain(session, "MATRIX_ACCESS_TOKEN")
+    bot_mxid = await _load_secret_plain(session, "MATRIX_USER_ID")
+
+    if not all([homeserver, access_token, bot_mxid]):
+        return None
+
+    from nio import AsyncClient
+
+    client = AsyncClient(homeserver, bot_mxid)
+    client.access_token = access_token
+    client.device_id = "redmine_bot_admin"
+    # restore_login - синхронный метод
+    client.restore_login(bot_mxid, "redmine_bot_admin", access_token)
+    return client
+
+
+async def _sync_matrix_client(client: AsyncClient, timeout: int = 10000) -> bool:
+    """Синхронизирует клиент. Возвращает True при успехе."""
+    try:
+        await client.sync(timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
 # --- Отправка тестового сообщения (универсальный: по user_id или по MXID) ---
 
 
@@ -2925,15 +2952,15 @@ async def user_test_message(
     if not admin_user or getattr(admin_user, "role", "") != "admin":
         raise HTTPException(403, "Только admin")
 
-    # Загружаем секреты из БД
-    homeserver = await _load_secret_plain(session, "MATRIX_HOMESERVER")
-    access_token = await _load_secret_plain(session, "MATRIX_ACCESS_TOKEN")
-    bot_mxid = await _load_secret_plain(session, "MATRIX_USER_ID")
+    # Получаем готовый клиент (или None, если не настроен)
+    client = await _get_matrix_client(session)
+    if not client:
+        return JSONResponse({"ok": False, "error": "Matrix не настроен (нет homeserver/token/user_id)"}, status_code=400)
+
+    # Загружаем остальные настройки (Redmine)
     redmine_url = await _load_secret_plain(session, "REDMINE_URL")
     redmine_key = await _load_secret_plain(session, "REDMINE_API_KEY")
-
-    if not homeserver or not access_token or not bot_mxid:
-        return JSONResponse({"ok": False, "error": "Matrix не настроен (нет homeserver/token/user_id)"}, status_code=400)
+    bot_mxid = await _load_secret_plain(session, "MATRIX_USER_ID")
 
     form = await request.form()
     raw_uid = form.get("user_id", "")
@@ -2950,6 +2977,8 @@ async def user_test_message(
     room_id = None  # Инициализируем заранее, чтобы избежать UnboundLocalError
 
     # Извлекаем домен из homeserver (https://messenger.red-soft.ru → messenger.red-soft.ru)
+    # client.homeserver уже содержит URL, но надежнее взять из настроек
+    homeserver = client.homeserver
     matrix_domain = homeserver.replace("https://", "").replace("http://", "").rstrip("/")
 
     # Если MXID введён вручную (не полный), добавляем домен
@@ -2962,6 +2991,7 @@ async def user_test_message(
     if uid > 0:
         row = await session.get(BotUser, uid)
         if not row:
+            await client.close()
             return JSONResponse({"ok": False, "error": "Пользователь не найден"}, status_code=404)
         room_id = (row.room or "").strip()
         if room_id.startswith("@"):
@@ -2985,10 +3015,13 @@ async def user_test_message(
                 pass
 
     if not target_mxid and not room_id:
+        await client.close()
         return JSONResponse({"ok": False, "error": "Не указан Matrix ID пользователя"}, status_code=400)
 
     # Формируем сообщение
     from datetime import datetime as _dt
+    from src.matrix_send import room_send_with_retry
+
     ts = _dt.now().strftime("%H:%M:%S")
     html = (
         f"<b>🧪 Тестовое сообщение</b><br>"
@@ -2998,20 +3031,14 @@ async def user_test_message(
     )
     text_plain = f"🧪 Тестовое сообщение\nЭто тест от панели управления.\nОтправлено: {ts}"
 
+    final_room_id = room_id
+
     try:
-        from nio import AsyncClient
-        from src.matrix_send import room_send_with_retry
-
-        client = AsyncClient(homeserver, bot_mxid)
-        client.access_token = access_token
-        client.device_id = "redmine_bot_admin_test"
-
-        final_room_id = room_id
-
         if not final_room_id and target_mxid:
-            # Синхронизируемся
+            # Синхронизируемся, чтобы найти DM
             logger.info("test_message: syncing to find DM for %s", target_mxid)
-            await client.sync(timeout=5000)
+            await _sync_matrix_client(client)
+
             # Ищем существующую DM
             for r_id, room_obj in client.rooms.items():
                 member_ids = {m.user_id for m in room_obj.users.values()}
@@ -3047,7 +3074,8 @@ async def user_test_message(
     except Exception as e:
         import traceback as _tb
         logger.error("test_message_failed uid=%s mxid=%s error=%s\n%s", uid, target_mxid, e, _tb.format_exc())
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+        await client.close()
+        return JSONResponse({"ok": False, "error": "Не удалось отправить сообщение. Проверьте логи админки."}, status_code=500)
 
 
 # --- Redmine: поиск users по имени/логину ---

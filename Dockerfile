@@ -47,9 +47,7 @@ WORKDIR /app
 # Переносим только установленные пакеты из builder (без исходников pip).
 COPY --from=builder /opt/venv /opt/venv
 
-# Код приложения: корневой bot.py и пакет src/ (импорты matrix_send, utils и т.д.).
-COPY --chown=bot:bot bot.py .
-COPY --chown=bot:bot admin_main.py .
+# Код приложения: пакет src/ (импорты matrix_send, utils и т.д., а также модули bot и admin).
 COPY --chown=bot:bot src/ ./src/
 COPY --chown=bot:bot templates/ ./templates/
 COPY --chown=bot:bot static/ ./static/
@@ -65,5 +63,5 @@ RUN chown -R bot:bot /app
 
 USER bot
 
-# -u = unbuffered, дублирует PYTHONUNBUFFERED для явности.
-CMD ["python", "-u", "bot.py"]
+# -m = run as module (src/bot/main.py), -u = unbuffered.
+CMD ["python", "-u", "-m", "src.bot.main"]

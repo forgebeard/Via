@@ -84,8 +84,8 @@ services:
       - ./.env:/app/.env:ro
     working_dir: /app
     healthcheck:
-      # Отдельный процесс импортирует bot — проверка целостности образа и зависимостей.
-      test: ["CMD", "python", "-c", "import bot"]
+      # Отдельный процесс импортирует модуль бота — проверка целостности образа и зависимостей.
+      test: ["CMD", "python", "-c", "import src.bot.main"]
       interval: 30s
       timeout: 15s
       retries: 3
@@ -143,7 +143,7 @@ services:
       [
         "sh",
         "-c",
-        "alembic upgrade head && exec uvicorn admin_main:app --host 0.0.0.0 --port 8080",
+        "alembic upgrade head && exec uvicorn src.admin.main:app --host 0.0.0.0 --port 8080",
       ]
     ports:
       - "${ADMIN_PORT:-8080}:8080"
@@ -154,6 +154,8 @@ services:
       - ./data:/app/data
       # Монтируем .env для чтения/записи credentials через GUI.
       - ./.env:/app/.env
+      # Монтируем шаблоны для быстрой разработки (без пересборки образа).
+      - ./templates:/app/templates
 
 volumes:
   postgres_data:
