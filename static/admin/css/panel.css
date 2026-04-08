@@ -1497,3 +1497,124 @@ pre.log-tail.muted {
     align-items: stretch;
   }
 }
+
+/* Toast-уведомление для сохранения настроек */
+.toast {
+  position: fixed;
+  top: 1.5rem;
+  right: 1.5rem;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 1.25rem;
+  border-radius: 0.75rem;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: #a7f3d0;
+  font-size: 0.98rem;
+  font-weight: 500;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transform: translateY(-12px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  pointer-events: none;
+}
+.toast.toast--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.toast.toast--error {
+  background: rgba(248, 113, 113, 0.15);
+  border-color: rgba(248, 113, 113, 0.4);
+  color: #fecaca;
+}
+.toast i {
+  font-size: 1.15rem;
+  opacity: 0.9;
+}
+
+/* Поля с маскированными значениями — визуальная подсказка */
+input.is-masked {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: 0.03em;
+}
+
+/* Поле с переключателем видимости (глазок) */
+.input-with-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  position: relative;
+}
+.input-with-toggle input {
+  flex: 1;
+  max-width: none;
+  padding-right: 2.75rem;
+}
+.toggle-visibility {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 0.4rem;
+  transition: color 0.15s, background 0.15s;
+  padding: 0;
+}
+.toggle-visibility:hover {
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.08);
+}
+.toggle-visibility:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+/* Room ID input: ! localpart :domain */
+.room-id-input {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: rgba(15, 23, 42, 0.65);
+  overflow: hidden;
+}
+.room-id-input:focus-within {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px var(--cyan-dim);
+}
+.room-prefix,
+.room-suffix {
+  display: flex;
+  align-items: center;
+  padding: 0.55rem 0.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.95rem;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.03);
+  user-select: none;
+  flex-shrink: 0;
+}
+.room-id-input input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 0.55rem 0.5rem;
+}
+.room-id-input input:focus {
+  outline: none;
+  box-shadow: none;
+}

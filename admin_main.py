@@ -291,13 +291,34 @@ REQUIRED_SECRET_NAMES = [
     if v.strip()
 ]
 MATRIX_DEFAULT_DEVICE_ID = (os.getenv("MATRIX_DEFAULT_DEVICE_ID") or "redmine_bot").strip() or "redmine_bot"
-ONBOARDING_SKIPPED_SECRET = "__onboarding_skipped"
+
+
+def _mask_secret(value: str, mask_url: bool = False) -> str:
+    """Маскирует секретное значение.
+    
+    Для URL и MXID — показываем полностью (mask_url=False по умолчанию).
+    Для ключей/токенов — показываем первые 6 и последние 4 символа.
+    """
+    if not value:
+        return ""
+    if mask_url:
+        return value
+    if len(value) <= 12:
+        return value[:4] + "••••"
+    return value[:6] + "••••••••" + value[-4:]
 
 
 def _matrix_bot_mxid() -> str:
     """MXID бота из .env — подсказка в «Мои настройки» (без отдельной страницы привязки)."""
     return (os.getenv("MATRIX_USER_ID") or "").strip()
-NOTIFY_TYPES: list[tuple[str, str]] = []
+
+
+def _matrix_domain() -> str:
+    """Извлекаем домен из MXID бота: @bot:messenger.red-soft.ru → messenger.red-soft.ru"""
+    mxid = _matrix_bot_mxid()
+    if ":" in mxid:
+        return mxid.split(":", 1)[1]
+    return ""
 NOTIFY_TYPE_KEYS: list[str] = []
 CATALOG_NOTIFY_SECRET = "__catalog_notify"
 CATALOG_VERSIONS_SECRET = "__catalog_versions"
@@ -757,6 +778,14 @@ def _verify_csrf(request: Request, form_token: str = "") -> None:
         raise HTTPException(status_code=400, detail="Некорректный CSRF токен")
 
 
+def _verify_csrf_json(request: Request) -> None:
+    """CSRF-проверка для JSON-endpoints (тестовое сообщение и т.п.)."""
+    token = request.headers.get("X-CSRF-Token", "").strip()
+    cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
+    if not cookie_token or not token or token != cookie_token:
+        raise HTTPException(status_code=400, detail="Некорректный CSRF токен")
+
+
 async def _audit_op(
     session: AsyncSession,
     action: str,
@@ -1012,14 +1041,13 @@ async def _integration_status(session: AsyncSession, use_cache: bool = True) -> 
         cached = _integration_status_cache.get()
         if cached is not None:
             return cached
-    rows = await session.execute(select(AppSecret.name).where(AppSecret.name.in_(REQUIRED_SECRET_NAMES + [ONBOARDING_SKIPPED_SECRET])))
+    rows = await session.execute(select(AppSecret.name).where(AppSecret.name.in_(REQUIRED_SECRET_NAMES)))
     names = {r[0] for r in rows.all()}
     missing = [name for name in REQUIRED_SECRET_NAMES if name not in names]
     status = {
         "configured": len(missing) == 0,
         "missing": missing,
-        "skipped": ONBOARDING_SKIPPED_SECRET in names,
-    }
+            }
     _integration_status_cache.set(status)
     return status
 
@@ -1338,6 +1366,15 @@ async def onboarding_page(request: Request, session: AsyncSession = Depends(get_
     service_timezone = os.getenv("BOT_TIMEZONE", SERVICE_TIMEZONE_FALLBACK)
     timezone_all_options = _standard_timezone_options()
     timezone_labels = _timezone_labels(timezone_all_options)
+    # Загружаем секретные значения из БД
+    secrets_masked: dict[str, str] = {}
+    secrets_raw: dict[str, str] = {}
+    for secret_name in REQUIRED_SECRET_NAMES:
+        raw = await _load_secret_plain(session, secret_name)
+        # URL и MXID показываем полностью, ключи/токены маскируем
+        is_url_or_mxid = secret_name in ("REDMINE_URL", "MATRIX_HOMESERVER", "MATRIX_USER_ID")
+        secrets_masked[secret_name] = _mask_secret(raw, mask_url=is_url_or_mxid)
+        secrets_raw[secret_name] = raw
     resp = templates.TemplateResponse(
         request,
         "onboarding.html",
@@ -1350,6 +1387,8 @@ async def onboarding_page(request: Request, session: AsyncSession = Depends(get_
             "service_timezone": _normalize_service_timezone_name(service_timezone),
             "timezone_all_options": timezone_all_options,
             "timezone_labels": timezone_labels,
+            "secrets_masked": secrets_masked,
+            "secrets_raw": secrets_raw,
         },
     )
     if set_cookie:
@@ -1378,6 +1417,9 @@ async def onboarding_save(
         value = (raw or "").strip()
         if not value:
             continue
+        # Пропускаем маскированные значения (содержат • или ●) — не перезаписываем
+        if "•" in value or "●" in value:
+            continue
         enc = encrypt_secret(value, key=key)
         r = await session.execute(select(AppSecret).where(AppSecret.name == secret_name))
         row = r.scalar_one_or_none()
@@ -1389,8 +1431,6 @@ async def onboarding_save(
             row.nonce = enc.nonce
             row.key_version = enc.key_version
         logger.info("secret_updated name=%s actor=%s key_version=%s", secret_name, mask_identifier(user.login), enc.key_version)
-    # onboarding is complete once values were submitted; remove skip marker.
-    await session.execute(delete(AppSecret).where(AppSecret.name == ONBOARDING_SKIPPED_SECRET))
     _integration_status_cache.invalidate()
     return RedirectResponse("/onboarding?saved=connections", status_code=303)
 
@@ -1416,85 +1456,6 @@ async def onboarding_catalog_save(
     return JSONResponse({"ok": True, "notify_count": len(notify_catalog), "versions_count": len(versions_catalog)})
 
 
-@app.post("/onboarding/skip")
-async def onboarding_skip(
-    request: Request,
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    _verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        return RedirectResponse("/login", status_code=303)
-    key = load_master_key()
-    r = await session.execute(select(AppSecret).where(AppSecret.name == ONBOARDING_SKIPPED_SECRET))
-    row = r.scalar_one_or_none()
-    if row is None:
-        enc = encrypt_secret("1", key=key)
-        session.add(AppSecret(name=ONBOARDING_SKIPPED_SECRET, ciphertext=enc.ciphertext, nonce=enc.nonce, key_version=enc.key_version))
-    _integration_status_cache.invalidate()
-    return RedirectResponse(DASHBOARD_PATH, status_code=303)
-
-
-def _check_redmine_access(url: str, api_key: str) -> tuple[bool, str]:
-    from urllib.error import HTTPError, URLError
-    from urllib.request import Request, urlopen
-
-    base = (url or "").strip().rstrip("/")
-    key = (api_key or "").strip()
-    if not base or not key:
-        return False, "Redmine: укажите URL и API-ключ."
-    req = Request(
-        f"{base}/users/current.json",
-        headers={"X-Redmine-API-Key": key, "Accept": "application/json"},
-    )
-    try:
-        with urlopen(req, timeout=6.0) as resp:
-            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-        user = payload.get("user") if isinstance(payload, dict) else {}
-        login = str((user or {}).get("login") or "").strip()
-        suffix = f" (user: {login})" if login else ""
-        return True, f"Redmine: подключение успешно{suffix}."
-    except HTTPError as e:
-        return False, f"Redmine: HTTP {e.code}."
-    except URLError:
-        return False, "Redmine: нет ответа (URL/сеть/timeout)."
-    except Exception:
-        return False, "Redmine: ошибка проверки."
-
-
-def _check_matrix_access(homeserver: str, user_id: str, token: str) -> tuple[bool, str]:
-    from urllib.error import HTTPError, URLError
-    from urllib.request import Request, urlopen
-
-    hs = (homeserver or "").strip().rstrip("/")
-    mxid = (user_id or "").strip()
-    access_token = (token or "").strip()
-    if not hs or not mxid or not access_token:
-        return False, "Matrix: укажите homeserver, user id и token."
-    try:
-        # Базовая доступность homeserver.
-        with urlopen(Request(f"{hs}/_matrix/client/versions"), timeout=6.0):
-            pass
-        # Валидность токена.
-        who_req = Request(
-            f"{hs}/_matrix/client/v3/account/whoami",
-            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
-        )
-        with urlopen(who_req, timeout=6.0) as resp:
-            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-        got_user = str((payload or {}).get("user_id") or "").strip()
-        if got_user and got_user != mxid:
-            return True, f"Matrix: подключение успешно, но token принадлежит {got_user}."
-        return True, "Matrix: подключение успешно."
-    except HTTPError as e:
-        return False, f"Matrix: HTTP {e.code}."
-    except URLError:
-        return False, "Matrix: нет ответа (URL/сеть/timeout)."
-    except Exception:
-        return False, "Matrix: ошибка проверки."
-
-
 @app.post("/onboarding/check")
 async def onboarding_check(
     request: Request,
@@ -1504,22 +1465,41 @@ async def onboarding_check(
     secret_MATRIX_USER_ID: Annotated[str, Form()] = "",
     secret_MATRIX_ACCESS_TOKEN: Annotated[str, Form()] = "",
     csrf_token: Annotated[str, Form()] = "",
+    session: AsyncSession = Depends(get_session),
 ):
     _verify_csrf(request, csrf_token)
     user = getattr(request.state, "current_user", None)
     if not user or getattr(user, "role", "") != "admin":
         raise HTTPException(403, "Только admin")
 
+    def _is_masked(val: str, secret_name: str) -> bool:
+        """URL и MXID не маскируем — для них маскировки нет."""
+        if secret_name in ("REDMINE_URL", "MATRIX_HOMESERVER", "MATRIX_USER_ID"):
+            return False
+        return "•" in val or "●" in val
+
+    # Подставляем реальные значения из БД для маскированных полей
+    url = secret_REDMINE_URL
+    key = secret_REDMINE_API_KEY
+    homeserver = secret_MATRIX_HOMESERVER
+    user_id = secret_MATRIX_USER_ID
+    token = secret_MATRIX_ACCESS_TOKEN
+
+    if _is_masked(key, "REDMINE_API_KEY"):
+        key = await _load_secret_plain(session, "REDMINE_API_KEY")
+    if _is_masked(token, "MATRIX_ACCESS_TOKEN"):
+        token = await _load_secret_plain(session, "MATRIX_ACCESS_TOKEN")
+
     redmine_ok, redmine_msg = await asyncio.to_thread(
         _check_redmine_access,
-        secret_REDMINE_URL,
-        secret_REDMINE_API_KEY,
+        url,
+        key,
     )
     matrix_ok, matrix_msg = await asyncio.to_thread(
         _check_matrix_access,
-        secret_MATRIX_HOMESERVER,
-        secret_MATRIX_USER_ID,
-        secret_MATRIX_ACCESS_TOKEN,
+        homeserver,
+        user_id,
+        token,
     )
     ok = redmine_ok and matrix_ok
     return JSONResponse(
@@ -2605,6 +2585,8 @@ async def users_new(
         {
             "title": "Новый пользователь",
             "u": None,
+            "room_localpart": "",
+            "matrix_domain": _matrix_domain(),
             "notify_json": '["all"]',
             "notify_preset": "all",
             "notify_selected": ["all"],
@@ -2739,12 +2721,14 @@ async def users_create(
         notify = _normalize_notify(notify_values, notify_allowed)
     else:
         notify = _parse_notify(notify_json)
+    # Конструируем полный room_id из localpart + домен бота
+    full_room = _build_room_id(room.strip())
     row = BotUser(
         redmine_id=redmine_id,
         display_name=display_name.strip() or None,
         group_id=int(group_id) if str(group_id).isdigit() else None,
         department=None,
-        room=room.strip(),
+        room=full_room,
         notify=notify,
         timezone=(timezone_name or "").strip() or None,
         work_hours=wh,
@@ -2783,6 +2767,127 @@ async def users_create(
     return RedirectResponse(f"/users?highlight_user_id={row.id}", status_code=303)
 
 
+# --- Отправка тестового сообщения (универсальный: по user_id или по MXID) ---
+
+
+@app.post("/users/test-message")
+async def user_test_message(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """Отправляет тестовое сообщение по user_id (из БД) или напрямую по MXID."""
+    _verify_csrf_json(request)
+    admin_user = getattr(request.state, "current_user", None)
+    if not admin_user or getattr(admin_user, "role", "") != "admin":
+        raise HTTPException(403, "Только admin")
+
+    form = await request.form()
+    raw_uid = form.get("user_id", "")
+    raw_mxid = form.get("mxid", "")
+
+    uid = 0
+    if raw_uid:
+        try:
+            uid = int(raw_uid)
+        except ValueError:
+            uid = 0
+
+    target_mxid = (raw_mxid or "").strip()
+
+    # Если указан user_id — берём данные из БД
+    if uid > 0:
+        row = await session.get(BotUser, uid)
+        if not row:
+            return JSONResponse({"ok": False, "error": "Пользователь не найден"}, status_code=404)
+        room_id = (row.room or "").strip()
+        if room_id.startswith("@"):
+            target_mxid = target_mxid or room_id
+            room_id = None
+        # Если MXID не указан — пробуем получить из Redmine
+        if not target_mxid and redmine_url and redmine_key and row.redmine_id:
+            try:
+                from urllib.request import Request, urlopen
+                import json as _json3
+                api_url = f"{redmine_url.rstrip('/')}/users/{row.redmine_id}.json"
+                req = Request(api_url, headers={"X-Redmine-API-Key": redmine_key, "Accept": "application/json"})
+                with urlopen(req, timeout=10) as resp:
+                    rdata = _json3.loads(resp.read().decode())
+                    login = rdata.get("user", {}).get("login", "")
+                    if login:
+                        domain = _matrix_domain()
+                        target_mxid = f"@{login}:{domain}" if domain else None
+            except Exception:
+                pass
+
+    if not target_mxid and not room_id:
+        return JSONResponse({"ok": False, "error": "Не указан Matrix ID пользователя"}, status_code=400)
+
+    # Формируем сообщение
+    from datetime import datetime as _dt
+    ts = _dt.now().strftime("%H:%M:%S")
+    html = (
+        f"<b>🧪 Тестовое сообщение</b><br>"
+        f"Это тест от панели управления.<br>"
+        f"Если вы это видите — подключение работает!<br>"
+        f"<small>Отправлено: {ts}</small>"
+    )
+    text_plain = f"🧪 Тестовое сообщение\nЭто тест от панели управления.\nОтправлено: {ts}"
+
+    try:
+        from nio import AsyncClient
+        from src.matrix_send import room_send_with_retry
+
+        client = AsyncClient(homeserver, bot_mxid)
+        client.access_token = access_token
+        client.device_id = "redmine_bot_admin_test"
+
+        final_room_id = room_id
+
+        if not final_room_id and target_mxid:
+            # Синхронизируемся
+            logger.info("test_message: syncing to find DM for %s", target_mxid)
+            await client.sync(timeout=5000)
+            # Ищем существующую DM
+            for r_id, room_obj in client.rooms.items():
+                member_ids = {m.user_id for m in room_obj.users.values()}
+                if len(member_ids) == 2 and bot_mxid in member_ids and target_mxid in member_ids:
+                    final_room_id = r_id
+                    logger.info("test_message: found existing DM %s", r_id)
+                    break
+            # Создаём DM
+            if not final_room_id:
+                logger.info("test_message: creating DM with %s", target_mxid)
+                resp_create = await client.room_create(
+                    invite=[target_mxid],
+                    is_direct=True,
+                )
+                if resp_create and hasattr(resp_create, "room_id"):
+                    final_room_id = resp_create.room_id
+                    logger.info("test_message: created DM %s, joining...", final_room_id)
+                    await client.join(final_room_id)
+                else:
+                    err_detail = str(resp_create) if resp_create else "no response"
+                    await client.close()
+                    return JSONResponse({"ok": False, "error": f"Не удалось создать DM с {target_mxid}: {err_detail}"}, status_code=500)
+
+        if not final_room_id:
+            await client.close()
+            return JSONResponse({"ok": False, "error": "Не удалось определить комнату"}, status_code=500)
+
+        logger.info("test_message: sending to %s", final_room_id)
+        content = {"msgtype": "m.text", "body": text_plain, "format": "org.matrix.custom.html", "formatted_body": html}
+        await room_send_with_retry(client, final_room_id, content)
+        await client.close()
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        import traceback as _tb
+        logger.error("test_message_failed uid=%s mxid=%s error=%s\n%s", uid, target_mxid, e, _tb.format_exc())
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+# --- Redmine: поиск users по имени/логину ---
+
+
 @app.get("/users/{user_id}/edit", response_class=HTMLResponse)
 async def users_edit(
     request: Request,
@@ -2817,6 +2922,8 @@ async def users_edit(
         {
             "title": f"Пользователь Redmine {row.redmine_id}",
             "u": row,
+            "room_localpart": _room_localpart(row.room),
+            "matrix_domain": _matrix_domain(),
             "notify_json": json.dumps(row.notify, ensure_ascii=False),
             "notify_preset": _notify_preset(row.notify),
             "notify_selected": notify_selected,
@@ -2873,7 +2980,7 @@ async def users_update(
     if not row:
         raise HTTPException(404)
     old_room = (row.room or "").strip()
-    new_room = room.strip()
+    new_room = _build_room_id(room.strip())
     row.redmine_id = redmine_id
     row.display_name = display_name.strip() or None
     row.group_id = int(group_id) if str(group_id).isdigit() else None
@@ -3024,7 +3131,30 @@ async def users_delete(
     return RedirectResponse("/users", status_code=303)
 
 
-# --- Redmine: поиск users по имени/логину ---
+# --- Вспомогательные функции для Matrix room_id ---
+
+
+def _room_localpart(room_id: str) -> str:
+    """Извлекает localpart из room_id: !xxxxxx:server → xxxxxx"""
+    if not room_id:
+        return ""
+    # room_id формат: !<opaque>:<domain>
+    if room_id.startswith("!") and ":" in room_id:
+        return room_id[1:].split(":", 1)[0]
+    return room_id
+
+
+def _build_room_id(localpart: str) -> str:
+    """Конструирует полный room_id из localpart + домен бота."""
+    domain = _matrix_domain()
+    if not localpart or not domain:
+        return localpart
+    if localpart.startswith("!"):
+        return localpart  # уже полный
+    return f"!{localpart}:{domain}"
+
+
+
 
 
 @app.get("/redmine/users/search", response_class=HTMLResponse)

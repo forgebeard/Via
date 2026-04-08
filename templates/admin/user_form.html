@@ -35,14 +35,24 @@
             <p class="field-hint">Числовой id пользователя в Redmine (в профиле или в URL <code>/users/…</code>).</p>
           </div>
           <div class="field">
-            <label for="room">ID комнаты пользователя</label>
-            <input type="text" id="room" name="room" required
-              value="{{ u.room if u else '' }}" placeholder="!xxx:server"/>
+            <label for="room_localpart">Matrix ID пользователя</label>
+            <div class="room-id-input">
+              <span class="room-prefix">@</span>
+              <input type="text" id="room_localpart" name="room" required
+                     value="{{ room_localpart if room_localpart else '' }}"
+                     placeholder="ivan.ivanov"/>
+              {% if matrix_domain %}
+              <span class="room-suffix">:{{ matrix_domain }}</span>
+              {% endif %}
+            </div>
+            <p class="field-hint">Только localpart — домен подставится автоматически.</p>
           </div>
         </div>
 
         <div class="inline-actions" style="margin-top:0.5rem; display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center;">
-          <button type="button" class="btn btn-ghost" id="redmine_lookup_btn">Подставить имя из Redmine</button>
+          <button type="button" class="btn btn-ghost" id="redmine_lookup_btn">Найти пользователя</button>
+          <button type="button" class="btn btn-ghost" id="test_message_btn"
+                  data-user-id="{{ u.id if u else '' }}">Отправить тестовое сообщение</button>
           <span id="redmine_lookup_status" class="muted" role="status" aria-live="polite"></span>
         </div>
       </article>
@@ -204,7 +214,15 @@
         const data = await r.json().catch(function () { return {}; });
         if (r.ok && data.ok && data.display_name) {
           if (dname) dname.value = data.display_name;
-          setStatus(data.login ? ('Подставлено: ' + data.display_name + ' (' + data.login + ')') : 'Подставлено: ' + data.display_name);
+          // Автоматически подставляем login как localpart комнаты
+          if (data.login) {
+            var roomInput = document.getElementById('room_localpart');
+            if (roomInput && !roomInput.value) {
+              roomInput.value = data.login;
+              refreshSummary();
+            }
+          }
+          setStatus(data.login ? (data.display_name + ' (' + data.login + ')') : data.display_name);
           refreshSummary();
         } else {
           const code = data.error || (r.status === 404 ? 'not_found' : 'error');
@@ -217,6 +235,49 @@
       }
     }
     if (btn) btn.addEventListener('click', lookup);
+
+    // --- Кнопка «Отправить тестовое сообщение» ---
+    var testBtn = document.getElementById('test_message_btn');
+    if (testBtn) {
+      testBtn.addEventListener('click', async function() {
+        var userId = testBtn.getAttribute('data-user-id');
+        var roomInput = document.getElementById('room_localpart');
+        var mxidLocalpart = roomInput ? roomInput.value.trim() : '';
+        var domain = '{{ matrix_domain }}' || '';
+        var mxid = mxidLocalpart ? ('@' + mxidLocalpart + (domain ? ':' + domain : '')) : '';
+
+        if (!userId && !mxid) {
+          setStatus('Укажите Matrix ID или сохраните пользователя');
+          return;
+        }
+
+        testBtn.disabled = true;
+        testBtn.textContent = '⏳ Отправка…';
+        try {
+          var csrf = document.querySelector('input[name="csrf_token"]')?.value || '';
+          var body = new FormData();
+          if (userId) body.append('user_id', userId);
+          if (mxid) body.append('mxid', mxid);
+          var r = await fetch('/users/test-message', {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'X-CSRF-Token': csrf },
+            credentials: 'same-origin',
+            body: body,
+          });
+          var data = await r.json().catch(function() { return {}; });
+          if (data.ok) {
+            setStatus('Сообщение доставлено');
+          } else {
+            setStatus('Не доставлено: ' + (data.error || 'неизвестная ошибка'));
+          }
+        } catch (e) {
+          setStatus('Не доставлено: ошибка сети');
+        } finally {
+          testBtn.disabled = false;
+          testBtn.textContent = 'Отправить тестовое сообщение';
+        }
+      });
+    }
 
     function textOrDash(v) {
       const value = String(v || '').trim();
@@ -269,7 +330,11 @@
       setSummary('summary_name', textOrDash(document.getElementById('display_name')?.value));
       setSummary('summary_group', selectedText(document.getElementById('group_id')));
       setSummary('summary_redmine_id', textOrDash(document.getElementById('redmine_id')?.value));
-      setSummary('summary_room', textOrDash(document.getElementById('room')?.value));
+      // Room: показываем полный room_id
+      var lp = document.getElementById('room_localpart')?.value || '';
+      var domain = '{{ matrix_domain }}' || '';
+      var fullRoom = lp ? ('!' + lp + (domain ? ':' + domain : '')) : '';
+      setSummary('summary_room', textOrDash(fullRoom));
       setSummary('summary_notify', selectedNotifyLabel());
       setSummary('summary_versions', selectedVersionsLabel());
       setSummary('summary_timezone', textOrDash(document.getElementById('timezone_name')?.value || '{{ bot_tz }}'));
@@ -321,7 +386,7 @@
     syncVersions();
   })();
 
-    ['display_name', 'redmine_id', 'room', 'timezone_name', 'work_hours_from', 'work_hours_to', 'dnd', 'group_id'].forEach(function (id) {
+    ['display_name', 'redmine_id', 'room_localpart', 'timezone_name', 'work_hours_from', 'work_hours_to', 'dnd', 'group_id'].forEach(function (id) {
       const el = document.getElementById(id);
       if (!el) return;
       const evt = (id === 'group_id' || id === 'dnd' || id === 'timezone_name') ? 'change' : 'input';

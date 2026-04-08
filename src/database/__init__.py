@@ -11,7 +11,6 @@ from .models import (
     BotUserLease,
     BotSession,
     MatrixRoomBinding,
-    OnboardingSession,
     StatusRoomRoute,
     VersionRoomRoute,
 )
@@ -19,7 +18,6 @@ from .models import (
 __all__ = [
     "Base",
     "BotUser",
-    "OnboardingSession",
     "StatusRoomRoute",
     "VersionRoomRoute",
     "BotUserLease",

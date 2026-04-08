@@ -23,29 +23,63 @@
         <h3 style="margin-top:0;">Redmine</h3>
         <div class="field">
           <label for="secret_REDMINE_URL">Адрес Redmine</label>
-          <input id="secret_REDMINE_URL" name="secret_REDMINE_URL" type="text" placeholder="https://redmine.company.local"/>
+          <input id="secret_REDMINE_URL" name="secret_REDMINE_URL" type="text"
+                 value="{{ secrets_masked.get('REDMINE_URL', '') }}"
+                 placeholder="https://redmine.company.local"
+                 autocomplete="url"/>
         </div>
         <div class="field">
           <label for="secret_REDMINE_API_KEY">API-ключ Redmine</label>
-          <input id="secret_REDMINE_API_KEY" name="secret_REDMINE_API_KEY" type="text" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"/>
+          <div class="input-with-toggle">
+            <input id="secret_REDMINE_API_KEY" name="secret_REDMINE_API_KEY" type="password"
+                   value="{{ secrets_masked.get('REDMINE_API_KEY', '') }}"
+                   data-real-value="{{ secrets_raw.get('REDMINE_API_KEY', '') }}"
+                   data-masked-value="{{ secrets_masked.get('REDMINE_API_KEY', '') }}"
+                   placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                   autocomplete="off"/>
+            <button type="button" class="toggle-visibility" data-target="secret_REDMINE_API_KEY" aria-label="Показать/скрыть">
+              <i class="fa-solid fa-eye"></i>
+            </button>
+          </div>
         </div>
       </section>
       <section class="service-bubble stack">
         <h3 style="margin-top:0;">Matrix</h3>
         <div class="field">
           <label for="secret_MATRIX_HOMESERVER">Адрес Matrix</label>
-          <input id="secret_MATRIX_HOMESERVER" name="secret_MATRIX_HOMESERVER" type="text" placeholder="https://matrix.company.local"/>
+          <input id="secret_MATRIX_HOMESERVER" name="secret_MATRIX_HOMESERVER" type="text"
+                 value="{{ secrets_masked.get('MATRIX_HOMESERVER', '') }}"
+                 placeholder="https://matrix.company.local"
+                 autocomplete="url"/>
         </div>
         <div class="field">
           <label for="secret_MATRIX_USER_ID">Имя учётной записи</label>
-          <input id="secret_MATRIX_USER_ID" name="secret_MATRIX_USER_ID" type="text" placeholder="@login:ваш.домен" autocomplete="username"/>
+          <input id="secret_MATRIX_USER_ID" name="secret_MATRIX_USER_ID" type="text"
+                 value="{{ secrets_masked.get('MATRIX_USER_ID', '') }}"
+                 placeholder="@login:ваш.домен" autocomplete="username"/>
         </div>
         <div class="field">
           <label for="secret_MATRIX_ACCESS_TOKEN">Токен</label>
-          <input id="secret_MATRIX_ACCESS_TOKEN" name="secret_MATRIX_ACCESS_TOKEN" type="text" placeholder="syt_xxxxxxxxxxxxxxxxxxx" autocomplete="off"/>
+          <div class="input-with-toggle">
+            <input id="secret_MATRIX_ACCESS_TOKEN" name="secret_MATRIX_ACCESS_TOKEN" type="password"
+                   value="{{ secrets_masked.get('MATRIX_ACCESS_TOKEN', '') }}"
+                   data-real-value="{{ secrets_raw.get('MATRIX_ACCESS_TOKEN', '') }}"
+                   data-masked-value="{{ secrets_masked.get('MATRIX_ACCESS_TOKEN', '') }}"
+                   placeholder="syt_xxxxxxxxxxxxxxxxxxx" autocomplete="off"/>
+            <button type="button" class="toggle-visibility" data-target="secret_MATRIX_ACCESS_TOKEN" aria-label="Показать/скрыть">
+              <i class="fa-solid fa-eye"></i>
+            </button>
+          </div>
         </div>
       </section>
     </div>
+
+    {# Блок результатов проверки — СРАЗУ под Параметры сервиса #}
+    <p id="check-access-status" class="muted" style="margin:0.4rem 0 0;" aria-live="polite"></p>
+
+    {% if saved == "connections" %}
+    <p class="muted" style="margin:0.4rem 0 0;">Подключения сохранены.</p>
+    {% endif %}
 
     <h2 style="margin-top:0.75rem;">Таймзона сервиса</h2>
     <section class="service-bubble stack service-timezone-block">
@@ -96,6 +130,64 @@
   var form = document.getElementById("settings-form");
   var catalogStatus = document.getElementById("catalog-save-status");
   var persistTimer = null;
+
+  // --- Toast-уведомления ---
+  function showToast(message, isError) {
+    var existing = document.querySelector('.toast');
+    if (existing) existing.remove();
+    var toast = document.createElement('div');
+    toast.className = 'toast' + (isError ? ' toast--error' : '');
+    toast.innerHTML = '<i class="fa-solid ' + (isError ? 'fa-circle-xmark' : 'fa-circle-check') + '"></i><span>' + message + '</span>';
+    document.body.appendChild(toast);
+    requestAnimationFrame(function() {
+      requestAnimationFrame(function() {
+        toast.classList.add('toast--visible');
+      });
+    });
+    setTimeout(function() {
+      toast.classList.remove('toast--visible');
+      setTimeout(function() { toast.remove(); }, 300);
+    }, 3000);
+  }
+
+  // --- Подсветка маскированных полей ---
+  function markMaskedInputs() {
+    var inputs = form.querySelectorAll('input[name^="secret_"]');
+    inputs.forEach(function(input) {
+      if (input.value && input.value.includes('••••')) {
+        input.classList.add('is-masked');
+      } else {
+        input.classList.remove('is-masked');
+      }
+    });
+  }
+  // Вызываем при загрузке страницы
+  markMaskedInputs();
+
+  // --- Переключатель видимости (глазок) ---
+  document.querySelectorAll('.toggle-visibility').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var inputId = this.getAttribute('data-target');
+      var input = document.getElementById(inputId);
+      if (!input) return;
+      var isPassword = input.type === 'password';
+      if (isPassword) {
+        // Показываем реальное значение
+        var realValue = input.getAttribute('data-real-value');
+        if (realValue) input.value = realValue;
+        input.type = 'text';
+      } else {
+        // Возвращаем маскированное
+        var maskedValue = input.getAttribute('data-masked-value');
+        if (maskedValue) input.value = maskedValue;
+        input.type = 'password';
+      }
+      var icon = this.querySelector('i');
+      if (icon) {
+        icon.className = isPassword ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye';
+      }
+    });
+  });
 
   async function persistCatalog() {
     var fd = new FormData();
@@ -303,6 +395,27 @@
     addInputId: "versions-add-input",
     addBtnId: "versions-add",
     hiddenId: "catalog_versions_json"
+  });
+
+  // --- Перехват отправки формы (Сохранить) ---
+  form.addEventListener("submit", async function(e) {
+    e.preventDefault();
+    var fd = new FormData(form);
+    try {
+      var resp = await fetch("/onboarding/save", {
+        method: "POST",
+        body: fd,
+        credentials: "same-origin",
+        headers: { Accept: "text/html" }
+      });
+      if (resp.redirected) {
+        window.location.href = resp.url;
+      } else {
+        showToast("Изменения сохранены", false);
+      }
+    } catch (err) {
+      showToast("Ошибка при сохранении", true);
+    }
   });
 
   (function () {

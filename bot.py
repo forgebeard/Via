@@ -52,7 +52,6 @@ from preferences import can_notify
 from redminelib.exceptions import AuthError, BaseRedmineError, ForbiddenError
 
 from dotenv import load_dotenv
-from nio import AsyncClient, RoomMessageText
 from redminelib import Redmine
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -135,11 +134,6 @@ BOT_INSTANCE_ID_UUID = uuid.UUID(_BOT_INSTANCE_ID_RAW) if _BOT_INSTANCE_ID_RAW e
 # Через сколько секунд напоминать о «Информация предоставлена»
 REMINDER_AFTER = 3600
 GROUP_REPEAT_SECONDS = int(os.getenv("GROUP_REPEAT_SECONDS", "1800").strip() or "1800")
-
-# Онбординг в Matrix DM (см. docs/MATRIX_ONBOARDING_PLAN.md)
-MATRIX_ONBOARDING_ENABLED = _parse_bool(os.getenv("MATRIX_ONBOARDING_ENABLED", "1"), True)
-MATRIX_ONBOARDING_SESSION_TTL = int(os.getenv("MATRIX_ONBOARDING_SESSION_TTL", "900").strip() or "900")
-MATRIX_ONBOARDING_SESSION_TTL = max(120, min(MATRIX_ONBOARDING_SESSION_TTL, 86400))
 
 # Кэш master key для расшифровки персональных ключей Redmine
 _BOT_MASTER_KEY: bytes | None = None
@@ -1119,102 +1113,6 @@ async def main():
     except Exception as e:
         logger.error("❌ Не удалось загрузить конфиг из БД: %s", e, exc_info=True)
         return
-
-    onboarding_wanted = MATRIX_ONBOARDING_ENABLED
-    need_master = onboarding_wanted or any(
-        x.get("_redmine_key_cipher") for x in (u or []) if isinstance(x, dict)
-    )
-    master_ok = False
-    if need_master:
-        try:
-            _get_bot_master_key()
-            master_ok = True
-        except Exception as e:
-            logger.warning(
-                "APP_MASTER_KEY недоступен (%s). Персональные ключи Redmine и онбординг Matrix отключены.",
-                type(e).__name__,
-            )
-            onboarding_wanted = False
-
-    if not u:
-        if not onboarding_wanted:
-            logger.error(
-                "❌ В БД нет пользователей (bot_users пуст), онбординг Matrix выключен. "
-                "Заполните через admin UI или включите MATRIX_ONBOARDING_ENABLED и APP_MASTER_KEY."
-            )
-            return
-        logger.warning(
-            "⚠ В БД пока нет пользователей — работает только онбординг в Matrix (!start в личке с ботом)."
-        )
-
-    USERS = u
-    STATUS_ROOM_MAP = sm or {}
-    VERSION_ROOM_MAP = vm or {}
-
-    # FIX-4: валидация структуры USERS
-    if USERS:
-        valid, errors = validate_users(USERS)
-        if not valid:
-            for err in errors:
-                logger.error(f"❌ {err}")
-            return
-
-    # --- Лог конфигурации ---
-    for u in USERS:
-        logger.info(f"👤 User {u['redmine_id']} → {u['room'][:30]}... notify={u.get('notify')}")
-
-    if STATUS_ROOM_MAP:
-        for s, r in STATUS_ROOM_MAP.items():
-            logger.info(f"   📌 Статус «{s}» → {r[:30]}...")
-    if VERSION_ROOM_MAP:
-        for k, r in VERSION_ROOM_MAP.items():
-            logger.info(f"   📦 Версия «{k}» → {r[:30]}...")
-
-    # --- Подключение к Matrix ---
-    client = AsyncClient(HOMESERVER)
-    client.access_token = ACCESS_TOKEN
-    client.user_id      = MATRIX_USER_ID
-    client.device_id    = MATRIX_DEVICE_ID
-
-    try:
-        resp = await client.whoami()
-        logger.info(f"✅ Matrix: {resp.user_id}")
-    except Exception as e:
-        logger.error(f"❌ Matrix подключение: {e}")
-        await client.close()
-        return
-
-    # --- Онбординг: входящие сообщения в DM ---
-    from matrix_onboarding import OnboardingRuntime, configure_onboarding, handle_matrix_message
-
-    if onboarding_wanted and master_ok:
-        configure_onboarding(
-            OnboardingRuntime(
-                master_key=_get_bot_master_key(),
-                redmine_url=REDMINE_URL,
-                reload_users=reload_runtime_users_from_db,
-                bot_matrix_user_id=MATRIX_USER_ID,
-                session_ttl_seconds=MATRIX_ONBOARDING_SESSION_TTL,
-            )
-        )
-
-        async def _onboarding_room_message(room, event):
-            try:
-                await handle_matrix_message(
-                    client,
-                    room.room_id,
-                    event.sender,
-                    getattr(event, "body", "") or "",
-                    getattr(event, "event_id", None),
-                )
-            except Exception:
-                logger.exception("Ошибка обработчика онбординга Matrix")
-
-        client.add_event_callback(_onboarding_room_message, RoomMessageText)
-        asyncio.create_task(client.sync_forever(timeout=30000))
-        logger.info("✅ Онбординг Matrix включён (sync + личные сообщения)")
-    else:
-        configure_onboarding(None)
 
     # --- Подключение к Redmine ---
     redmine = Redmine(REDMINE_URL, key=REDMINE_KEY)

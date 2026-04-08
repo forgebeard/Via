@@ -246,7 +246,6 @@ docker compose down
 
 Что попадает в раздел **События** (файл лога), отдельный **файл аудита** `[AUDIT]`, stdout и опционально БД: [docs/ADMIN_EVENTS_AND_AUDIT_PLAN.md](docs/ADMIN_EVENTS_AND_AUDIT_PLAN.md).
 
-Онбординг в **личке Matrix** (`!start`, шаги, шифрование ключа, `!change` / `!cancel`): [docs/MATRIX_ONBOARDING_PLAN.md](docs/MATRIX_ONBOARDING_PLAN.md). Включение: `MATRIX_ONBOARDING_ENABLED`, мастер-ключ `APP_MASTER_KEY` (32 байта) у **bot** и **admin**.
 
 1. После `docker compose up` откройте `http://<хост>:8080/setup` и создайте первого admin (только если admin ещё нет в БД).
 2. Вход в админку: `http://<хост>:8080/login` по логину и паролю.

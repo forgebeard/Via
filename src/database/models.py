@@ -54,40 +54,6 @@ class BotUser(Base):
     work_hours: Mapped[str | None] = mapped_column(String(32), nullable=True)
     work_days: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     dnd: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    # Персональный API-ключ Redmine (AES-GCM, master key приложения). Пусто → используется глобальный ключ бота.
-    redmine_api_key_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
-    redmine_api_key_nonce: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
-    redmine_api_key_key_version: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)
-
-
-class OnboardingSession(Base):
-    """Сессия пошагового онбординга в DM Matrix (до upsert в bot_users)."""
-
-    __tablename__ = "onboarding_sessions"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    room_id: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
-    sender_mxid: Mapped[str] = mapped_column(Text, nullable=False, index=True)
-    step: Mapped[str] = mapped_column(String(64), nullable=False)
-    redmine_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    api_key_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
-    api_key_nonce: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
-    department_name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    work_hours: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    work_days: Mapped[list | None] = mapped_column(JSONB, nullable=True)
-    notify: Mapped[list | None] = mapped_column(JSONB, nullable=True)
-    change_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    existing_bot_user_id: Mapped[int | None] = mapped_column(
-        Integer,
-        ForeignKey("bot_users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
-    )
 
 
 class StatusRoomRoute(Base):
