@@ -265,6 +265,68 @@ class AppSecret(Base):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Справочники и настройки (GUI-управление)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class RedmineStatus(Base):
+    """Справочник статусов Redmine (загружается из API или вручную)."""
+    __tablename__ = "redmine_statuses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    redmine_status_id: Mapped[int] = mapped_column(Integer, unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_closed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class NotificationType(Base):
+    """Типы уведомлений (эмодзи, название, ключ)."""
+    __tablename__ = "notification_types"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    emoji: Mapped[str] = mapped_column(String(16), nullable=False, default="📝")
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class CycleSettings(Base):
+    """Настройки цикла опроса бота (интервалы, таймауты)."""
+    __tablename__ = "cycle_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Heartbeat бота (мониторинг живучести)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class BotHeartbeat(Base):
+    __tablename__ = "bot_heartbeat"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Уникальная запись для одного инстанса бота.
+    instance_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), unique=True, nullable=False, index=True
+    )
+    last_seen: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Matrix room binding (one-time code → binding + bot_users.room update)
 # ═══════════════════════════════════════════════════════════════════════════
 

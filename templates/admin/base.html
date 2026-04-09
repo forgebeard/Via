@@ -61,7 +61,11 @@
         {% endif %}
       </div>
       {% if _current_user %}
-      <div class="user-menu-wrap" id="user-menu-wrap">
+      <div class="topbar-right">
+        <button type="button" class="theme-toggle-btn" id="theme-toggle" aria-label="Переключить тему" title="Сменить тему (Тёмная/Светлая)">
+          <i class="fa-solid fa-circle-half-stroke" id="theme-icon"></i>
+        </button>
+        <div class="user-menu-wrap" id="user-menu-wrap">
         <div class="user-trigger" id="user-trigger" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-controls="user-dropdown">
           <div class="user-meta">
             <div class="name">{% if _current_user.role == 'admin' %}Администратор{% else %}Пользователь{% endif %}</div>
@@ -77,6 +81,7 @@
           <a href="/logout" role="menuitem"><i class="fa-solid fa-right-from-bracket"></i> Выход</a>
         </div>
       </div>
+      </div>
       {% endif %}
     </header>
 
@@ -88,6 +93,44 @@
 
 <script>
 (function () {
+  // --- Theme Toggle ---
+  var html = document.documentElement;
+  var btn = document.getElementById("theme-toggle");
+  var icon = document.getElementById("theme-icon");
+  var STORAGE_KEY = "via-admin-theme";
+
+  function applyTheme(theme) {
+    if (theme === "light") {
+      html.classList.add("theme-light");
+      if (icon) {
+        icon.className = "fa-solid fa-sun";
+      }
+    } else {
+      html.classList.remove("theme-light");
+      if (icon) {
+        icon.className = "fa-solid fa-moon";
+      }
+    }
+  }
+
+  // Load saved theme
+  var savedTheme = localStorage.getItem(STORAGE_KEY);
+  if (savedTheme) {
+    applyTheme(savedTheme);
+  }
+
+  if (btn) {
+    btn.addEventListener("click", function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var isLight = html.classList.contains("theme-light");
+      var newTheme = isLight ? "dark" : "light";
+      localStorage.setItem(STORAGE_KEY, newTheme);
+      applyTheme(newTheme);
+    });
+  }
+
+  // --- HTMX & Sidebar ---
   document.body.addEventListener('htmx:configRequest', function (event) {
     var meta = document.querySelector('meta[name="csrf-token"]');
     if (meta && meta.content) {

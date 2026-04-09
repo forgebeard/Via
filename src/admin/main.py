@@ -43,6 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import (
     AppSecret,
+    BotHeartbeat,
     BotOpsAudit,
     BotAppUser,
     BotSession,
@@ -313,10 +314,23 @@ def _matrix_bot_mxid() -> str:
     return (os.getenv("MATRIX_USER_ID") or "").strip()
 
 
+async def _matrix_bot_mxid_from_db(session: AsyncSession) -> str:
+    """Читает MXID бота из БД (для Zero-Config режима)."""
+    return await _load_secret_plain(session, "MATRIX_USER_ID")
+
+
+async def _matrix_domain_from_db(session: AsyncSession) -> str:
+    """Извлекает домен из MXID бота, сохраненного в БД."""
+    mxid = await _matrix_bot_mxid_from_db(session)
+    if ":" in mxid:
+        return mxid.split(":", 1)[1]
+    return ""
+
+
 def _matrix_domain() -> str:
-    """Извлекаем домен из MXID бота: @bot:messenger.red-soft.ru → messenger.red-soft.ru"""
-    # Пытаемся получить из env (для тестов), если нет — пустая строка (будет заполнено в роутах из БД)
-    mxid = (os.getenv("MATRIX_USER_ID") or "").strip()
+    """Извлекает домен из MXID бота: @bot:messenger.red-soft.ru → messenger.red-soft.ru.
+    (Fallback на env для обратной совместимости, но в Zero-Config читается из БД)."""
+    mxid = _matrix_bot_mxid()
     if ":" in mxid:
         return mxid.split(":", 1)[1]
     return ""
@@ -2858,8 +2872,8 @@ async def users_create(
         notify = _normalize_notify(notify_values, notify_allowed)
     else:
         notify = _parse_notify(notify_json)
-    # Конструируем полный room_id из localpart + домен бота
-    full_room = _build_room_id(room.strip())
+    # Конструируем полный room_id из localpart + домен бота (асинхронно из БД)
+    full_room = await _build_room_id_async(room.strip(), session)
     row = BotUser(
         redmine_id=redmine_id,
         display_name=display_name.strip() or None,
@@ -2993,12 +3007,30 @@ async def user_test_message(
         if not row:
             await client.close()
             return JSONResponse({"ok": False, "error": "Пользователь не найден"}, status_code=404)
-        room_id = (row.room or "").strip()
-        if room_id.startswith("@"):
-            target_mxid = target_mxid or room_id
+        
+        raw_room = (row.room or "").strip()
+        
+        # Нормализация: если в БД записан localpart или MXID, обрабатываем это
+        if raw_room.startswith("@"):
+            # Это MXID (личка)
+            if ":" not in raw_room and matrix_domain:
+                target_mxid = f"{raw_room}:{matrix_domain}"
+            else:
+                target_mxid = raw_room
             room_id = None
-        # Если MXID не указан — пробуем получить из Redmine
-        if not target_mxid and redmine_url and redmine_key and row.redmine_id:
+        elif raw_room.startswith("!"):
+            # Это полная комната
+            room_id = raw_room
+        elif raw_room:
+            # Это localpart (напр. dmitry.merenkov) -> считаем, что это личка
+            if matrix_domain:
+                target_mxid = f"@{raw_room}:{matrix_domain}"
+            else:
+                target_mxid = f"@{raw_room}"
+            room_id = None
+
+        # Если MXID все ещё не указан — пробуем получить из Redmine
+        if not target_mxid and not room_id and redmine_url and redmine_key and row.redmine_id:
             try:
                 from urllib.request import Request, urlopen
                 import json as _json3
@@ -3076,6 +3108,86 @@ async def user_test_message(
         logger.error("test_message_failed uid=%s mxid=%s error=%s\n%s", uid, target_mxid, e, _tb.format_exc())
         await client.close()
         return JSONResponse({"ok": False, "error": "Не удалось отправить сообщение. Проверьте логи админки."}, status_code=500)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Bot Heartbeat API (мониторинг живучести)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@app.post("/api/bot/heartbeat")
+async def bot_heartbeat_post(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """Бот вызывает этот endpoint раз в минуту, чтобы сообщить, что он жив."""
+    try:
+        data = await request.json()
+        instance_id_str = data.get("instance_id")
+        if not instance_id_str:
+            return JSONResponse({"ok": False, "error": "instance_id required"}, status_code=400)
+
+        import uuid
+        instance_id = uuid.UUID(instance_id_str)
+
+        # Upsert heartbeat
+        stmt = select(BotHeartbeat).where(BotHeartbeat.instance_id == instance_id)
+        result = await session.execute(stmt)
+        hb = result.scalar_one_or_none()
+
+        if hb:
+            from datetime import datetime, timezone
+            hb.last_seen = datetime.now(timezone.utc)
+        else:
+            from datetime import datetime, timezone
+            session.add(BotHeartbeat(instance_id=instance_id, last_seen=datetime.now(timezone.utc)))
+
+        await session.commit()
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        logger.error("heartbeat_post_failed: %s", e)
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.get("/api/bot/status", response_class=JSONResponse)
+async def bot_status_get(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """Возвращает статус бота для дашборда."""
+    try:
+        from datetime import datetime, timezone, timedelta
+
+        # Ищем самый свежий heartbeat
+        stmt = select(BotHeartbeat).order_by(BotHeartbeat.last_seen.desc()).limit(1)
+        result = await session.execute(stmt)
+        hb = result.scalar_one_or_none()
+
+        if not hb:
+            return {"status": "unknown", "last_seen": None, "message": "Бот ещё не отправлял heartbeat"}
+
+        now = datetime.now(timezone.utc)
+        diff = (now - hb.last_seen).total_seconds()
+
+        if diff < 120:  # Менее 2 минут
+            status = "alive"
+            message = f"Бот активен ({int(diff)} сек. назад)"
+        elif diff < 600:  # Менее 10 минут
+            status = "warning"
+            message = f"Бот может быть завис ({int(diff)} сек. назад)"
+        else:
+            status = "dead"
+            message = f"Бот не отвечает ({int(diff)} сек. назад)"
+
+        return {
+            "status": status,
+            "last_seen": hb.last_seen.isoformat(),
+            "message": message,
+            "seconds_ago": int(diff),
+        }
+    except Exception as e:
+        logger.error("bot_status_failed: %s", e)
+        return {"status": "error", "message": str(e)}
 
 
 # --- Redmine: поиск users по имени/логину ---
@@ -3174,7 +3286,7 @@ async def users_update(
     if not row:
         raise HTTPException(404)
     old_room = (row.room or "").strip()
-    new_room = _build_room_id(room.strip())
+    new_room = await _build_room_id_async(room.strip(), session)
     row.redmine_id = redmine_id
     row.display_name = display_name.strip() or None
     row.group_id = int(group_id) if str(group_id).isdigit() else None
@@ -3338,13 +3450,15 @@ def _room_localpart(room_id: str) -> str:
     return room_id
 
 
-def _build_room_id(localpart: str) -> str:
-    """Конструирует полный room_id из localpart + домен бота."""
-    domain = _matrix_domain()
+async def _build_room_id_async(localpart: str, session: AsyncSession) -> str:
+    """Конструирует полный room_id из localpart + домен бота (читая домен из БД)."""
+    domain = await _matrix_domain_from_db(session)
     if not localpart or not domain:
         return localpart
     if localpart.startswith("!"):
-        return localpart  # уже полный
+        return localpart  # уже полный ID комнаты
+    if localpart.startswith("@"):
+        return f"{localpart.split(':', 1)[0]}:{domain}" if ":" not in localpart else localpart
     return f"!{localpart}:{domain}"
 
 

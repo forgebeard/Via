@@ -1220,6 +1220,32 @@ async def main():
         f"пользователей: {len(USERS)}"
     )
 
+    # --- Heartbeat (мониторинг живучести) ---
+    import httpx
+    BOT_INSTANCE_ID = str(uuid.uuid4())
+    # Админка в Docker-сети доступна по имени сервиса 'admin'
+    ADMIN_URL = os.getenv("ADMIN_URL", "http://admin:8080")
+    HEARTBEAT_URL = f"{ADMIN_URL.rstrip('/')}/api/bot/heartbeat" if ADMIN_URL else None
+
+    async def send_heartbeat():
+        """Отправляет heartbeat на админку раз в 60 секунд."""
+        if not HEARTBEAT_URL:
+            return
+        async with httpx.AsyncClient(timeout=10) as http:
+            while True:
+                try:
+                    await http.post(
+                        HEARTBEAT_URL,
+                        json={"instance_id": BOT_INSTANCE_ID},
+                    )
+                except Exception as e:
+                    logger.debug("Heartbeat failed: %s", e)
+                await asyncio.sleep(60)
+
+    if HEARTBEAT_URL:
+        logger.info(f"📡 Heartbeat: отправка на {HEARTBEAT_URL}")
+        asyncio.create_task(send_heartbeat())
+
     # --- Основной цикл ---
     try:
         logger.info("💤 Бот работает, проверки по расписанию...")
