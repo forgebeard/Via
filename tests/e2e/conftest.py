@@ -64,7 +64,7 @@ def e2e_admin_url() -> Generator[str, None, None]:
     # Родительский pytest выставляет SQLALCHEMY_NULL_POOL для unit-тестов; uvicorn — нет.
     env.pop("SQLALCHEMY_NULL_POOL", None)
     env.setdefault("APP_MASTER_KEY", "0123456789abcdef0123456789abcdef")
-    env.setdefault("PYTHONPATH", str(PROJECT_ROOT))
+    env.setdefault("PYTHONPATH", str(PROJECT_ROOT / "src"))
     env["ADMIN_DISABLE_RATE_LIMITS"] = "1"
 
     proc = subprocess.Popen(

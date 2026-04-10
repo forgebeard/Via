@@ -32,7 +32,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Generate APP_MASTER_KEY
-        run: echo "APP_MASTER_KEY=$(python -c 'import secrets; print(secrets.token_hex(32))')" >> $GITHUB_ENV
+        run: echo "APP_MASTER_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(24))')" >> $GITHUB_ENV
       - name: Install dependencies
         run: |
           pip install -r requirements.txt -r requirements-test.txt
@@ -69,7 +69,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Generate APP_MASTER_KEY
-        run: echo "APP_MASTER_KEY=$(python -c 'import secrets; print(secrets.token_hex(32))')" >> $GITHUB_ENV
+        run: echo "APP_MASTER_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(24))')" >> $GITHUB_ENV
       - name: Install dependencies
         run: |
           pip install -r requirements.txt -r requirements-test.txt
