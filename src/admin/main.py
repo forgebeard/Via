@@ -964,52 +964,33 @@ async def _maybe_log_admin_crud(
     await _persist_admin_crud_audit(session, request_actor, entity_type, action, details)
 
 
-class _AdminExistsCache:
-    def __init__(self):
-        self.value: bool | None = None
-        self.expires_ts: float = 0.0
-
-    def get(self) -> bool | None:
-        if self.value is None:
-            return None
-        if datetime.now().timestamp() >= self.expires_ts:
-            return None
-        return self.value
-
-    def set(self, value: bool):
-        self.value = value
-        self.expires_ts = datetime.now().timestamp() + ADMIN_EXISTS_CACHE_TTL_SECONDS
-
-    def invalidate(self):
-        self.value = None
-        self.expires_ts = 0.0
-
-
-_admin_exists_cache = _AdminExistsCache()
-
-
-class _IntegrationStatusCache:
-    def __init__(self):
-        self.value: dict | None = None
-        self.expires_ts: float = 0.0
-
-    def get(self) -> dict | None:
-        if self.value is None:
-            return None
-        if datetime.now().timestamp() >= self.expires_ts:
-            return None
-        return self.value
-
-    def set(self, value: dict):
-        self.value = value
-        self.expires_ts = datetime.now().timestamp() + INTEGRATION_STATUS_CACHE_TTL_SECONDS
-
-    def invalidate(self):
-        self.value = None
-        self.expires_ts = 0.0
-
-
-_integration_status_cache = _IntegrationStatusCache()
+# Кэши и хелперы теперь в helpers.py — импортируем чтобы не было дубликатов
+from admin.helpers import (
+    _admin_exists_cache,
+    _integration_status_cache,
+    _has_admin,
+    _ensure_csrf,
+    _verify_csrf,
+    _normalize_login,
+    _login_format_ok,
+    _login_allowed,
+    _generic_login_error,
+    _client_ip,
+    _rate_limiter,
+    _now_utc,
+    _append_ops_to_events_log,
+    _append_audit_file_line,
+    _mask_secret,
+    _parse_catalog_payload,
+    CSRF_COOKIE_NAME,
+    SESSION_COOKIE_NAME,
+    SESSION_TTL_SECONDS,
+    COOKIE_SECURE,
+    AUTH_TOKEN_SALT,
+    SETUP_PATH,
+    DASHBOARD_PATH,
+    templates,
+)
 
 
 class _RedmineSearchBreaker:
@@ -1046,22 +1027,9 @@ def _runtime_status_from_file() -> dict:
         return {}
 
 
-async def _has_admin(session: AsyncSession, use_cache: bool = True) -> bool:
-    if use_cache:
-        cached = _admin_exists_cache.get()
-        if cached is not None:
-            return cached
-    any_admin = await session.execute(
-        select(BotAppUser.id).where(BotAppUser.role == "admin").limit(1)
-    )
-    value = any_admin.scalar_one_or_none() is not None
-    _admin_exists_cache.set(value)
-    return value
-
-
 async def _integration_status(session: AsyncSession, use_cache: bool = True) -> dict:
     if use_cache:
-        cached = _integration_status_cache.get()
+        cached = _integration_status_cache.get("flag")
         if cached is not None:
             return cached
     rows = await session.execute(select(AppSecret.name).where(AppSecret.name.in_(REQUIRED_SECRET_NAMES)))
@@ -1070,8 +1038,8 @@ async def _integration_status(session: AsyncSession, use_cache: bool = True) -> 
     status = {
         "configured": len(missing) == 0,
         "missing": missing,
-            }
-    _integration_status_cache.set(status)
+    }
+    _integration_status_cache["flag"] = status
     return status
 
 
