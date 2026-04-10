@@ -66,6 +66,7 @@ def e2e_admin_url() -> Generator[str, None, None]:
     env.pop("SQLALCHEMY_NULL_POOL", None)
     env.setdefault("APP_MASTER_KEY", "0123456789abcdef0123456789abcdef")
     env.setdefault("PYTHONPATH", str(PROJECT_ROOT))
+    env["ADMIN_DISABLE_RATE_LIMITS"] = "1"
 
     proc = subprocess.Popen(
         [

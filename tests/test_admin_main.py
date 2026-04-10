@@ -17,6 +17,8 @@ from sqlalchemy import select
 os.environ.setdefault("APP_MASTER_KEY", "0123456789abcdef0123456789abcdef")
 # Тесты /setup и /login не должны зависеть от локального ADMIN_LOGINS в окружении разработчика.
 os.environ.pop("ADMIN_LOGINS", None)
+# Отключаем rate limiter до импорта admin_main (иначе _rate_limiter инициализируется до тестов)
+os.environ["ADMIN_DISABLE_RATE_LIMITS"] = "1"
 
 import src.admin.main as admin_main  # noqa: E402
 
