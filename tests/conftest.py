@@ -129,7 +129,7 @@ def mock_matrix_client() -> AsyncMock:
 def _no_admin_rate_limits_for_http_tests(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     """Отключает rate limiter для интеграционных тестов."""
     try:
-        import src.admin.main as admin_main_module
+        import admin.helpers as admin_helpers
     except ImportError:
         yield
         return
@@ -139,5 +139,5 @@ def _no_admin_rate_limits_for_http_tests(monkeypatch: pytest.MonkeyPatch) -> Gen
         def hit(key: str, limit: int, window_seconds: int) -> bool:
             return True
 
-    monkeypatch.setattr(admin_main_module, "_rate_limiter", _NoopRateLimiter())
+    monkeypatch.setattr(admin_helpers, "_rate_limiter", _NoopRateLimiter())
     yield

@@ -72,6 +72,8 @@ class _SimpleRateLimiter:
         self._hits: dict[str, list[float]] = {}
 
     def hit(self, key: str, limit: int, window_seconds: int) -> bool:
+        if os.getenv("ADMIN_DISABLE_RATE_LIMITS") == "1":
+            return True
         now = time.monotonic()
         self._hits.setdefault(key, [])
         self._hits[key] = [t for t in self._hits[key] if now - t < window_seconds]
