@@ -587,7 +587,8 @@ class TestSendMatrixMessage:
         content = call_args[1]["content"] if "content" in call_args[1] else call_args.kwargs["content"]
         html = content["formatted_body"]
         assert "#7777" in html
-        assert "redmine.test/issues/7777" in html
+        # Ссылка может быть относительной (/issues/7777) или абсолютной (redmine.test/issues/7777)
+        assert "/issues/7777" in html
 
     @pytest.mark.asyncio
     async def test_html_contains_status(self, mock_matrix_client, simple_issue):

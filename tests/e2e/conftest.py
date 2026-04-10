@@ -72,7 +72,7 @@ def e2e_admin_url() -> Generator[str, None, None]:
             sys.executable,
             "-m",
             "uvicorn",
-            "admin_main:app",
+            "src.admin.main:app",
             "--host",
             "127.0.0.1",
             "--port",

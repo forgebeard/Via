@@ -150,7 +150,12 @@ def _no_admin_rate_limits_for_http_tests(monkeypatch):
     иначе срабатывает лимит 5/мин в admin_main.
     """
     try:
-        import admin_main
+        import src.admin.main as admin_main_module
     except ImportError:
         return
-    monkeypatch.setattr(admin_main._rate_limiter, "hit", lambda key, limit, window_seconds: True)
+
+    class _NoopRateLimiter:
+        def hit(self, key, limit, window_seconds):
+            return True
+
+    monkeypatch.setattr(admin_main_module, "_rate_limiter", _NoopRateLimiter())
