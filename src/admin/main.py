@@ -87,26 +87,9 @@ from events_log_display import (
 from ops.docker_control import DockerControlError, control_service, get_service_status
 from ui_datetime import bot_display_timezone, format_datetime_ui
 
-_templates_dir = str(_ROOT / "templates" / "admin")
-# В некоторых наборах версий Jinja2/Starlette кэш шаблонов может приводить к TypeError
-# (unhashable type: 'dict'). Отключаем кэш, чтобы /login работал стабильно.
-_jinja_env = Environment(
-    loader=FileSystemLoader(_templates_dir),
-    autoescape=True,
-    cache_size=0,
-)
-_jinja_env.filters["dt_ui"] = format_datetime_ui
-
-
-def _admin_asset_version() -> str:
-    """Query string для cache-bust ссылок на `/static/...` (см. `ADMIN_ASSET_VERSION`)."""
-    v = (os.getenv("ADMIN_ASSET_VERSION") or "").strip()
-    return v if v else "6"
-
-
-_jinja_env.globals["asset_version"] = _admin_asset_version
-_jinja_env.globals["bot_timezone"] = lambda: (os.getenv("BOT_TIMEZONE") or "Europe/Moscow")
-templates = Jinja2Templates(env=_jinja_env)
+# Jinja2 окружение и шаблоны теперь в helpers.py — импортируем чтобы не было дубликатов
+# и чтобы фильтры (dt_ui) работали во всех роутах.
+from admin.helpers import _jinja_env, templates
 
 
 @asynccontextmanager
@@ -367,14 +350,6 @@ def _admin_allowlist() -> frozenset[str]:
 
 def _normalize_login(raw: str) -> str:
     return (raw or "").strip().lower()
-
-
-def _login_format_ok(login: str) -> tuple[bool, str | None]:
-    if not login:
-        return False, "Введите логин"
-    if not _LOGIN_RE.fullmatch(login):
-        return False, "Логин: 3–255 символов, латиница, цифры и символы . _ + - @"
-    return True, None
 
 
 def _login_allowed(login: str) -> bool:
@@ -3193,8 +3168,8 @@ def _load_filtered_event_lines(date_from_s: str, date_to_s: str, time_at_s: str)
     else:
         filtered = filter_parsed_lines_by_local_date(parsed, df, d_to, tz)
     time_filter = _normalize_time_filter(time_at_s)
-    if time_filter:
-        filtered = [row for row in filtered if str(getattr(row, "time_ui", "")).startswith(time_filter)]
+    if time_filter and filtered:
+        filtered = [row for row in filtered if str(getattr(row, "time_ui", "") or "").startswith(time_filter)]
     return filtered, truncated, path
 
 

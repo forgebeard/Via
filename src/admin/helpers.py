@@ -56,6 +56,9 @@ def _format_datetime_ui(dt) -> str:
 
 _jinja_env.filters["dt_ui"] = _format_datetime_ui
 
+# Экспортируем env для использования в main.py (для partials)
+__all__ = ["_jinja_env", "templates"]
+
 # ── Config constants ────────────────────────────────────────────────────────
 
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE", "admin_session")
@@ -136,10 +139,10 @@ def _normalize_login(raw: str) -> str:
 def _login_format_ok(login: str) -> tuple[bool, str | None]:
     if not login:
         return False, "Логин обязателен"
-    if len(login) < 3:
-        return False, "Логин должен содержать минимум 3 символа"
-    if len(login) > 64:
-        return False, "Логин не должен превышать 64 символа"
+    if len(login) < 3 or len(login) > 255:
+        return False, "Логин: 3–255 символов, латиница, цифры и символы . _ + - @"
+    if not re.match(r"^[a-zA-Z0-9._+\-@]+$", login):
+        return False, "Логин: 3–255 символов, латиница, цифры и символы . _ + - @"
     return True, None
 
 # ── CSRF helpers ─────────────────────────────────────────────────────────────
