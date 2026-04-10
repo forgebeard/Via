@@ -37,6 +37,25 @@ def _admin_asset_version() -> str:
 _jinja_env.globals["asset_version"] = _admin_asset_version
 _jinja_env.globals["bot_timezone"] = lambda: (os.getenv("BOT_TIMEZONE") or "Europe/Moscow")
 
+
+def _format_datetime_ui(dt) -> str:
+    """Форматирует datetime для UI."""
+    if dt is None:
+        return "—"
+    if isinstance(dt, str):
+        try:
+            from datetime import datetime as _dt
+            dt = _dt.fromisoformat(dt)
+        except ValueError:
+            return str(dt)
+    if dt.tzinfo is None:
+        from datetime import timezone
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.strftime("%d.%m.%Y %H:%M")
+
+
+_jinja_env.filters["dt_ui"] = _format_datetime_ui
+
 # ── Config constants ────────────────────────────────────────────────────────
 
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE", "admin_session")

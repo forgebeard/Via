@@ -111,9 +111,17 @@ def test_ops_flash_includes_docker_detail():
 
 
 def test_append_ops_to_events_log(tmp_path, monkeypatch):
-    monkeypatch.setattr(admin_main, "_admin_events_log_path", lambda: tmp_path / "ev.log")
+    log_path = tmp_path / "ev.log"
+    monkeypatch.setenv("ADMIN_EVENTS_LOG_PATH", str(log_path))
+    # Перезагрузим helpers чтобы подхватил новый env
+    import importlib
+    import admin.helpers
+    importlib.reload(admin.helpers)
+    import admin_main
+    importlib.reload(admin_main)
+    
     admin_main._append_ops_to_events_log("Docker bot/stop ok")
-    text = (tmp_path / "ev.log").read_text(encoding="utf-8")
+    text = log_path.read_text(encoding="utf-8")
     assert "[ADMIN]" in text
     assert "Docker bot/stop ok" in text
     first = text.strip().splitlines()[0]
