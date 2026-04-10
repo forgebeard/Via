@@ -1,37 +1,17 @@
 #!/usr/bin/env python3
 """
 Redmine → Matrix бот уведомлений.
-
-Мониторит задачи нескольких пользователей в Redmine и шлёт уведомления
-в Matrix-комнаты по настраиваемым правилам роутинга.
-
-Типы уведомлений:
-  - new            — новая задача (статус «Новая»)
-  - info           — статус «Информация предоставлена»
-  - reminder       — напоминание по «Информация предоставлена» (каждый час)
-  - status_change  — смена статуса задачи
-  - issue_updated  — комментарий или изменение полей в задаче
-  - reopened       — задача открыта повторно
-  - overdue        — просроченная задача (ежедневно)
-
-Роутинг в доп. комнаты:
-  - Версионные комнаты: по подстроке в названии версии
-  - Статусные комнаты:  по точному совпадению статуса
-  - Командная комната:  новые задачи определённого проекта
-
-Конфигурация — через Postgres (админка заполняет `bot_users` и маппинги роутинга).
 """
 
 import asyncio
 import errno
 import json
-import re
 import logging
 import logging.handlers
 import os
 import sys
 import uuid
-import time  # FIX-4: метрика времени цикла
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -39,17 +19,69 @@ from zoneinfo import ZoneInfo
 _SRC_DIR = Path(__file__).resolve().parents[2] / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
+
 from utils import safe_html
-from matrix_send import room_send_with_retry, MAX_RETRIES
+from matrix_send import room_send_with_retry
 from config import (
     LOG_FILE,
-    env_placeholder_hints,
     log_file_backup_count,
     log_file_max_bytes,
     want_log_file,
 )
 from preferences import can_notify
 from redminelib.exceptions import AuthError, BaseRedmineError, ForbiddenError
+from bot.logic import (
+    STATUS_NEW,
+    STATUS_INFO_PROVIDED,
+    STATUS_REOPENED,
+    STATUS_RV,
+    STATUSES_TRANSFERRED,
+    NOTIFICATION_TYPES,
+    plural_days,
+    ensure_tz as _ensure_tz_raw,
+    get_version_name,
+    should_notify,
+    _issue_priority_name,
+    validate_users,
+    get_extra_rooms_for_new as _get_extra_rooms_for_new_raw,
+    get_extra_rooms_for_rv as _get_extra_rooms_for_rv_raw,
+    _group_member_rooms as _group_member_rooms_raw,
+    _group_room,
+    _cfg_for_room,
+    detect_status_change,
+    detect_new_journals,
+    describe_journal,
+    resolve_field_value,
+)
+
+# Re-export для тестов (чистые функции из logic.py)
+__all__ = [
+    "STATUS_NEW", "STATUS_INFO_PROVIDED", "STATUS_REOPENED", "STATUS_RV",
+    "STATUSES_TRANSFERRED", "NOTIFICATION_TYPES",
+    "plural_days", "get_version_name", "should_notify", "validate_users",
+    "detect_status_change", "detect_new_journals", "describe_journal",
+    "resolve_field_value", "_issue_priority_name", "_group_room", "_cfg_for_room",
+]
+
+
+def ensure_tz(dt: datetime) -> datetime:
+    """Wrapper: гарантирует наличие таймзоны бота."""
+    return _ensure_tz_raw(dt, BOT_TZ)
+
+
+def get_extra_rooms_for_new(issue, user_cfg: dict) -> set[str]:
+    """Wrapper для тестов — передаёт глобальные карты."""
+    return _get_extra_rooms_for_new_raw(issue, user_cfg, VERSION_ROOM_MAP, USERS)
+
+
+def get_extra_rooms_for_rv(issue, user_cfg: dict) -> set[str]:
+    """Wrapper для тестов — передаёт глобальные карты."""
+    return _get_extra_rooms_for_rv_raw(issue, user_cfg, STATUS_ROOM_MAP, VERSION_ROOM_MAP, USERS)
+
+
+def _group_member_rooms(user_cfg: dict) -> set[str]:
+    """Wrapper для тестов — передаёт USERS."""
+    return _group_member_rooms_raw(user_cfg, USERS)
 
 from dotenv import load_dotenv
 from redminelib import Redmine
@@ -134,22 +166,6 @@ GROUP_REPEAT_SECONDS = int(os.getenv("GROUP_REPEAT_SECONDS", "1800").strip() or 
 # Кэш master key для расшифровки персональных ключей Redmine
 _BOT_MASTER_KEY: bytes | None = None
 
-# --- Статусы Redmine ---
-STATUS_NEW           = "Новая"
-STATUS_INFO_PROVIDED = "Информация предоставлена"
-STATUS_REOPENED      = "Открыто повторно"
-STATUS_RV            = "Передано в работу.РВ"
-
-# Статусы «Передано в работу.*» — задачи с этими статусами НЕ дублируются
-# в комнату РЕД ОС (только в специализированные комнаты)
-STATUSES_TRANSFERRED = {
-    "Передано в работу.РВ",
-    "Передано в работу.РА.Стд",
-    "Передано в работу.РА.Пром",
-    "Передано в работу.РБД",
-    "Передано в работу.ВРМ",
-}
-
 # Имена секретов, загружаемых из app_secrets
 _SECRET_NAMES = [
     "REDMINE_URL",
@@ -201,18 +217,8 @@ _ch.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
 logger.addHandler(_ch)
 
 # ═══════════════════════════════════════════════════════════════════════════
-# УТИЛИТЫ
+# УТИЛИТЫ (остались здесь т.к. зависят от BOT_TZ / logger)
 # ═══════════════════════════════════════════════════════════════════════════
-
-
-def plural_days(n):
-    """Склонение слова 'день': 1 день, 2 дня, 5 дней."""
-    n = abs(n)
-    if n % 10 == 1 and n % 100 != 11:
-        return f"{n} день"
-    elif n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
-        return f"{n} дня"
-    return f"{n} дней"
 
 
 def now_tz():
@@ -220,44 +226,13 @@ def now_tz():
     return datetime.now(tz=BOT_TZ)
 
 
-def ensure_tz(dt: datetime) -> datetime:
-    """Гарантирует наличие таймзоны у datetime."""
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=BOT_TZ)
-    return dt
-
-
 def today_tz():
     """Сегодняшняя дата в таймзоне бота."""
     return now_tz().date()
 
 
-def get_version_name(issue):
-    """Получает название версии задачи (или None)."""
-    try:
-        return issue.fixed_version.name
-    except Exception:
-        return None
-
-
-def should_notify(user_cfg, notification_type):
-    """
-    Проверяет, подписан ли пользователь на данный тип уведомлений.
-    "all" — подписан на всё.
-    """
-    notify_list = user_cfg.get("notify", ["all"])
-    return "all" in notify_list or notification_type in notify_list
-
-
-def _issue_priority_name(issue):
-    try:
-        return issue.priority.name
-    except Exception:
-        return ""
-
-
 def _log_redmine_list_error(uid: int, err: Exception, where: str) -> None:
-    """Логирует сбой Redmine при issue.filter и т.п.; неожиданные — с traceback."""
+    """Логирует сбой Redmine при issue.filter и т.п."""
     if isinstance(err, (AuthError, ForbiddenError)):
         logger.error("❌ Redmine доступ (%s, user %s): %s", where, uid, err)
     elif isinstance(err, BaseRedmineError):
@@ -266,140 +241,9 @@ def _log_redmine_list_error(uid: int, err: Exception, where: str) -> None:
         logger.error("❌ Redmine (%s, user %s): %s", where, uid, err, exc_info=True)
 
 
-# FIX-4: валидация конфигурации пользователей
-def validate_users(users):
-    """
-    Проверяет, что у каждого пользователя есть обязательные поля.
-    Возвращает (ok: bool, errors: list[str]).
-    """
-    errors = []
-    required_fields = ("redmine_id", "room")
-    for i, u in enumerate(users):
-        for field in required_fields:
-            if field not in u:
-                errors.append(f"USERS[{i}]: отсутствует обязательное поле '{field}'")
-        # redmine_id должен быть числом
-        if "redmine_id" in u and not isinstance(u["redmine_id"], int):
-            errors.append(f"USERS[{i}]: 'redmine_id' должен быть int, получено {type(u['redmine_id']).__name__}")
-        # room должна быть непустой строкой
-        if "room" in u and (not isinstance(u["room"], str) or not u["room"].strip()):
-            errors.append(f"USERS[{i}]: 'room' должен быть непустой строкой")
-        # notify — если указан, должен быть списком
-        if "notify" in u and not isinstance(u["notify"], list):
-            errors.append(f"USERS[{i}]: 'notify' должен быть списком, получено {type(u['notify']).__name__}")
-    return len(errors) == 0, errors
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# РОУТИНГ: какие доп. комнаты получают уведомление
-# ═══════════════════════════════════════════════════════════════════════════
-
-# Совместимость с прежней глобальной картой: задача без версии → комната ключа «РЕД ОС», если задан.
-_LEGACY_VERSION_FALLBACK_KEY = "РЕД ОС"
-
-
-def _extra_rooms_for_issue_version(issue, user_cfg: dict) -> set[str]:
-    """
-    Доп. комнаты по названию версии задачи в Redmine.
-    Совпадение: подстрока version_key (без учёта регистра) входит в имя версии.
-    Учитываются маршруты пользователя/группы (version_routes) и глобальная VERSION_ROOM_MAP.
-    """
-    rooms: set[str] = set()
-    version_name = get_version_name(issue) or ""
-    if not version_name.strip():
-        r = (VERSION_ROOM_MAP.get(_LEGACY_VERSION_FALLBACK_KEY) or "").strip()
-        return {r} if r else set()
-    vn = version_name.lower()
-    for spec in user_cfg.get("version_routes") or []:
-        key = (spec.get("key") or "").strip()
-        rid = (spec.get("room") or "").strip()
-        if key and rid and key.lower() in vn:
-            rooms.add(rid)
-    for key, room in (VERSION_ROOM_MAP or {}).items():
-        r = (room or "").strip()
-        if not r:
-            continue
-        k = (key or "").strip()
-        if k and k.lower() in vn:
-            rooms.add(r)
-    return rooms
-
-
-def get_extra_rooms_for_new(issue, user_cfg: dict) -> set[str]:
-    """Доп. комнаты для НОВОЙ задачи (статус «Новая») — по версии и глобальным маршрутам."""
-    return _extra_rooms_for_issue_version(issue, user_cfg)
-
-
-def get_extra_rooms_for_rv(issue, user_cfg: dict) -> set[str]:
-    """Доп. комнаты для статуса «Передано в работу.РВ»: комната РВ из STATUS_ROOM_MAP + по версии."""
-    rooms: set[str] = set()
-    rv_room = STATUS_ROOM_MAP.get(STATUS_RV)
-    if rv_room:
-        rooms.add(rv_room)
-    rooms |= _extra_rooms_for_issue_version(issue, user_cfg)
-    return rooms
-
-
-def _group_member_rooms(user_cfg: dict) -> set[str]:
-    """Личные комнаты участников той же группы."""
-    gid = user_cfg.get("group_id")
-    if gid is None:
-        return set()
-    out: set[str] = set()
-    for u in USERS:
-        if u.get("group_id") != gid:
-            continue
-        r = (u.get("room") or "").strip()
-        if r:
-            out.add(r)
-    return out
-
-
-def _group_room(user_cfg: dict) -> str:
-    return (user_cfg.get("group_room") or "").strip()
-
-
-def _cfg_for_room(user_cfg: dict, room_id: str) -> dict:
-    """
-    Для Matrix-комнаты группы применяются типы уведомлений и расписание группы
-    (из group_delivery), а не личные настройки пользователя.
-    """
-    target = (room_id or "").strip()
-    gr = _group_room(user_cfg)
-    if not target or not gr or target != gr:
-        return user_cfg
-    gd = user_cfg.get("group_delivery")
-    if not isinstance(gd, dict):
-        return user_cfg
-    merged = dict(user_cfg)
-    merged["notify"] = gd.get("notify") if isinstance(gd.get("notify"), list) else ["all"]
-    wh = gd.get("work_hours")
-    if wh:
-        merged["work_hours"] = wh
-    else:
-        merged.pop("work_hours", None)
-    wd = gd.get("work_days")
-    if wd is not None:
-        merged["work_days"] = wd
-    else:
-        merged.pop("work_days", None)
-    merged["dnd"] = bool(gd.get("dnd"))
-    return merged
-
-
 # ═══════════════════════════════════════════════════════════════════════════
 # MATRIX: ОТПРАВКА СООБЩЕНИЙ
 # ═══════════════════════════════════════════════════════════════════════════
-
-NOTIFICATION_TYPES = {
-    "new":           ("🆕", "Новая задача"),
-    "info":          ("✅", "Информация предоставлена"),
-    "reminder":      ("⏰", "Напоминание"),
-    "overdue":       ("⚠️", "Просроченная задача"),
-    "status_change": ("🔄", "Смена статуса"),
-    "issue_updated": ("📝", "Задача обновлена"),
-    "reopened":      ("🔁", "Открыто повторно"),
-}
 
 
 async def send_matrix_message(client, issue, room_id, notification_type="info", extra_text=""):
@@ -484,162 +328,6 @@ async def send_safe(client, issue, user_cfg, room_id, notification_type, extra_t
         await send_matrix_message(client, issue, room_id, notification_type, extra_text)
     except Exception as e:
         logger.error(f"❌ Ошибка отправки #{issue.id} → {room_id[:20]}: {e}")
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# ДЕТЕКТОРЫ ИЗМЕНЕНИЙ
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-def detect_status_change(issue, sent):
-    """
-    Сравнивает текущий статус задачи с сохранённым.
-    Возвращает старый статус если изменился, иначе None.
-    """
-    issue_id = str(issue.id)
-    if issue_id not in sent:
-        return None
-    old_status = sent[issue_id].get("status")
-    if old_status and old_status != issue.status.name:
-        return old_status
-    return None
-
-
-def detect_new_journals(issue, journals_state):
-    """
-    Находит новые записи в журнале задачи (комментарии, изменения полей).
-    Returns: (new_journals, max_journal_id)
-    """
-    issue_id = str(issue.id)
-    last_known_id = journals_state.get(issue_id, {}).get("last_journal_id", 0)
-
-    try:
-        all_journals = list(issue.journals)
-    except Exception:
-        return [], 0
-
-    if not all_journals:
-        return [], 0
-
-    max_id = max(j.id for j in all_journals)
-    new_journals = [j for j in all_journals if j.id > last_known_id]
-    return new_journals, max_id
-
-
-# Имена статусов по ID
-STATUS_NAMES = {
-    "1": "Новая",
-    "2": "В работе",
-    "5": "Завершена",
-    "6": "Отклонена",
-    "8": "Ожидание",
-    "12": "Запрос информации",
-    "13": "Информация предоставлена",
-    "17": "Ожидается решение",
-    "18": "Открыто повторно",
-    "22": "Передано в работу.РВ",
-    "23": "Передано в работу.РБД",
-    "25": "Передано в работу.РА.Стд",
-    "26": "Передано в работу.РА.Пром",
-    "27": "Проектирование",
-    "28": "Передано в работу.ВРМ",
-    "29": "Приостановлено",
-    "30": "Передано на L2",
-    "31": "Эскалация",
-    "32": "Решен",
-    "33": "Возвращен (L1)",
-}
-
-# Имена приоритетов по ID
-PRIORITY_NAMES = {
-    "1": "4 (Низкий)",
-    "2": "3 (Нормальный)",
-    "3": "2 (Высокий)",
-    "4": "1 (Аварийный)",
-}
-
-# Поля, для которых значения — ID из справочников
-ID_FIELD_RESOLVERS = {
-    "status_id": STATUS_NAMES,
-    "priority_id": PRIORITY_NAMES,
-}
-
-# Маппинг технических имён полей → человекочитаемые
-# FIX-4: теперь реально используется в describe_journal
-FIELD_NAMES = {
-    "status_id": "Статус",
-    "assigned_to_id": "Назначена",
-    "priority_id": "Приоритет",
-    "done_ratio": "Готовность",
-    "due_date": "Срок",
-    "subject": "Тема",
-    "description": None,  # Слишком длинное — пропускаем
-    "tracker_id": "Трекер",
-    "fixed_version_id": "Версия",
-    "project_id": "Проект",
-    "category_id": "Категория",
-    "parent_id": "Родительская",
-    "start_date": "Дата начала",
-    "estimated_hours": "Оценка часов",
-}
-
-# Поля, которые всегда скрываем (кастомные поля вида "42")
-HIDDEN_FIELDS_PATTERN = re.compile(r"^\d+$")
-
-
-def resolve_field_value(field_name, value):
-    """
-    Переводит ID в человекочитаемое имя для известных полей.
-    Например: status_id "13" → "Информация предоставлена".
-    """
-    if value is None or value == "":
-        return "—"
-    resolver = ID_FIELD_RESOLVERS.get(field_name)
-    if resolver:
-        return resolver.get(str(value), str(value))
-    return str(value)
-
-
-def describe_journal(journal, skip_status=False):
-    """
-    Описывает одну запись журнала в человекочитаемом виде.
-    FIX-4: теперь показывает ВСЕ значимые поля (приоритет, назначение и т.д.),
-    а не только status_id.
-    """
-    parts = []
-
-    # Комментарий
-    if journal.notes:
-        try:
-            parts.append(f"💬 Комментарий от {journal.user.name}")
-        except Exception:
-            parts.append("💬 Новый комментарий")
-
-    # Изменения полей
-    try:
-        for detail in journal.details:
-            prop = detail.get("name", detail.get("property", "?"))
-
-            # Скрываем числовые кастомные поля (id вида "42")
-            if HIDDEN_FIELDS_PATTERN.match(prop):
-                continue
-
-            # Пропуск статуса если уже отправлен в блоке status_change
-            if prop == "status_id" and skip_status:
-                continue
-
-            # Получаем человекочитаемое название поля
-            field_label = FIELD_NAMES.get(prop)
-            if field_label is None:
-                continue  # Неизвестное поле или description — пропускаем
-
-            old_val = resolve_field_value(prop, detail.get("old_value"))
-            new_val = resolve_field_value(prop, detail.get("new_value"))
-            parts.append(f"{field_label}: {old_val} → {new_val}")
-    except Exception:
-        pass
-
-    return "; ".join(parts) if parts else None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
