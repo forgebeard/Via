@@ -25,6 +25,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://bot:postgres@localhost:5432/via
       APP_MASTER_KEY: 0123456789abcdef0123456789abcdef
+      ADMIN_DISABLE_RATE_LIMITS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

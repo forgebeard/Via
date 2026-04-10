@@ -125,19 +125,6 @@ def mock_matrix_client() -> AsyncMock:
     return client
 
 
-@pytest.fixture(autouse=True)
-def _no_admin_rate_limits_for_http_tests(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
-    """Отключает rate limiter для интеграционных тестов."""
-    try:
-        import admin.helpers as admin_helpers
-    except ImportError:
-        yield
-        return
-
-    class _NoopRateLimiter:
-        @staticmethod
-        def hit(key: str, limit: int, window_seconds: int) -> bool:
-            return True
-
-    monkeypatch.setattr(admin_helpers, "_rate_limiter", _NoopRateLimiter())
-    yield
+# Rate limiter теперь отключается через ADMIN_DISABLE_RATE_LIMITS=1 в CI env.
+# Фикстура _no_admin_rate_limits_for_http_tests удалена — она не срабатывала
+# т.к. _rate_limiter инициализируется до начала работы фикстур.
