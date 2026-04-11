@@ -217,7 +217,12 @@ async def onboarding_page(request: Request, session: AsyncSession = Depends(get_
     csrf_token, _ = admin._ensure_csrf(request)
     error = request.query_params.get("error", "")
     db_config = _load_db_config_from_env()
-    tz_options = admin._top_timezone_options()
+
+    # Таймзоны
+    tz_all = admin._standard_timezone_options()
+    tz_labels = admin._timezone_labels(tz_all)
+    # Текущая таймзона сервиса (из секретов)
+    current_tz = secrets_raw.get("SERVICE_TIMEZONE", "") or os.getenv("BOT_TIMEZONE", "Europe/Moscow")
 
     return admin.templates.TemplateResponse(
         request,
@@ -230,7 +235,9 @@ async def onboarding_page(request: Request, session: AsyncSession = Depends(get_
             "csrf_token": csrf_token,
             "error": error,
             "db_config": db_config,
-            "timezone_top_options": tz_options,
+            "timezone_all_options": tz_all,
+            "timezone_labels": tz_labels,
+            "service_timezone": current_tz,
         },
     )
 
