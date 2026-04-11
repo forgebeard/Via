@@ -9,92 +9,72 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
-from contextlib import asynccontextmanager
-from html import escape as html_escape
 import logging
 import os
 import re
-import sys
 import secrets
+import sys
 import threading
 import time
 import unicodedata
 import uuid
 from collections import defaultdict, deque
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
-from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode
+from typing import TYPE_CHECKING, Annotated
 from zoneinfo import ZoneInfo, available_timezones
-from jinja2 import Environment, FileSystemLoader
+
+if TYPE_CHECKING:
+    from nio import AsyncClient
 
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT / "src"))
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from sqlalchemy import delete, func, or_, select, update
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import Depends, FastAPI, Form, HTTPException, Request  # noqa: E402, I001
+from fastapi.responses import JSONResponse, RedirectResponse  # noqa: E402
+from sqlalchemy import func, or_, select  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
+from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
+from starlette.staticfiles import StaticFiles  # noqa: E402
 
-from database.models import (
-    AppSecret,
-    BotHeartbeat,
-    BotOpsAudit,
-    BotAppUser,
-    BotSession,
-    BotUser,
-    GroupVersionRoute,
-    PasswordResetToken,
-    StatusRoomRoute,
-    SupportGroup,
-    UserVersionRoute,
-    VersionRoomRoute,
-)
-from database.session import get_session, get_session_factory
-from mail import mask_identifier
-from security import (
-    SecurityError,
-    decrypt_secret,
-    encrypt_secret,
-    hash_password,
-    load_master_key,
-    make_reset_token,
-    token_hash,
-    validate_password_policy,
-    verify_password,
-)
-
-from admin.crud_events_log import (
+from admin.crud_events_log import (  # noqa: E402
     actor_label_for_crud_log,
     format_crud_line,
     sanitize_audit_details,
     want_admin_audit_crud_db,
     want_admin_events_log_crud,
 )
-from dash_service_display import service_card_context
-from events_log_display import (
-    admin_events_log_timestamp_now,
-    events_log_to_csv_bytes,
-    filter_parsed_lines_by_local_date,
-    parse_events_log_for_table,
-    parse_ui_date_param,
-)
-from ops.docker_control import DockerControlError, control_service, get_service_status
-from ui_datetime import bot_display_timezone, format_datetime_ui
 
 # Jinja2 окружение и шаблоны теперь в helpers.py — импортируем чтобы не было дубликатов
 # и чтобы фильтры (dt_ui) работали во всех роутах.
-from admin.helpers import _jinja_env, templates
+from admin.helpers import _jinja_env  # noqa: E402
+from database.models import (  # noqa: E402
+    AppSecret,
+    BotAppUser,
+    BotOpsAudit,
+    BotSession,
+    BotUser,
+    SupportGroup,
+)
+from database.session import get_session, get_session_factory  # noqa: E402
+from events_log_display import (  # noqa: E402
+    admin_events_log_timestamp_now,
+)
+from mail import mask_identifier  # noqa: E402
+from ops.docker_control import control_service  # noqa: E402
+from security import (  # noqa: E402
+    SecurityError,
+    decrypt_secret,
+    encrypt_secret,
+    load_master_key,
+)
 
 
 @asynccontextmanager
 async def _app_lifespan(_app: FastAPI):
+    logger.info("🚀 Admin panel starting up...")
     # Fail-fast: without master key we cannot safely work with encrypted secrets.
     try:
         load_master_key()
@@ -108,7 +88,9 @@ async def _app_lifespan(_app: FastAPI):
         os.environ["BOT_TIMEZONE"] = _normalize_service_timezone_name(tz_saved)
     except Exception:
         logger.warning("service_timezone_load_failed", exc_info=True)
+    logger.info("✅ Admin panel ready")
     yield
+    logger.info("👋 Admin panel shutting down")
 
 
 app = FastAPI(title="Matrix bot control panel", version="0.1.0", lifespan=_app_lifespan)
@@ -153,6 +135,7 @@ async def _csp_middleware(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     return response
 
+
 SESSION_COOKIE_NAME = os.getenv("ADMIN_SESSION_COOKIE", "admin_session")
 CSRF_COOKIE_NAME = os.getenv("ADMIN_CSRF_COOKIE", "admin_csrf")
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0").strip().lower() in ("1", "true", "yes", "on")
@@ -191,7 +174,11 @@ def _standard_timezone_options() -> list[str]:
         "Asia/Irkutsk",
         "Asia/Vladivostok",
     ]
-    values = sorted(tz for tz in available_timezones() if "/" in tz and not tz.startswith(("Etc/", "posix/", "right/")))
+    values = sorted(
+        tz
+        for tz in available_timezones()
+        if "/" in tz and not tz.startswith(("Etc/", "posix/", "right/"))
+    )
     ordered = [tz for tz in preferred if tz in values]
     preferred_set = set(ordered)
     ordered.extend([tz for tz in values if tz not in preferred_set])
@@ -263,6 +250,7 @@ def _timezone_labels(options: list[str]) -> dict[str, str]:
             labels[tz_name] = tz_name
     return labels
 
+
 APP_MASTER_KEY_FILE = os.getenv("APP_MASTER_KEY_FILE", "/run/secrets/app_master_key")
 SHOW_DEV_TOKENS = os.getenv("SHOW_DEV_TOKENS", "0").strip().lower() in ("1", "true", "yes", "on")
 ADMIN_EXISTS_CACHE_TTL_SECONDS = int(os.getenv("ADMIN_EXISTS_CACHE_TTL_SECONDS", "20"))
@@ -275,12 +263,14 @@ REQUIRED_SECRET_NAMES = [
     ).split(",")
     if v.strip()
 ]
-MATRIX_DEFAULT_DEVICE_ID = (os.getenv("MATRIX_DEFAULT_DEVICE_ID") or "redmine_bot").strip() or "redmine_bot"
+MATRIX_DEFAULT_DEVICE_ID = (
+    os.getenv("MATRIX_DEFAULT_DEVICE_ID") or "redmine_bot"
+).strip() or "redmine_bot"
 
 
 def _mask_secret(value: str, mask_url: bool = False) -> str:
     """Маскирует секретное значение.
-    
+
     Для URL и MXID — показываем полностью (mask_url=False по умолчанию).
     Для ключей/токенов — показываем первые 6 и последние 4 символа.
     """
@@ -326,13 +316,20 @@ async def _get_matrix_domain_from_db(session: AsyncSession) -> str:
     if ":" in mxid:
         return mxid.split(":", 1)[1]
     return _matrix_domain()  # Fallback на env
+
+
 NOTIFY_TYPE_KEYS: list[str] = []
 CATALOG_NOTIFY_SECRET = "__catalog_notify"
 CATALOG_VERSIONS_SECRET = "__catalog_versions"
 SERVICE_TIMEZONE_SECRET = "__service_timezone"
 SERVICE_TIMEZONE_FALLBACK = "Europe/Moscow"
 
-ADMIN_BOOTSTRAP_FIRST_ADMIN = (os.getenv("ADMIN_BOOTSTRAP_FIRST_ADMIN", "0").strip().lower() in ("1", "true", "yes", "on"))
+ADMIN_BOOTSTRAP_FIRST_ADMIN = os.getenv("ADMIN_BOOTSTRAP_FIRST_ADMIN", "0").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 _LOGIN_RE = re.compile(r"^[a-zA-Z0-9@._+-]{3,255}$")
 
@@ -361,7 +358,7 @@ def _login_allowed(login: str) -> bool:
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _generic_login_error() -> str:
@@ -517,7 +514,9 @@ async def _dashboard_counts(session: AsyncSession) -> dict[str, int]:
                     or_(
                         BotUser.group_id.is_(None),
                         BotUser.group_id.in_(
-                            select(SupportGroup.id).where(SupportGroup.name == GROUP_UNASSIGNED_NAME)
+                            select(SupportGroup.id).where(
+                                SupportGroup.name == GROUP_UNASSIGNED_NAME
+                            )
                         ),
                     )
                 )
@@ -643,7 +642,9 @@ async def _upsert_secret_plain(session: AsyncSession, name: str, value: str) -> 
     row = q.scalar_one_or_none()
     if row is None:
         session.add(
-            AppSecret(name=name, ciphertext=enc.ciphertext, nonce=enc.nonce, key_version=enc.key_version)
+            AppSecret(
+                name=name, ciphertext=enc.ciphertext, nonce=enc.nonce, key_version=enc.key_version
+            )
         )
         return
     row.ciphertext = enc.ciphertext
@@ -671,7 +672,9 @@ async def _load_catalogs(session: AsyncSession) -> tuple[list[dict[str, str]], l
     return notify_catalog, versions_catalog
 
 
-def _parse_catalog_payload(notify_raw: str, versions_raw: str) -> tuple[list[dict[str, str]], list[str]]:
+def _parse_catalog_payload(
+    notify_raw: str, versions_raw: str
+) -> tuple[list[dict[str, str]], list[str]]:
     if notify_raw:
         try:
             notify_catalog = _normalize_notify_catalog(json.loads(notify_raw))
@@ -704,13 +707,17 @@ def _group_excluded_from_assignable_lists(name: str | None) -> bool:
         return False
     if s == GROUP_UNASSIGNED_NAME:
         return True
-    if _normalized_group_filter_key(s) == _normalized_group_filter_key(GROUP_USERS_FILTER_ALL_LABEL):
+    if _normalized_group_filter_key(s) == _normalized_group_filter_key(
+        GROUP_USERS_FILTER_ALL_LABEL
+    ):
         return True
     return False
 
 
 def _groups_assignable(groups: list) -> list:
-    return [g for g in groups if not _group_excluded_from_assignable_lists(getattr(g, "name", None))]
+    return [
+        g for g in groups if not _group_excluded_from_assignable_lists(getattr(g, "name", None))
+    ]
 
 
 def _is_reserved_support_group(row) -> bool:
@@ -941,31 +948,14 @@ async def _maybe_log_admin_crud(
 
 
 # Кэши и хелперы теперь в helpers.py — импортируем чтобы не было дубликатов
-from admin.helpers import (
-    _admin_exists_cache,
-    _integration_status_cache,
-    _has_admin,
-    _ensure_csrf,
-    _verify_csrf,
-    _normalize_login,
-    _login_format_ok,
-    _login_allowed,
-    _generic_login_error,
-    _client_ip,
-    _rate_limiter,
-    _now_utc,
-    _append_ops_to_events_log,
+from admin.helpers import (  # noqa: E402
     _append_audit_file_line,
-    _mask_secret,
-    _parse_catalog_payload,
-    CSRF_COOKIE_NAME,
-    SESSION_COOKIE_NAME,
-    SESSION_TTL_SECONDS,
-    COOKIE_SECURE,
-    AUTH_TOKEN_SALT,
-    SETUP_PATH,
-    DASHBOARD_PATH,
-    templates,
+    _append_ops_to_events_log,
+    _ensure_csrf,
+    _has_admin,
+    _integration_status_cache,
+    _now_utc,
+    _verify_csrf,
 )
 
 
@@ -985,7 +975,9 @@ async def _integration_status(session: AsyncSession, use_cache: bool = True) -> 
         cached = _integration_status_cache.get("flag")
         if cached is not None:
             return cached
-    rows = await session.execute(select(AppSecret.name).where(AppSecret.name.in_(REQUIRED_SECRET_NAMES)))
+    rows = await session.execute(
+        select(AppSecret.name).where(AppSecret.name.in_(REQUIRED_SECRET_NAMES))
+    )
     names = {r[0] for r in rows.all()}
     missing = [name for name in REQUIRED_SECRET_NAMES if name not in names]
     status = {
@@ -1005,17 +997,23 @@ class AuthMiddleware(BaseHTTPMiddleware):
         p = request.url.path
         if p.startswith("/static/") or p == "/favicon.ico":
             return await call_next(request)
-        if p in (
-            "/login",
-            "/forgot-password",
-            "/reset-password",
-            "/health",
-            "/health/live",
-            "/health/ready",
-            SETUP_PATH,
-        ) or p.startswith("/docs") or p in (
-            "/openapi.json",
-            "/redoc",
+        if (
+            p
+            in (
+                "/login",
+                "/forgot-password",
+                "/reset-password",
+                "/health",
+                "/health/live",
+                "/health/ready",
+                SETUP_PATH,
+            )
+            or p.startswith("/docs")
+            or p
+            in (
+                "/openapi.json",
+                "/redoc",
+            )
         ):
             return await call_next(request)
 
@@ -1053,9 +1051,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 if not sess:
                     return RedirectResponse("/login", status_code=303)
 
-                u = await session.execute(
-                    select(BotAppUser).where(BotAppUser.id == sess.user_id)
-                )
+                u = await session.execute(select(BotAppUser).where(BotAppUser.id == sess.user_id))
                 user = u.scalar_one_or_none()
                 if not user:
                     return RedirectResponse("/login", status_code=303)
@@ -1086,34 +1082,50 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
         return response
 
+
 app.add_middleware(AuthMiddleware)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # ROUTERS
 # ═══════════════════════════════════════════════════════════════════════════
 
-from admin.routes.health import router as health_router
-from admin.routes.auth import router as auth_router
-from admin.routes.ops import router as ops_router
+from admin.routes.auth import router as auth_router  # noqa: E402
+from admin.routes.health import router as health_router  # noqa: E402
+from admin.routes.ops import router as ops_router  # noqa: E402
+
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(ops_router)
 from admin.routes.dashboard import router as dashboard_router  # noqa: E402
+
 app.include_router(dashboard_router)
 from admin.routes.events import router as events_router  # noqa: E402
+
 app.include_router(events_router)
 from admin.routes.settings import router as settings_router  # noqa: E402
+
 app.include_router(settings_router)
 from admin.routes.me import router as me_router  # noqa: E402
+
 app.include_router(me_router)
 from admin.routes.redmine import router as redmine_router  # noqa: E402
+
 app.include_router(redmine_router)
 from admin.routes.secrets import router as secrets_router  # noqa: E402
+
 app.include_router(secrets_router)
 from admin.routes.app_users import router as app_users_router  # noqa: E402
+
 app.include_router(app_users_router)
 from admin.routes.routes_mgmt import router as routes_mgmt_router  # noqa: E402
+
 app.include_router(routes_mgmt_router)
+from admin.routes.groups import router as groups_router  # noqa: E402
+
+app.include_router(groups_router)
+from admin.routes.users import router as users_router  # noqa: E402
+
+app.include_router(users_router)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1148,689 +1160,10 @@ def _restart_in_background(actor_login: str | None) -> None:
     t.start()
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# SECRETS — routes/secrets.py
-# APP-USERS — routes/app_users.py
-# ═══════════════════════════════════════════════════════════════════════════
+# --- Bot Heartbeat API and other endpoints moved to routes/users.py ---
 
 
-# --- Пользователи ---
-
-
-@app.get("/groups", response_class=HTMLResponse)
-async def groups_list(
-    request: Request,
-    q: str = "",
-    highlight_group_id: int | None = None,
-    session: AsyncSession = Depends(get_session),
-):
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    q = (q or "").strip()
-    stmt = select(SupportGroup)
-    if q:
-        like = f"%{q}%"
-        stmt = stmt.where(or_(SupportGroup.name.ilike(like), SupportGroup.room_id.ilike(like)))
-    stmt = stmt.order_by(SupportGroup.is_active.desc(), SupportGroup.name.asc())
-    _all_groups = list((await session.execute(stmt)).scalars().all())
-    rows = [r for r in _all_groups if r.name != GROUP_UNASSIGNED_NAME]
-    return templates.TemplateResponse(
-        request,
-        "groups_list.html",
-        {
-            "items": rows,
-            "q": q,
-            "highlight_group_id": highlight_group_id,
-            "list_total": len(rows),
-        },
-    )
-
-
-@app.get("/groups/new", response_class=HTMLResponse)
-async def groups_new(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-):
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    notify_catalog, versions_catalog = await _load_catalogs(session)
-    return templates.TemplateResponse(
-        request,
-        "group_form.html",
-        {
-            "title": "Новая группа",
-            "g": None,
-            "bot_tz": os.getenv("BOT_TIMEZONE", "Europe/Moscow"),
-            "timezone_top_options": _top_timezone_options(),
-            "timezone_all_options": _standard_timezone_options(),
-            "timezone_labels": _timezone_labels(_standard_timezone_options()),
-            "status_routes": [],
-            "status_err": "",
-            "status_msg": "",
-            "notify_json": '["all"]',
-            "notify_preset": "all",
-            "notify_selected": ["all"],
-            "notify_catalog": notify_catalog,
-            "versions_catalog": versions_catalog,
-            "initial_version_keys": "",
-            "selected_version_keys": [],
-            "version_preset": "all",
-        },
-    )
-
-
-@app.post("/groups/test-message")
-async def group_test_message(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-):
-    """Отправляет тестовое сообщение в комнату группы по room_id."""
-    try:
-        _verify_csrf_json(request)
-    except HTTPException as e:
-        return JSONResponse({"ok": False, "error": "Ошибка CSRF токена"}, status_code=e.status_code)
-
-    admin_user = getattr(request.state, "current_user", None)
-    if not admin_user or getattr(admin_user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-
-    # Получаем готовый клиент
-    client = await _get_matrix_client(session)
-    if not client:
-        return JSONResponse({"ok": False, "error": "Matrix не настроен"}, status_code=400)
-
-    try:
-        form = await request.form()
-        room_id = (form.get("room_id") or "").strip()
-    except Exception as e:
-        logger.error("Failed to parse form: %s", e)
-        await client.close()
-        return JSONResponse({"ok": False, "error": "Не удалось прочитать данные формы"}, status_code=400)
-
-    if not room_id:
-        await client.close()
-        return JSONResponse({"ok": False, "error": "Не указан ID комнаты"}, status_code=400)
-
-    # Формируем сообщение
-    from datetime import datetime as _dt
-    from src.matrix_send import room_send_with_retry
-
-    ts = _dt.now().strftime("%H:%M:%S")
-    html = (
-        f"<b>🧪 Тестовое сообщение группы</b><br>"
-        f"Это тест от панели управления.<br>"
-        f"Если вы это видите — подключение работает!<br>"
-        f"<small>Отправлено: {ts}</small>"
-    )
-    text_plain = f"🧪 Тестовое сообщение группы\nЭто тест от панели управления.\nОтправлено: {ts}"
-
-    try:
-        # Синхронизируемся, чтобы получить список комнат
-        logger.info("group_test_message: syncing to find room %s...", room_id)
-        if not await _sync_matrix_client(client):
-            await client.close()
-            return JSONResponse({"ok": False, "error": "Не удалось синхронизироваться с Matrix"}, status_code=500)
-
-        if room_id not in client.rooms:
-            await client.close()
-            return JSONResponse({"ok": False, "error": f"Бот не является участником комнаты {room_id}. Пригласите его в Matrix."}, status_code=400)
-
-        logger.info("group_test_message: sending to %s", room_id)
-        content = {"msgtype": "m.text", "body": text_plain, "format": "org.matrix.custom.html", "formatted_body": html}
-        await room_send_with_retry(client, room_id, content)
-        await client.close()
-        return JSONResponse({"ok": True})
-    except Exception as e:
-        import traceback as _tb
-        logger.error("group_test_message_failed room_id=%s\n%s", room_id, _tb.format_exc())
-        await client.close()
-        return JSONResponse({"ok": False, "error": "Не удалось отправить сообщение. Проверьте логи админки."}, status_code=500)
-
-
-@app.get("/groups/{group_id}/edit", response_class=HTMLResponse)
-async def groups_edit(
-    request: Request,
-    group_id: int,
-    session: AsyncSession = Depends(get_session),
-):
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    row = await session.get(SupportGroup, group_id)
-    if not row:
-        raise HTTPException(404, "Группа не найдена")
-    if _is_reserved_support_group(row):
-        raise HTTPException(404, "Группа не найдена")
-    status_err = (request.query_params.get("status_err") or "").strip()
-    status_msg = (request.query_params.get("status_msg") or "").strip()
-    version_err = (request.query_params.get("version_err") or "").strip()
-    version_msg = (request.query_params.get("version_msg") or "").strip()
-    room = (row.room_id or "").strip()
-    sr_stmt = select(StatusRoomRoute).where(StatusRoomRoute.room_id == room).order_by(StatusRoomRoute.status_key)
-    status_rows = list((await session.execute(sr_stmt)).scalars().all()) if room else []
-    gv_stmt = (
-        select(GroupVersionRoute)
-        .where(GroupVersionRoute.group_id == group_id)
-        .order_by(GroupVersionRoute.version_key)
-    )
-    version_rows = list((await session.execute(gv_stmt)).scalars().all())
-    notify_catalog, versions_catalog = await _load_catalogs(session)
-    notify_keys = {item["key"] for item in notify_catalog}
-    notify_selected = [str(x).strip() for x in (row.notify or ["all"]) if str(x).strip()]
-    if "all" not in notify_selected:
-        notify_selected = [k for k in notify_selected if k in notify_keys]
-    version_set = set(versions_catalog)
-    selected_versions = [r.version_key for r in version_rows if r.version_key in version_set]
-    return templates.TemplateResponse(
-        request,
-        "group_form.html",
-        {
-            "title": "Редактирование группы",
-            "g": row,
-            "bot_tz": os.getenv("BOT_TIMEZONE", "Europe/Moscow"),
-            "timezone_top_options": _top_timezone_options(),
-            "timezone_all_options": _standard_timezone_options(),
-            "timezone_labels": _timezone_labels(_standard_timezone_options()),
-            "status_routes": status_rows,
-            "status_err": status_err,
-            "status_msg": status_msg,
-            "version_routes": version_rows,
-            "version_err": version_err,
-            "version_msg": version_msg,
-            "notify_json": json.dumps(row.notify, ensure_ascii=False),
-            "notify_preset": _notify_preset(row.notify),
-            "notify_selected": notify_selected,
-            "notify_catalog": notify_catalog,
-            "versions_catalog": versions_catalog,
-            "selected_version_keys": selected_versions,
-            "version_preset": _version_preset(selected_versions, versions_catalog),
-        },
-    )
-
-
-@app.post("/groups")
-async def groups_create(
-    request: Request,
-    name: Annotated[str, Form()],
-    room_id: Annotated[str, Form()] = "",
-    timezone_name: Annotated[str, Form()] = "",
-    is_active: Annotated[str | None, Form()] = None,
-    initial_status_keys: Annotated[str, Form()] = "",
-    initial_version_keys: Annotated[str, Form()] = "",
-    version_keys_json: Annotated[str, Form()] = "",
-    version_preset: Annotated[str, Form()] = "all",
-    version_values: Annotated[list[str], Form()] = [],
-    notify_json: Annotated[str, Form()] = "",
-    notify_preset: Annotated[str, Form()] = "all",
-    notify_values: Annotated[list[str], Form()] = [],
-    work_hours: Annotated[str, Form()] = "",
-    work_hours_from: Annotated[str, Form()] = "",
-    work_hours_to: Annotated[str, Form()] = "",
-    work_days_json: Annotated[str, Form()] = "",
-    work_days_values: Annotated[list[str], Form()] = [],
-    dnd: Annotated[str, Form()] = "",
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    notify_catalog, versions_catalog = await _load_catalogs(session)
-    notify_allowed = [item["key"] for item in notify_catalog]
-    _verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    n = (name or "").strip()
-    if not n:
-        raise HTTPException(400, "Название обязательно")
-    if n == GROUP_UNASSIGNED_NAME:
-        raise HTTPException(400, "Это имя зарезервировано для системы")
-    if _normalized_group_filter_key(n) == _normalized_group_filter_key(GROUP_USERS_FILTER_ALL_LABEL):
-        raise HTTPException(400, "Это имя зарезервировано для фильтра списка пользователей")
-    existing_name = await session.execute(
-        select(SupportGroup.id).where(SupportGroup.name == n).limit(1)
-    )
-    if existing_name.scalar_one_or_none() is not None:
-        raise HTTPException(400, "Группа с таким названием уже существует")
-    room = (room_id or "").strip()
-    if not room:
-        raise HTTPException(400, "Укажите ID комнаты группы")
-    status_keys = _parse_status_keys_list(initial_status_keys)
-    if work_hours_from and work_hours_to:
-        wh = f"{work_hours_from.strip()}-{work_hours_to.strip()}"
-    else:
-        wh = work_hours.strip() or None
-    if work_days_values:
-        wd = sorted({int(v) for v in work_days_values if str(v).isdigit()})
-    else:
-        wd = _parse_work_days(work_days_json)
-    if notify_preset == "all":
-        notify = ["all"]
-    elif notify_preset == "new_only":
-        notify = ["new"]
-    elif notify_preset == "overdue_only":
-        notify = ["overdue"]
-    elif notify_preset == "custom":
-        notify = _normalize_notify(notify_values, notify_allowed)
-    else:
-        notify = _parse_notify(notify_json)
-    row = SupportGroup(
-        name=n,
-        room_id=room,
-        timezone=(timezone_name or "").strip() or None,
-        # Group form no longer exposes this switch; default new groups to active.
-        is_active=True if is_active is None else is_active in ("1", "on", "true"),
-        notify=notify,
-        work_hours=wh,
-        work_days=wd,
-        dnd=dnd in ("1", "on", "true"),
-    )
-    session.add(row)
-    try:
-        await session.flush()
-    except IntegrityError:
-        raise HTTPException(400, "Не удалось создать группу: проверьте уникальность названия")
-    rid = row.id
-    for key in status_keys:
-        ex = await session.execute(select(StatusRoomRoute.id).where(StatusRoomRoute.status_key == key))
-        if ex.scalar_one_or_none():
-            continue
-        session.add(StatusRoomRoute(status_key=key, room_id=room))
-    version_keys = _parse_json_string_list(version_keys_json) or _parse_status_keys_list(initial_version_keys)
-    if version_preset == "all":
-        version_keys = list(versions_catalog)
-    elif version_preset == "custom":
-        version_keys = _normalize_versions(version_values, versions_catalog)
-    for vkey in version_keys:
-        ex = await session.execute(
-            select(GroupVersionRoute.id).where(
-                GroupVersionRoute.group_id == rid,
-                GroupVersionRoute.version_key == vkey,
-            )
-        )
-        if ex.scalar_one_or_none():
-            continue
-        session.add(GroupVersionRoute(group_id=rid, version_key=vkey, room_id=room))
-    await _maybe_log_admin_crud(
-        session,
-        user,
-        "group",
-        "create",
-        {"id": rid, "name": n},
-    )
-    return RedirectResponse(f"/groups?highlight_group_id={rid}", status_code=303)
-
-
-@app.post("/groups/{group_id}")
-async def groups_update(
-    request: Request,
-    group_id: int,
-    name: Annotated[str, Form()],
-    room_id: Annotated[str, Form()] = "",
-    timezone_name: Annotated[str, Form()] = "",
-    is_active: Annotated[str | None, Form()] = None,
-    notify_json: Annotated[str, Form()] = "",
-    notify_preset: Annotated[str, Form()] = "all",
-    notify_values: Annotated[list[str], Form()] = [],
-    version_preset: Annotated[str, Form()] = "all",
-    version_values: Annotated[list[str], Form()] = [],
-    version_keys_json: Annotated[str, Form()] = "",
-    initial_version_keys: Annotated[str, Form()] = "",
-    work_hours: Annotated[str, Form()] = "",
-    work_hours_from: Annotated[str, Form()] = "",
-    work_hours_to: Annotated[str, Form()] = "",
-    work_days_json: Annotated[str, Form()] = "",
-    work_days_values: Annotated[list[str], Form()] = [],
-    dnd: Annotated[str, Form()] = "",
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    notify_catalog, versions_catalog = await _load_catalogs(session)
-    notify_allowed = [item["key"] for item in notify_catalog]
-    _verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    row = await session.get(SupportGroup, group_id)
-    if not row:
-        raise HTTPException(404, "Группа не найдена")
-    if _is_reserved_support_group(row):
-        raise HTTPException(403, "Системную группу нельзя менять")
-    n = (name or "").strip()
-    if not n:
-        raise HTTPException(400, "Название обязательно")
-    if n == GROUP_UNASSIGNED_NAME:
-        raise HTTPException(400, "Это имя зарезервировано для системы")
-    if _normalized_group_filter_key(n) == _normalized_group_filter_key(GROUP_USERS_FILTER_ALL_LABEL):
-        raise HTTPException(400, "Это имя зарезервировано для фильтра списка пользователей")
-    existing_name = await session.execute(
-        select(SupportGroup.id).where(SupportGroup.name == n, SupportGroup.id != group_id).limit(1)
-    )
-    if existing_name.scalar_one_or_none() is not None:
-        raise HTTPException(400, "Группа с таким названием уже существует")
-    if work_hours_from and work_hours_to:
-        wh = f"{work_hours_from.strip()}-{work_hours_to.strip()}"
-    else:
-        wh = work_hours.strip() or None
-    if work_days_values:
-        wd = sorted({int(v) for v in work_days_values if str(v).isdigit()})
-    else:
-        wd = _parse_work_days(work_days_json)
-    if notify_preset == "all":
-        notify = ["all"]
-    elif notify_preset == "new_only":
-        notify = ["new"]
-    elif notify_preset == "overdue_only":
-        notify = ["overdue"]
-    elif notify_preset == "custom":
-        notify = _normalize_notify(notify_values, notify_allowed)
-    else:
-        notify = _parse_notify(notify_json)
-    old_room = (row.room_id or "").strip()
-    new_room = (room_id or "").strip()
-    row.name = n
-    row.room_id = new_room
-    row.timezone = (timezone_name or "").strip() or None
-    # Preserve existing value when control is absent in form payload.
-    if is_active is not None:
-        row.is_active = is_active in ("1", "on", "true")
-    row.notify = notify
-    row.work_hours = wh
-    row.work_days = wd
-    row.dnd = dnd in ("1", "on", "true")
-    if version_preset == "all":
-        submitted_versions = list(versions_catalog)
-    elif version_preset == "custom":
-        submitted_versions = _normalize_versions(version_values, versions_catalog)
-    else:
-        submitted_versions = _parse_json_string_list(version_keys_json) or _parse_status_keys_list(initial_version_keys)
-    existing_routes = list(
-        (
-            await session.execute(
-                select(GroupVersionRoute).where(GroupVersionRoute.group_id == group_id)
-            )
-        ).scalars().all()
-    )
-    existing_by_key = {r.version_key: r for r in existing_routes}
-    submitted_set = set(submitted_versions)
-    for r in existing_routes:
-        if r.version_key not in submitted_set:
-            await session.delete(r)
-    for key in submitted_versions:
-        ex = existing_by_key.get(key)
-        if ex:
-            ex.room_id = new_room
-            continue
-        session.add(GroupVersionRoute(group_id=group_id, version_key=key, room_id=new_room))
-    if old_room and new_room and old_room != new_room:
-        await session.execute(
-            update(StatusRoomRoute).where(StatusRoomRoute.room_id == old_room).values(room_id=new_room)
-        )
-        await session.execute(
-            update(GroupVersionRoute)
-            .where(GroupVersionRoute.group_id == group_id, GroupVersionRoute.room_id == old_room)
-            .values(room_id=new_room)
-        )
-    try:
-        await session.flush()
-    except IntegrityError:
-        raise HTTPException(400, "Не удалось сохранить группу: проверьте уникальность названия")
-    await _maybe_log_admin_crud(
-        session,
-        user,
-        "group",
-        "update",
-        {"id": group_id, "name": n},
-    )
-    return RedirectResponse(f"/groups?highlight_group_id={group_id}", status_code=303)
-
-
-@app.post("/groups/{group_id}/status-routes/add")
-async def group_status_route_add(
-    request: Request,
-    group_id: int,
-    status_key: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    _verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    row = await session.get(SupportGroup, group_id)
-    if not row or _is_reserved_support_group(row):
-        raise HTTPException(404, "Группа не найдена")
-    room = (row.room_id or "").strip()
-    if not room:
-        return RedirectResponse(f"/groups/{group_id}/edit?status_err=no_room", status_code=303)
-    key = (status_key or "").strip()
-    if not key:
-        return RedirectResponse(f"/groups/{group_id}/edit?status_err=empty", status_code=303)
-    exists = await session.execute(select(StatusRoomRoute).where(StatusRoomRoute.status_key == key))
-    if exists.scalar_one_or_none():
-        return RedirectResponse(f"/groups/{group_id}/edit?status_err=exists", status_code=303)
-    session.add(StatusRoomRoute(status_key=key, room_id=room))
-    await _maybe_log_admin_crud(
-        session,
-        user,
-        "group_status_route",
-        "create",
-        {"group_id": group_id, "status_key": key},
-    )
-    return RedirectResponse(f"/groups/{group_id}/edit?status_msg=added", status_code=303)
-
-
-@app.post("/groups/{group_id}/status-routes/{route_row_id}/delete")
-async def group_status_route_delete(
-    request: Request,
-    group_id: int,
-    route_row_id: int,
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    _verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    row = await session.get(SupportGroup, group_id)
-    if not row or _is_reserved_support_group(row):
-        raise HTTPException(404, "Группа не найдена")
-    room = (row.room_id or "").strip()
-    rte = await session.get(StatusRoomRoute, route_row_id)
-    if not rte or (rte.room_id or "").strip() != room:
-        raise HTTPException(404, "Маршрут не найден")
-    sk = rte.status_key
-    await session.delete(rte)
-    await _maybe_log_admin_crud(
-        session,
-        user,
-        "group_status_route",
-        "delete",
-        {"group_id": group_id, "status_key": sk, "route_id": route_row_id},
-    )
-    return RedirectResponse(f"/groups/{group_id}/edit?status_msg=deleted", status_code=303)
-
-
-@app.post("/groups/{group_id}/version-routes/add")
-async def group_version_route_add(
-    request: Request,
-    group_id: int,
-    version_key: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    _verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    row = await session.get(SupportGroup, group_id)
-    if not row or _is_reserved_support_group(row):
-        raise HTTPException(404, "Группа не найдена")
-    room = (row.room_id or "").strip()
-    if not room:
-        return RedirectResponse(f"/groups/{group_id}/edit?version_err=no_room", status_code=303)
-    key = (version_key or "").strip()
-    if not key:
-        return RedirectResponse(f"/groups/{group_id}/edit?version_err=empty", status_code=303)
-    exists = await session.execute(
-        select(GroupVersionRoute.id).where(
-            GroupVersionRoute.group_id == group_id,
-            GroupVersionRoute.version_key == key,
-        )
-    )
-    if exists.scalar_one_or_none():
-        return RedirectResponse(f"/groups/{group_id}/edit?version_err=exists", status_code=303)
-    session.add(GroupVersionRoute(group_id=group_id, version_key=key, room_id=room))
-    await _maybe_log_admin_crud(
-        session,
-        user,
-        "group_version_route",
-        "create",
-        {"group_id": group_id, "version_key": key},
-    )
-    return RedirectResponse(f"/groups/{group_id}/edit?version_msg=added", status_code=303)
-
-
-@app.post("/groups/{group_id}/version-routes/{route_row_id}/delete")
-async def group_version_route_delete(
-    request: Request,
-    group_id: int,
-    route_row_id: int,
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    _verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    row = await session.get(SupportGroup, group_id)
-    if not row or _is_reserved_support_group(row):
-        raise HTTPException(404, "Группа не найдена")
-    rte = await session.get(GroupVersionRoute, route_row_id)
-    if not rte or rte.group_id != group_id:
-        raise HTTPException(404, "Маршрут не найден")
-    vkey = rte.version_key
-    await session.delete(rte)
-    await _maybe_log_admin_crud(
-        session,
-        user,
-        "group_version_route",
-        "delete",
-        {"group_id": group_id, "version_key": vkey, "route_id": route_row_id},
-    )
-    return RedirectResponse(f"/groups/{group_id}/edit?version_msg=deleted", status_code=303)
-
-
-@app.post("/groups/{group_id}/delete")
-async def groups_delete(
-    request: Request,
-    group_id: int,
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    _verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    row = await session.get(SupportGroup, group_id)
-    if row:
-        if _is_reserved_support_group(row):
-            raise HTTPException(403, "Системную группу нельзя удалить")
-        gid, gname = row.id, row.name
-        await session.delete(row)
-        await _maybe_log_admin_crud(session, user, "group", "delete", {"id": gid, "name": gname})
-    return RedirectResponse("/groups", status_code=303)
-
-
-@app.get("/users", response_class=HTMLResponse)
-async def users_list(
-    request: Request,
-    q: str = "",
-    group_id: int | None = None,
-    highlight_user_id: int | None = None,
-    session: AsyncSession = Depends(get_session),
-):
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-
-    groups_rows = list((await session.execute(select(SupportGroup).order_by(SupportGroup.name.asc()))).scalars().all())
-    groups_by_id = {g.id: g for g in groups_rows}
-
-    stmt = select(BotUser)
-    q = (q or "").strip()
-    if q:
-        like = f"%{q}%"
-        stmt = stmt.where(
-            or_(
-                BotUser.display_name.ilike(like),
-                BotUser.department.ilike(like),
-                BotUser.room.ilike(like),
-            )
-        )
-    if group_id is not None:
-        if group_id == -1:
-            stmt = stmt.where(BotUser.group_id.is_(None))
-        else:
-            stmt = stmt.where(BotUser.group_id == group_id)
-    stmt = stmt.order_by(BotUser.group_id.asc().nulls_last(), BotUser.display_name.asc().nulls_last(), BotUser.redmine_id)
-    rows = list((await session.execute(stmt)).scalars().all())
-
-    grouped: dict[str, list[BotUser]] = {}
-    for row in rows:
-        key = _group_display_name(groups_by_id, row.group_id)
-        grouped.setdefault(key, []).append(row)
-
-    return templates.TemplateResponse(
-        request,
-        "users_list.html",
-        {
-            "users": rows,
-            "grouped_users": grouped,
-            "groups": _groups_assignable(groups_rows),
-            "groups_by_id": groups_by_id,
-            "q": q,
-            "group_filter": group_id,
-            "highlight_user_id": highlight_user_id,
-            "list_total": len(rows),
-        },
-    )
-
-
-@app.get("/users/new", response_class=HTMLResponse)
-async def users_new(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-):
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    groups_rows = list((await session.execute(select(SupportGroup).order_by(SupportGroup.name.asc()))).scalars().all())
-    notify_catalog, versions_catalog = await _load_catalogs(session)
-    matrix_domain = await _get_matrix_domain_from_db(session)
-    return templates.TemplateResponse(
-        request,
-        "user_form.html",
-        {
-            "title": "Новый пользователь",
-            "u": None,
-            "room_localpart": "",
-            "matrix_domain": matrix_domain,
-            "notify_json": '["all"]',
-            "notify_preset": "all",
-            "notify_selected": ["all"],
-            "groups": _groups_assignable(groups_rows),
-            "group_unassigned_display": GROUP_UNASSIGNED_DISPLAY,
-            "bot_tz": os.getenv("BOT_TIMEZONE", "Europe/Moscow"),
-            "timezone_top_options": _top_timezone_options(),
-            "timezone_all_options": _standard_timezone_options(),
-            "timezone_labels": _timezone_labels(_standard_timezone_options()),
-            "notify_catalog": notify_catalog,
-            "versions_catalog": versions_catalog,
-            "selected_version_keys": [],
-            "version_preset": "all",
-        },
-    )
+# ── Shared helpers (used by routes/users.py and routes/groups.py via late import) ──
 
 
 def _parse_notify(raw: str) -> list:
@@ -1877,11 +1210,13 @@ def _parse_work_hours_range(value: str) -> tuple[str, str]:
     return start.strip(), end.strip()
 
 
-def _normalize_versions(values: list[str] | None, allowed_values: list[str] | None = None) -> list[str]:
+def _normalize_versions(
+    values: list[str] | None, allowed_values: list[str] | None = None
+) -> list[str]:
     vals = [v.strip() for v in (values or []) if v and v.strip()]
     if not vals:
         return []
-    allowed_set = set((allowed_values or []))
+    allowed_set = set(allowed_values or [])
     if not allowed_set:
         return []
     out: list[str] = []
@@ -1898,105 +1233,10 @@ def _version_preset(selected: list[str] | None, catalog: list[str] | None) -> st
     selected_list = [str(x).strip() for x in (selected or []) if str(x).strip()]
     if not selected_list:
         return "all"
-    # Keep manual mode after save: any explicit selection is treated as "custom".
     return "custom"
 
 
-@app.post("/users")
-async def users_create(
-    request: Request,
-    redmine_id: Annotated[int, Form()],
-    room: Annotated[str, Form()],
-    display_name: Annotated[str, Form()] = "",
-    group_id: Annotated[str, Form()] = "",
-    notify_json: Annotated[str, Form()] = "",
-    notify_preset: Annotated[str, Form()] = "all",
-    notify_values: Annotated[list[str], Form()] = [],
-    initial_version_keys: Annotated[str, Form()] = "",
-    version_keys_json: Annotated[str, Form()] = "",
-    version_preset: Annotated[str, Form()] = "all",
-    version_values: Annotated[list[str], Form()] = [],
-    timezone_name: Annotated[str, Form()] = "",
-    work_hours: Annotated[str, Form()] = "",
-    work_hours_from: Annotated[str, Form()] = "",
-    work_hours_to: Annotated[str, Form()] = "",
-    work_days_json: Annotated[str, Form()] = "",
-    work_days_values: Annotated[list[str], Form()] = [],
-    dnd: Annotated[str, Form()] = "",
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    notify_catalog, versions_catalog = await _load_catalogs(session)
-    notify_allowed = [item["key"] for item in notify_catalog]
-    _verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    if work_hours_from and work_hours_to:
-        wh = f"{work_hours_from.strip()}-{work_hours_to.strip()}"
-    else:
-        wh = work_hours.strip() or None
-    if work_days_values:
-        wd = sorted({int(v) for v in work_days_values if str(v).isdigit()})
-    else:
-        wd = _parse_work_days(work_days_json)
-    if notify_preset == "all":
-        notify = ["all"]
-    elif notify_preset == "new_only":
-        notify = ["new"]
-    elif notify_preset == "overdue_only":
-        notify = ["overdue"]
-    elif notify_preset == "custom":
-        notify = _normalize_notify(notify_values, notify_allowed)
-    else:
-        notify = _parse_notify(notify_json)
-    # Конструируем полный room_id из localpart + домен бота (асинхронно из БД)
-    full_room = await _build_room_id_async(room.strip(), session)
-    row = BotUser(
-        redmine_id=redmine_id,
-        display_name=display_name.strip() or None,
-        group_id=int(group_id) if str(group_id).isdigit() else None,
-        department=None,
-        room=full_room,
-        notify=notify,
-        timezone=(timezone_name or "").strip() or None,
-        work_hours=wh,
-        work_days=wd,
-        dnd=dnd in ("on", "true", "1"),
-    )
-    session.add(row)
-    await session.flush()
-    if version_preset == "all":
-        version_keys = list(versions_catalog)
-    elif version_preset == "custom":
-        version_keys = _normalize_versions(version_values, versions_catalog)
-    else:
-        version_keys = _parse_json_string_list(version_keys_json) or _parse_status_keys_list(initial_version_keys)
-    for vkey in version_keys:
-        ex = await session.execute(
-            select(UserVersionRoute.id).where(
-                UserVersionRoute.bot_user_id == row.id,
-                UserVersionRoute.version_key == vkey,
-            )
-        )
-        if ex.scalar_one_or_none():
-            continue
-        session.add(UserVersionRoute(bot_user_id=row.id, version_key=vkey, room_id=row.room))
-    await _maybe_log_admin_crud(
-        session,
-        user,
-        "bot_user",
-        "create",
-        {
-            "id": row.id,
-            "redmine_id": redmine_id,
-            "group_id": row.group_id,
-        },
-    )
-    return RedirectResponse(f"/users?highlight_user_id={row.id}", status_code=303)
-
-
-# --- Вспомогательные функции для Matrix (DRY) ---
+# --- Matrix helpers (used by routes/users.py and routes/groups.py via late import) ---
 
 
 async def _get_matrix_client(session: AsyncSession) -> AsyncClient | None:
@@ -2016,7 +1256,6 @@ async def _get_matrix_client(session: AsyncSession) -> AsyncClient | None:
     client = AsyncClient(homeserver, bot_mxid)
     client.access_token = access_token
     client.device_id = "redmine_bot_admin"
-    # restore_login - синхронный метод
     client.restore_login(bot_mxid, "redmine_bot_admin", access_token)
     return client
 
@@ -2030,499 +1269,13 @@ async def _sync_matrix_client(client: AsyncClient, timeout: int = 10000) -> bool
         return False
 
 
-# --- Отправка тестового сообщения (универсальный: по user_id или по MXID) ---
-
-
-@app.post("/users/test-message")
-async def user_test_message(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-):
-    """Отправляет тестовое сообщение по user_id (из БД) или напрямую по MXID."""
-    _verify_csrf_json(request)
-    admin_user = getattr(request.state, "current_user", None)
-    if not admin_user or getattr(admin_user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-
-    # Получаем готовый клиент (или None, если не настроен)
-    client = await _get_matrix_client(session)
-    if not client:
-        return JSONResponse({"ok": False, "error": "Matrix не настроен (нет homeserver/token/user_id)"}, status_code=400)
-
-    # Загружаем остальные настройки (Redmine)
-    redmine_url = await _load_secret_plain(session, "REDMINE_URL")
-    redmine_key = await _load_secret_plain(session, "REDMINE_API_KEY")
-    bot_mxid = await _load_secret_plain(session, "MATRIX_USER_ID")
-
-    form = await request.form()
-    raw_uid = form.get("user_id", "")
-    raw_mxid = form.get("mxid", "")
-
-    uid = 0
-    if raw_uid:
-        try:
-            uid = int(raw_uid)
-        except ValueError:
-            uid = 0
-
-    target_mxid = (raw_mxid or "").strip()
-    room_id = None  # Инициализируем заранее, чтобы избежать UnboundLocalError
-
-    # Извлекаем домен из homeserver (https://messenger.red-soft.ru → messenger.red-soft.ru)
-    # client.homeserver уже содержит URL, но надежнее взять из настроек
-    homeserver = client.homeserver
-    matrix_domain = homeserver.replace("https://", "").replace("http://", "").rstrip("/")
-
-    # Если MXID введён вручную (не полный), добавляем домен
-    if target_mxid and ":" not in target_mxid:
-        if not target_mxid.startswith("@"):
-            target_mxid = f"@{target_mxid}"
-        target_mxid = f"{target_mxid}:{matrix_domain}"
-
-    # Если указан user_id — берём данные из БД
-    if uid > 0:
-        row = await session.get(BotUser, uid)
-        if not row:
-            await client.close()
-            return JSONResponse({"ok": False, "error": "Пользователь не найден"}, status_code=404)
-        
-        raw_room = (row.room or "").strip()
-        
-        # Нормализация: если в БД записан localpart или MXID, обрабатываем это
-        if raw_room.startswith("@"):
-            # Это MXID (личка)
-            if ":" not in raw_room and matrix_domain:
-                target_mxid = f"{raw_room}:{matrix_domain}"
-            else:
-                target_mxid = raw_room
-            room_id = None
-        elif raw_room.startswith("!"):
-            # Это полная комната
-            room_id = raw_room
-        elif raw_room:
-            # Это localpart (напр. dmitry.merenkov) -> считаем, что это личка
-            if matrix_domain:
-                target_mxid = f"@{raw_room}:{matrix_domain}"
-            else:
-                target_mxid = f"@{raw_room}"
-            room_id = None
-
-        # Если MXID все ещё не указан — пробуем получить из Redmine
-        if not target_mxid and not room_id and redmine_url and redmine_key and row.redmine_id:
-            try:
-                from urllib.request import Request, urlopen
-                import json as _json3
-                api_url = f"{redmine_url.rstrip('/')}/users/{row.redmine_id}.json"
-                req = Request(api_url, headers={"X-Redmine-API-Key": redmine_key, "Accept": "application/json"})
-                with urlopen(req, timeout=10) as resp:
-                    rdata = _json3.loads(resp.read().decode())
-                    login = rdata.get("user", {}).get("login", "")
-                    if login:
-                        # Извлекаем домен из MXID бота (@bot:domain → domain)
-                        domain = bot_mxid.split(":", 1)[1] if ":" in bot_mxid else ""
-                        target_mxid = f"@{login}:{domain}" if domain else None
-            except Exception:
-                pass
-
-    if not target_mxid and not room_id:
-        await client.close()
-        return JSONResponse({"ok": False, "error": "Не указан Matrix ID пользователя"}, status_code=400)
-
-    # Формируем сообщение
-    from datetime import datetime as _dt
-    from src.matrix_send import room_send_with_retry
-
-    ts = _dt.now().strftime("%H:%M:%S")
-    html = (
-        f"<b>🧪 Тестовое сообщение</b><br>"
-        f"Это тест от панели управления.<br>"
-        f"Если вы это видите — подключение работает!<br>"
-        f"<small>Отправлено: {ts}</small>"
-    )
-    text_plain = f"🧪 Тестовое сообщение\nЭто тест от панели управления.\nОтправлено: {ts}"
-
-    final_room_id = room_id
-
-    try:
-        if not final_room_id and target_mxid:
-            # Синхронизируемся, чтобы найти DM
-            logger.info("test_message: syncing to find DM for %s", target_mxid)
-            await _sync_matrix_client(client)
-
-            # Ищем существующую DM
-            for r_id, room_obj in client.rooms.items():
-                member_ids = {m.user_id for m in room_obj.users.values()}
-                if len(member_ids) == 2 and bot_mxid in member_ids and target_mxid in member_ids:
-                    final_room_id = r_id
-                    logger.info("test_message: found existing DM %s", r_id)
-                    break
-            # Создаём DM
-            if not final_room_id:
-                logger.info("test_message: creating DM with %s", target_mxid)
-                resp_create = await client.room_create(
-                    invite=[target_mxid],
-                    is_direct=True,
-                )
-                if resp_create and hasattr(resp_create, "room_id"):
-                    final_room_id = resp_create.room_id
-                    logger.info("test_message: created DM %s, joining...", final_room_id)
-                    await client.join(final_room_id)
-                else:
-                    err_detail = str(resp_create) if resp_create else "no response"
-                    await client.close()
-                    return JSONResponse({"ok": False, "error": f"Не удалось создать DM с {target_mxid}: {err_detail}"}, status_code=500)
-
-        if not final_room_id:
-            await client.close()
-            return JSONResponse({"ok": False, "error": "Не удалось определить комнату"}, status_code=500)
-
-        logger.info("test_message: sending to %s", final_room_id)
-        content = {"msgtype": "m.text", "body": text_plain, "format": "org.matrix.custom.html", "formatted_body": html}
-        await room_send_with_retry(client, final_room_id, content)
-        await client.close()
-        return JSONResponse({"ok": True})
-    except Exception as e:
-        import traceback as _tb
-        logger.error("test_message_failed uid=%s mxid=%s error=%s\n%s", uid, target_mxid, e, _tb.format_exc())
-        await client.close()
-        return JSONResponse({"ok": False, "error": "Не удалось отправить сообщение. Проверьте логи админки."}, status_code=500)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Bot Heartbeat API (мониторинг живучести)
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-@app.post("/api/bot/heartbeat")
-async def bot_heartbeat_post(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-):
-    """Бот вызывает этот endpoint раз в минуту, чтобы сообщить, что он жив."""
-    try:
-        data = await request.json()
-        instance_id_str = data.get("instance_id")
-        if not instance_id_str:
-            return JSONResponse({"ok": False, "error": "instance_id required"}, status_code=400)
-
-        import uuid
-        instance_id = uuid.UUID(instance_id_str)
-
-        # Upsert heartbeat
-        stmt = select(BotHeartbeat).where(BotHeartbeat.instance_id == instance_id)
-        result = await session.execute(stmt)
-        hb = result.scalar_one_or_none()
-
-        if hb:
-            from datetime import datetime, timezone
-            hb.last_seen = datetime.now(timezone.utc)
-        else:
-            from datetime import datetime, timezone
-            session.add(BotHeartbeat(instance_id=instance_id, last_seen=datetime.now(timezone.utc)))
-
-        await session.commit()
-        return JSONResponse({"ok": True})
-    except Exception as e:
-        logger.error("heartbeat_post_failed: %s", e)
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-
-
-@app.get("/api/bot/status", response_class=JSONResponse)
-async def bot_status_get(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-):
-    """Возвращает статус бота для дашборда."""
-    try:
-        from datetime import datetime, timezone, timedelta
-
-        # Ищем самый свежий heartbeat
-        stmt = select(BotHeartbeat).order_by(BotHeartbeat.last_seen.desc()).limit(1)
-        result = await session.execute(stmt)
-        hb = result.scalar_one_or_none()
-
-        if not hb:
-            return {"status": "unknown", "last_seen": None, "message": "Бот ещё не отправлял heartbeat"}
-
-        now = datetime.now(timezone.utc)
-        diff = (now - hb.last_seen).total_seconds()
-
-        if diff < 120:  # Менее 2 минут
-            status = "alive"
-            message = f"Бот активен ({int(diff)} сек. назад)"
-        elif diff < 600:  # Менее 10 минут
-            status = "warning"
-            message = f"Бот может быть завис ({int(diff)} сек. назад)"
-        else:
-            status = "dead"
-            message = f"Бот не отвечает ({int(diff)} сек. назад)"
-
-        return {
-            "status": status,
-            "last_seen": hb.last_seen.isoformat(),
-            "message": message,
-            "seconds_ago": int(diff),
-        }
-    except Exception as e:
-        logger.error("bot_status_failed: %s", e)
-        return {"status": "error", "message": str(e)}
-
-
-# --- Redmine: поиск users по имени/логину ---
-
-
-@app.get("/users/{user_id}/edit", response_class=HTMLResponse)
-async def users_edit(
-    request: Request,
-    user_id: int,
-    session: AsyncSession = Depends(get_session),
-):
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    row = await session.get(BotUser, user_id)
-    if not row:
-        raise HTTPException(404)
-    version_err = (request.query_params.get("version_err") or "").strip()
-    version_msg = (request.query_params.get("version_msg") or "").strip()
-    uv_stmt = (
-        select(UserVersionRoute)
-        .where(UserVersionRoute.bot_user_id == user_id)
-        .order_by(UserVersionRoute.version_key)
-    )
-    version_rows = list((await session.execute(uv_stmt)).scalars().all())
-    groups_rows = list((await session.execute(select(SupportGroup).order_by(SupportGroup.name.asc()))).scalars().all())
-    notify_catalog, versions_catalog = await _load_catalogs(session)
-    matrix_domain = await _get_matrix_domain_from_db(session)
-    notify_keys = {item["key"] for item in notify_catalog}
-    notify_selected = [str(x).strip() for x in (row.notify or ["all"]) if str(x).strip()]
-    if "all" not in notify_selected:
-        notify_selected = [k for k in notify_selected if k in notify_keys]
-    version_set = set(versions_catalog)
-    selected_versions = [r.version_key for r in version_rows if r.version_key in version_set]
-    return templates.TemplateResponse(
-        request,
-        "user_form.html",
-        {
-            "title": f"Пользователь Redmine {row.redmine_id}",
-            "u": row,
-            "room_localpart": _room_localpart(row.room),
-            "matrix_domain": matrix_domain,
-            "notify_json": json.dumps(row.notify, ensure_ascii=False),
-            "notify_preset": _notify_preset(row.notify),
-            "notify_selected": notify_selected,
-            "groups": _groups_assignable(groups_rows),
-            "group_unassigned_display": GROUP_UNASSIGNED_DISPLAY,
-            "bot_tz": os.getenv("BOT_TIMEZONE", "Europe/Moscow"),
-            "timezone_top_options": _top_timezone_options(),
-            "timezone_all_options": _standard_timezone_options(),
-            "timezone_labels": _timezone_labels(_standard_timezone_options()),
-            "version_routes": version_rows,
-            "version_keys_text": "\n".join(r.version_key for r in version_rows),
-            "version_err": version_err,
-            "version_msg": version_msg,
-            "notify_catalog": notify_catalog,
-            "versions_catalog": versions_catalog,
-            "selected_version_keys": selected_versions,
-            "version_preset": _version_preset(selected_versions, versions_catalog),
-        },
-    )
-
-
-@app.post("/users/{user_id}")
-async def users_update(
-    request: Request,
-    user_id: int,
-    redmine_id: Annotated[int, Form()],
-    room: Annotated[str, Form()],
-    display_name: Annotated[str, Form()] = "",
-    group_id: Annotated[str, Form()] = "",
-    notify_json: Annotated[str, Form()] = "",
-    notify_preset: Annotated[str, Form()] = "all",
-    notify_values: Annotated[list[str], Form()] = [],
-    version_preset: Annotated[str, Form()] = "all",
-    version_values: Annotated[list[str], Form()] = [],
-    version_keys_text: Annotated[str, Form()] = "",
-    version_keys_json: Annotated[str, Form()] = "",
-    timezone_name: Annotated[str, Form()] = "",
-    work_hours: Annotated[str, Form()] = "",
-    work_hours_from: Annotated[str, Form()] = "",
-    work_hours_to: Annotated[str, Form()] = "",
-    work_days_json: Annotated[str, Form()] = "",
-    work_days_values: Annotated[list[str], Form()] = [],
-    dnd: Annotated[str, Form()] = "",
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    notify_catalog, versions_catalog = await _load_catalogs(session)
-    notify_allowed = [item["key"] for item in notify_catalog]
-    _verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    row = await session.get(BotUser, user_id)
-    if not row:
-        raise HTTPException(404)
-    old_room = (row.room or "").strip()
-    new_room = await _build_room_id_async(room.strip(), session)
-    row.redmine_id = redmine_id
-    row.display_name = display_name.strip() or None
-    row.group_id = int(group_id) if str(group_id).isdigit() else None
-    row.room = new_room
-    row.timezone = (timezone_name or "").strip() or None
-    if notify_preset == "all":
-        row.notify = ["all"]
-    elif notify_preset == "new_only":
-        row.notify = ["new"]
-    elif notify_preset == "overdue_only":
-        row.notify = ["overdue"]
-    elif notify_preset == "custom":
-        row.notify = _normalize_notify(notify_values, notify_allowed)
-    else:
-        row.notify = _parse_notify(notify_json)
-    if work_hours_from and work_hours_to:
-        row.work_hours = f"{work_hours_from.strip()}-{work_hours_to.strip()}"
-    else:
-        row.work_hours = work_hours.strip() or None
-    if work_days_values:
-        row.work_days = sorted({int(v) for v in work_days_values if str(v).isdigit()})
-    else:
-        row.work_days = _parse_work_days(work_days_json)
-    row.dnd = dnd in ("on", "true", "1")
-    if version_preset == "all":
-        submitted_versions = list(versions_catalog)
-    elif version_preset == "custom":
-        submitted_versions = _normalize_versions(version_values, versions_catalog)
-    else:
-        submitted_versions = _parse_json_string_list(version_keys_json) or _parse_status_keys_list(version_keys_text)
-    existing_routes = list(
-        (
-            await session.execute(
-                select(UserVersionRoute).where(UserVersionRoute.bot_user_id == user_id)
-            )
-        ).scalars().all()
-    )
-    existing_by_key = {r.version_key: r for r in existing_routes}
-    submitted_set = set(submitted_versions)
-    for r in existing_routes:
-        if r.version_key not in submitted_set:
-            await session.delete(r)
-    for key in submitted_versions:
-        ex = existing_by_key.get(key)
-        if ex:
-            ex.room_id = new_room
-            continue
-        session.add(UserVersionRoute(bot_user_id=user_id, version_key=key, room_id=new_room))
-    if old_room and new_room and old_room != new_room:
-        await session.execute(
-            update(UserVersionRoute)
-            .where(UserVersionRoute.bot_user_id == user_id, UserVersionRoute.room_id == old_room)
-            .values(room_id=new_room)
-        )
-    await _maybe_log_admin_crud(
-        session,
-        user,
-        "bot_user",
-        "update",
-        {"id": user_id, "redmine_id": redmine_id},
-    )
-    return RedirectResponse(f"/users?highlight_user_id={user_id}", status_code=303)
-
-
-@app.post("/users/{user_id}/version-routes/add")
-async def user_version_route_add(
-    request: Request,
-    user_id: int,
-    version_key: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    _verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    row = await session.get(BotUser, user_id)
-    if not row:
-        raise HTTPException(404)
-    room = (row.room or "").strip()
-    if not room:
-        return RedirectResponse(f"/users/{user_id}/edit?version_err=no_room", status_code=303)
-    key = (version_key or "").strip()
-    if not key:
-        return RedirectResponse(f"/users/{user_id}/edit?version_err=empty", status_code=303)
-    exists = await session.execute(
-        select(UserVersionRoute.id).where(
-            UserVersionRoute.bot_user_id == user_id,
-            UserVersionRoute.version_key == key,
-        )
-    )
-    if exists.scalar_one_or_none():
-        return RedirectResponse(f"/users/{user_id}/edit?version_err=exists", status_code=303)
-    session.add(UserVersionRoute(bot_user_id=user_id, version_key=key, room_id=room))
-    await _maybe_log_admin_crud(
-        session,
-        user,
-        "user_version_route",
-        "create",
-        {"bot_user_id": user_id, "version_key": key},
-    )
-    return RedirectResponse(f"/users/{user_id}/edit?version_msg=added", status_code=303)
-
-
-@app.post("/users/{user_id}/version-routes/{route_row_id}/delete")
-async def user_version_route_delete(
-    request: Request,
-    user_id: int,
-    route_row_id: int,
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    _verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    rte = await session.get(UserVersionRoute, route_row_id)
-    if not rte or rte.bot_user_id != user_id:
-        raise HTTPException(404, "Маршрут не найден")
-    vkey = rte.version_key
-    await session.delete(rte)
-    await _maybe_log_admin_crud(
-        session,
-        user,
-        "user_version_route",
-        "delete",
-        {"bot_user_id": user_id, "version_key": vkey, "route_id": route_row_id},
-    )
-    return RedirectResponse(f"/users/{user_id}/edit?version_msg=deleted", status_code=303)
-
-
-@app.post("/users/{user_id}/delete")
-async def users_delete(
-    request: Request,
-    user_id: int,
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    _verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    row = await session.get(BotUser, user_id)
-    if row:
-        uid, rmid = row.id, row.redmine_id
-        await session.delete(row)
-        await _maybe_log_admin_crud(session, user, "bot_user", "delete", {"id": uid, "redmine_id": rmid})
-    return RedirectResponse("/users", status_code=303)
-
-
-# --- Вспомогательные функции для Matrix room_id ---
+# --- Room helpers (used by routes/users.py via late import) ---
 
 
 def _room_localpart(room_id: str) -> str:
-    """Извлекает localpart из room_id: !xxxxxx:server → xxxxxx"""
+    """Извлекает localpart из room_id: !xxxxxx:server -> xxxxxx"""
     if not room_id:
         return ""
-    # room_id формат: !<opaque>:<domain>
     if room_id.startswith("!") and ":" in room_id:
         return room_id[1:].split(":", 1)[0]
     return room_id
@@ -2534,7 +1287,7 @@ async def _build_room_id_async(localpart: str, session: AsyncSession) -> str:
     if not localpart or not domain:
         return localpart
     if localpart.startswith("!"):
-        return localpart  # уже полный ID комнаты
+        return localpart
     if localpart.startswith("@"):
         return f"{localpart.split(':', 1)[0]}:{domain}" if ":" not in localpart else localpart
     return f"!{localpart}:{domain}"
@@ -2673,7 +1426,11 @@ async def regenerate_db_config(
         except Exception as e:
             # Откатываем изменения в .env при ошибке
             _update_env_file(
-                {k: current_config[k.replace("POSTGRES_", "").lower()] for k in updates if k in current_config}
+                {
+                    k: current_config[k.replace("POSTGRES_", "").lower()]
+                    for k in updates
+                    if k in current_config
+                }
             )
             raise HTTPException(500, f"Не удалось обновить пароль в PostgreSQL: {e}") from e
 

@@ -21,6 +21,7 @@ router = APIRouter(tags=["app_users"])
 def _admin() -> object:
     """Late import to avoid circular dependency with main.py."""
     import admin.main as _m
+
     return _m
 
 
@@ -42,7 +43,13 @@ async def app_users_page(
         {"users": users, "csrf_token": csrf_token},
     )
     if set_cookie:
-        resp.set_cookie(admin.CSRF_COOKIE_NAME, csrf_token, httponly=True, secure=admin.COOKIE_SECURE, samesite="lax")
+        resp.set_cookie(
+            admin.CSRF_COOKIE_NAME,
+            csrf_token,
+            httponly=True,
+            secure=admin.COOKIE_SECURE,
+            samesite="lax",
+        )
     return resp
 
 
@@ -80,7 +87,13 @@ async def app_user_reset_password_admin(
             },
         )
         if set_cookie:
-            resp.set_cookie(admin.CSRF_COOKIE_NAME, csrf_out, httponly=True, secure=admin.COOKIE_SECURE, samesite="lax")
+            resp.set_cookie(
+                admin.CSRF_COOKIE_NAME,
+                csrf_out,
+                httponly=True,
+                secure=admin.COOKIE_SECURE,
+                samesite="lax",
+            )
         return resp
     target.password_hash = hash_password(new_password)
     target.session_version = (target.session_version or 1) + 1
@@ -127,7 +140,13 @@ async def app_user_change_login_admin(
             },
         )
         if set_cookie:
-            resp.set_cookie(admin.CSRF_COOKIE_NAME, csrf_out, httponly=True, secure=admin.COOKIE_SECURE, samesite="lax")
+            resp.set_cookie(
+                admin.CSRF_COOKIE_NAME,
+                csrf_out,
+                httponly=True,
+                secure=admin.COOKIE_SECURE,
+                samesite="lax",
+            )
         return resp
 
     new_login_n = admin._normalize_login(new_login)

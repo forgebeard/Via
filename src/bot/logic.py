@@ -15,10 +15,10 @@ from zoneinfo import ZoneInfo
 # КОНСТАНТЫ
 # ═══════════════════════════════════════════════════════════════════════════
 
-STATUS_NEW           = "Новая"
+STATUS_NEW = "Новая"
 STATUS_INFO_PROVIDED = "Информация предоставлена"
-STATUS_REOPENED      = "Открыто повторно"
-STATUS_RV            = "Передано в работу.РВ"
+STATUS_REOPENED = "Открыто повторно"
+STATUS_RV = "Передано в работу.РВ"
 
 STATUSES_TRANSFERRED = {
     "Передано в работу.РВ",
@@ -29,13 +29,13 @@ STATUSES_TRANSFERRED = {
 }
 
 NOTIFICATION_TYPES: dict[str, tuple[str, str]] = {
-    "new":           ("🆕", "Новая задача"),
-    "info":          ("✅", "Информация предоставлена"),
-    "reminder":      ("⏰", "Напоминание"),
-    "overdue":       ("⚠️", "Просроченная задача"),
+    "new": ("🆕", "Новая задача"),
+    "info": ("✅", "Информация предоставлена"),
+    "reminder": ("⏰", "Напоминание"),
+    "overdue": ("⚠️", "Просроченная задача"),
     "status_change": ("🔄", "Смена статуса"),
     "issue_updated": ("📝", "Задача обновлена"),
-    "reopened":      ("🔁", "Открыто повторно"),
+    "reopened": ("🔁", "Открыто повторно"),
 }
 
 # Имена статусов по ID
@@ -69,6 +69,9 @@ PRIORITY_NAMES: dict[str, str] = {
     "4": "1 (Аварийный)",
 }
 
+# Приоритет «Аварийный» — пробивает DND и выходные
+PRIORITY_EMERGENCY = "1 (Аварийный)"
+
 ID_FIELD_RESOLVERS: dict[str, dict[str, str]] = {
     "status_id": STATUS_NAMES,
     "priority_id": PRIORITY_NAMES,
@@ -97,6 +100,7 @@ HIDDEN_FIELDS_PATTERN = re.compile(r"^\d+$")
 # ═══════════════════════════════════════════════════════════════════════════
 # УТИЛИТЫ
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def plural_days(n: int) -> str:
     """Склонение слова 'день': 1 день, 2 дня, 5 дней."""
@@ -151,11 +155,15 @@ def validate_users(users: list[dict]) -> tuple[bool, list[str]]:
             if field not in u:
                 errors.append(f"USERS[{i}]: отсутствует обязательное поле '{field}'")
         if "redmine_id" in u and not isinstance(u["redmine_id"], int):
-            errors.append(f"USERS[{i}]: 'redmine_id' должен быть int, получено {type(u['redmine_id']).__name__}")
+            errors.append(
+                f"USERS[{i}]: 'redmine_id' должен быть int, получено {type(u['redmine_id']).__name__}"
+            )
         if "room" in u and (not isinstance(u["room"], str) or not u["room"].strip()):
             errors.append(f"USERS[{i}]: 'room' должен быть непустой строкой")
         if "notify" in u and not isinstance(u["notify"], list):
-            errors.append(f"USERS[{i}]: 'notify' должен быть списком, получено {type(u['notify']).__name__}")
+            errors.append(
+                f"USERS[{i}]: 'notify' должен быть списком, получено {type(u['notify']).__name__}"
+            )
     return len(errors) == 0, errors
 
 

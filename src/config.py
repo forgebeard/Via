@@ -25,7 +25,7 @@ logger = logging.getLogger("redmine_bot")
 # ═══════════════════════════════════════════════════════════════
 
 BASE_DIR = Path(__file__).resolve().parent.parent  # Корень проекта
-DATA_DIR = BASE_DIR / "data"                       # State-файлы JSON
+DATA_DIR = BASE_DIR / "data"  # State-файлы JSON
 
 
 def want_log_file() -> bool:
@@ -104,6 +104,7 @@ def env_placeholder_hints() -> list[str]:
         hints.append("REDMINE_API_KEY не заменён (your_api_key_here)")
     return hints
 
+
 # ═══════════════════════════════════════════════════════════════
 # REDMINE
 # ═══════════════════════════════════════════════════════════════
@@ -126,49 +127,70 @@ CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "90"))
 REMINDER_AFTER = int(os.getenv("REMINDER_AFTER", "3600"))
 
 # ═══════════════════════════════════════════════════════════════
-# СТАТУСЫ REDMINE
+# СТАТУСЫ REDMINE и приоритеты — re-export из bot.logic (единственный источник)
 # ═══════════════════════════════════════════════════════════════
 
-STATUS_NEW = "Новая"
-STATUS_INFO_PROVIDED = "Информация предоставлена"
-STATUS_REOPENED = "Открыто повторно"
-STATUS_RV = "Передано в работу.РВ"
+from bot.logic import (  # noqa: E402, I001
+    NOTIFICATION_TYPES,
+    PRIORITY_EMERGENCY,
+    PRIORITY_NAMES,
+    STATUSES_TRANSFERRED,
+    STATUS_INFO_PROVIDED,
+    STATUS_NAMES,
+    STATUS_NEW,
+    STATUS_REOPENED,
+    STATUS_RV,
+    should_notify,
+    validate_users,
+)
 
-STATUSES_TRANSFERRED = {
-    "Передано в работу.РВ",
-    "Передано в работу.РА.Стд",
-    "Передано в работу.РА.Пром",
-    "Передано в работу.РБД",
-    "Передано в работу.ВРМ",
-}
-
-# ═══════════════════════════════════════════════════════════════
-# СПРАВОЧНИКИ (хардкод, потом можно загружать из API)
-# ═══════════════════════════════════════════════════════════════
-
-STATUS_NAMES = {
-    "1": "Новая", "2": "В работе", "5": "Завершена",
-    "6": "Отклонена", "8": "Ожидание", "12": "Запрос информации",
-    "13": "Информация предоставлена", "17": "Ожидается решение",
-    "18": "Открыто повторно", "22": "Передано в работу.РВ",
-    "23": "Передано в работу.РБД", "25": "Передано в работу.РА.Стд",
-    "26": "Передано в работу.РА.Пром", "27": "Проектирование",
-    "28": "Передано в работу.ВРМ", "29": "Приостановлено",
-    "30": "Передано на L2", "31": "Эскалация",
-    "32": "Решен", "33": "Возвращен (L1)",
-}
-
-PRIORITY_NAMES = {
-    "1": "4 (Низкий)", "2": "3 (Нормальный)",
-    "3": "2 (Высокий)", "4": "1 (Аварийный)",
-}
-
-# Приоритет «Аварийный» — пробивает DND и выходные
-PRIORITY_EMERGENCY = "1 (Аварийный)"
+__all__ = [
+    # env / paths
+    "BASE_DIR",
+    "DATA_DIR",
+    "LOG_FILE",
+    "want_log_file",
+    "log_file_max_bytes",
+    "log_file_backup_count",
+    "env_placeholder_hints",
+    # matrix / redmine
+    "MATRIX_HOMESERVER",
+    "MATRIX_ACCESS_TOKEN",
+    "MATRIX_USER_ID",
+    "MATRIX_DEVICE_ID",
+    "REDMINE_URL",
+    "REDMINE_API_KEY",
+    # tz / intervals
+    "BOT_TIMEZONE",
+    "CHECK_INTERVAL",
+    "REMINDER_AFTER",
+    # statuses (re-export from bot.logic)
+    "STATUS_NEW",
+    "STATUS_INFO_PROVIDED",
+    "STATUS_REOPENED",
+    "STATUS_RV",
+    "STATUSES_TRANSFERRED",
+    "STATUS_NAMES",
+    "PRIORITY_NAMES",
+    "PRIORITY_EMERGENCY",
+    "NOTIFICATION_TYPES",
+    # validation (re-export from bot.logic)
+    "should_notify",
+    "validate_users",
+    # users
+    "USERS",
+    "STATUS_ROOM_MAP",
+    "VERSION_ROOM_MAP",
+    "ROOM_RED_OS_KEY",
+    "ROOM_VIRT_KEY",
+    # env check
+    "validate_required_env",
+]
 
 # ═══════════════════════════════════════════════════════════════
 # ПОЛЬЗОВАТЕЛИ (JSON из .env)
 # ═══════════════════════════════════════════════════════════════
+
 
 def _parse_json_env(var_name: str, default: str = "{}") -> dict | list:
     """Парсит JSON из переменной окружения. При ошибке — default."""
@@ -194,42 +216,6 @@ ROOM_VIRT_KEY = "РЕД Виртуализация"
 # ═══════════════════════════════════════════════════════════════
 # ВАЛИДАЦИЯ
 # ═══════════════════════════════════════════════════════════════
-
-def validate_users(users: list) -> tuple[bool, list[str]]:
-    """
-    Проверяет структуру USERS.
-    Возвращает (ok, errors). Вызывается при старте бота.
-    """
-    errors = []
-    required_fields = ("redmine_id", "room")
-
-    for i, u in enumerate(users):
-        for field in required_fields:
-            if field not in u:
-                errors.append(f"USERS[{i}]: отсутствует поле '{field}'")
-        if "redmine_id" in u and not isinstance(u["redmine_id"], int):
-            errors.append(
-                f"USERS[{i}]: 'redmine_id' должен быть int, "
-                f"получено {type(u['redmine_id']).__name__}"
-            )
-        if "room" in u and (not isinstance(u["room"], str) or not u["room"].strip()):
-            errors.append(f"USERS[{i}]: 'room' должен быть непустой строкой")
-        if "notify" in u and not isinstance(u["notify"], list):
-            errors.append(
-                f"USERS[{i}]: 'notify' должен быть списком, "
-                f"получено {type(u['notify']).__name__}"
-            )
-
-    return len(errors) == 0, errors
-
-
-def should_notify(user_cfg: dict, notification_type: str) -> bool:
-    """
-    Проверяет подписку пользователя на тип уведомления.
-    "all" — подписан на всё.
-    """
-    notify_list = user_cfg.get("notify", ["all"])
-    return "all" in notify_list or notification_type in notify_list
 
 
 def validate_required_env() -> tuple[bool, list[str]]:

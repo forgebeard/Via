@@ -20,6 +20,7 @@ router = APIRouter(tags=["secrets"])
 def _admin() -> object:
     """Late import to avoid circular dependency with main.py."""
     import admin.main as _m
+
     return _m
 
 
@@ -41,7 +42,13 @@ async def secrets_page(
         {"items": items, "error": None, "csrf_token": csrf_token},
     )
     if set_cookie:
-        resp.set_cookie(admin.CSRF_COOKIE_NAME, csrf_token, httponly=True, secure=admin.COOKIE_SECURE, samesite="lax")
+        resp.set_cookie(
+            admin.CSRF_COOKIE_NAME,
+            csrf_token,
+            httponly=True,
+            secure=admin.COOKIE_SECURE,
+            samesite="lax",
+        )
     return resp
 
 
@@ -67,7 +74,9 @@ async def secrets_save(
     r = await session.execute(select(AppSecret).where(AppSecret.name == name))
     row = r.scalar_one_or_none()
     if row is None:
-        row = AppSecret(name=name, ciphertext=enc.ciphertext, nonce=enc.nonce, key_version=enc.key_version)
+        row = AppSecret(
+            name=name, ciphertext=enc.ciphertext, nonce=enc.nonce, key_version=enc.key_version
+        )
         session.add(row)
     else:
         row.ciphertext = enc.ciphertext

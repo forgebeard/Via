@@ -10,7 +10,7 @@
 
 from datetime import time
 
-from config import PRIORITY_EMERGENCY
+from bot.logic import PRIORITY_EMERGENCY
 from utils import now_tz
 
 # ═══════════════════════════════════════════════════════════════

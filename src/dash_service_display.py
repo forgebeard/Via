@@ -130,7 +130,9 @@ def bot_status_label_ru(docker: dict[str, Any]) -> str:
     return "Неизвестно"
 
 
-def service_card_context(docker: dict[str, Any], cycle: dict[str, Any], tz_name: str) -> dict[str, Any]:
+def service_card_context(
+    docker: dict[str, Any], cycle: dict[str, Any], tz_name: str
+) -> dict[str, Any]:
     """
     Контекст для partial «Сервис»: подписи, дата старта и uptime только пока контейнер
     запущен или в состоянии перезапуска (по данным Docker).

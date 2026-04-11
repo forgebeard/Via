@@ -68,6 +68,4 @@ async def room_send_with_retry(client, room_id, content):
 
     if last_err is not None:
         raise last_err
-    raise RuntimeError(
-        f"Matrix room_send failed after {MAX_RETRIES} attempts (room={room_id})"
-    )
+    raise RuntimeError(f"Matrix room_send failed after {MAX_RETRIES} attempts (room={room_id})")

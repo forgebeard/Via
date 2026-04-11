@@ -107,4 +107,3 @@ def decrypt_secret(ciphertext: bytes, nonce: bytes, key: bytes) -> str:
     aes = AESGCM(key)
     pt = aes.decrypt(nonce, ciphertext, None)
     return pt.decode("utf-8")
-

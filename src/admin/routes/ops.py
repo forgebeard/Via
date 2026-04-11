@@ -49,7 +49,8 @@ async def _audit_op(
 ) -> None:
     row = BotOpsAudit(
         actor_login=(actor_login or "").strip().lower() or None,
-        action=action, status=status,
+        action=action,
+        status=status,
         detail=(detail or "")[:2000] or None,
     )
     session.add(row)
@@ -61,8 +62,12 @@ async def _audit_op(
     if d:
         parts.append(f"detail={d}")
     _append_audit_file_line(" ".join(parts))
-    logger.info(json.dumps({"level": "AUDIT", "action": action, "status": status,
-        "actor_login": al, "detail": d}, ensure_ascii=False))
+    logger.info(
+        json.dumps(
+            {"level": "AUDIT", "action": action, "status": status, "actor_login": al, "detail": d},
+            ensure_ascii=False,
+        )
+    )
 
 
 def _restart_in_background(actor_login: str | None) -> None:
@@ -123,17 +128,26 @@ async def bot_ops_action(
     res_ok: dict | None = None
     try:
         res_ok = control_service(action)
-        await _audit_op(session, f"BOT_{action.upper()}", "ok", actor_login=actor,
-            detail=json.dumps(res_ok, ensure_ascii=False))
+        await _audit_op(
+            session,
+            f"BOT_{action.upper()}",
+            "ok",
+            actor_login=actor,
+            detail=json.dumps(res_ok, ensure_ascii=False),
+        )
         ops_q = f"{action}_ok"
     except DockerControlError as e:
         logger.warning("bot_ops DockerControlError action=%s: %s", action, e)
         ops_detail_err = str(e)
-        await _audit_op(session, f"BOT_{action.upper()}", "error", actor_login=actor, detail=str(e)[:2000])
+        await _audit_op(
+            session, f"BOT_{action.upper()}", "error", actor_login=actor, detail=str(e)[:2000]
+        )
     except Exception as e:
         logger.exception("bot_ops unexpected error action=%s", action)
         ops_detail_err = str(e)
-        await _audit_op(session, f"BOT_{action.upper()}", "error", actor_login=actor, detail=str(e)[:2000])
+        await _audit_op(
+            session, f"BOT_{action.upper()}", "error", actor_login=actor, detail=str(e)[:2000]
+        )
     try:
         await session.commit()
     except Exception:
@@ -146,9 +160,13 @@ async def bot_ops_action(
             cid = str(r.get("container_id") or "")
             http_st = r.get("docker_http_status")
             http_part = f" http_status={http_st}" if http_st is not None else ""
-            _append_ops_to_events_log(f"Docker bot/{action} ok by={actor} container_id={cid[:20]}{http_part}")
+            _append_ops_to_events_log(
+                f"Docker bot/{action} ok by={actor} container_id={cid[:20]}{http_part}"
+            )
         elif ops_q == f"{action}_error":
-            _append_ops_to_events_log(f"Docker bot/{action} failed by={actor}: {_truncate_ops_detail(ops_detail_err or 'unknown', 400)}")
+            _append_ops_to_events_log(
+                f"Docker bot/{action} failed by={actor}: {_truncate_ops_detail(ops_detail_err or 'unknown', 400)}"
+            )
     q: dict[str, str] = {"ops": ops_q}
     if ops_detail_err and ops_q.endswith("_error"):
         q["ops_detail"] = _truncate_ops_detail(ops_detail_err)
@@ -158,6 +176,7 @@ async def bot_ops_action(
 @router.post("/api/bot/heartbeat")
 async def bot_heartbeat(session: AsyncSession = Depends(get_session)):
     from sqlalchemy import insert
+
     stmt = insert(BotHeartbeat).values(
         instance_id=os.getenv("BOT_INSTANCE_ID", "default"),
         heartbeat_at=_now_utc(),

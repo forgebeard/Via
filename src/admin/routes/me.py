@@ -20,6 +20,7 @@ router = APIRouter(tags=["me"])
 def _admin() -> object:
     """Late import to avoid circular dependency with main.py."""
     import admin.main as _m
+
     return _m
 
 
@@ -69,7 +70,13 @@ async def me_settings_get(
             status_code=400,
         )
         if set_cookie:
-            resp.set_cookie(admin.CSRF_COOKIE_NAME, csrf_token, httponly=True, secure=admin.COOKIE_SECURE, samesite="lax")
+            resp.set_cookie(
+                admin.CSRF_COOKIE_NAME,
+                csrf_token,
+                httponly=True,
+                secure=admin.COOKIE_SECURE,
+                samesite="lax",
+            )
         return resp
 
     r = await session.execute(select(BotUser).where(BotUser.redmine_id == redmine_id))
@@ -102,7 +109,9 @@ async def me_settings_get(
             "work_days_json": json.dumps(bot_user.work_days, ensure_ascii=False)
             if bot_user.work_days is not None
             else "",
-            "work_days_selected": bot_user.work_days if bot_user.work_days is not None else [0, 1, 2, 3, 4],
+            "work_days_selected": bot_user.work_days
+            if bot_user.work_days is not None
+            else [0, 1, 2, 3, 4],
             "dnd": bool(bot_user.dnd),
             "error": None,
             "matrix_bot_mxid": admin._matrix_bot_mxid(),
@@ -110,7 +119,13 @@ async def me_settings_get(
         },
     )
     if set_cookie:
-        resp.set_cookie(admin.CSRF_COOKIE_NAME, csrf_token, httponly=True, secure=admin.COOKIE_SECURE, samesite="lax")
+        resp.set_cookie(
+            admin.CSRF_COOKIE_NAME,
+            csrf_token,
+            httponly=True,
+            secure=admin.COOKIE_SECURE,
+            samesite="lax",
+        )
     return resp
 
 

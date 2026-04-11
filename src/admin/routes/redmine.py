@@ -6,7 +6,6 @@ import asyncio
 import json
 from datetime import datetime
 from html import escape as html_escape
-from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -18,6 +17,7 @@ router = APIRouter(tags=["redmine"])
 
 
 # ── Circuit breaker (перенесён из main.py) ───────────────────────────────────
+
 
 class _RedmineSearchBreaker:
     """In-memory circuit breaker для поиска пользователей Redmine."""
@@ -45,10 +45,13 @@ _redmine_search_breaker = _RedmineSearchBreaker()
 def _admin() -> object:
     """Late import to avoid circular dependency with main.py."""
     import admin.main as _m
+
     return _m
 
 
-def _fetch_redmine_user_by_id(redmine_user_id: int, redmine_url: str, redmine_key: str) -> tuple[dict | None, str | None]:
+def _fetch_redmine_user_by_id(
+    redmine_user_id: int, redmine_url: str, redmine_key: str
+) -> tuple[dict | None, str | None]:
     """GET /users/:id.json → (user dict, None) или (None, error_code)."""
     if not redmine_url or not redmine_key:
         return None, "not_configured"
@@ -75,6 +78,7 @@ def _fetch_redmine_user_by_id(redmine_user_id: int, redmine_url: str, redmine_ke
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
+
 
 @router.get("/redmine/users/search", response_class=HTMLResponse)
 async def redmine_users_search(
@@ -149,7 +153,7 @@ async def redmine_users_search(
             label = login or str(uid)
         opts.append(
             f'<option value="{int(uid)}" data-display-name="{html_escape(label)}">{html_escape(label)}'
-            f'{(" (" + html_escape(login) + ")") if login else ""}</option>'
+            f"{(' (' + html_escape(login) + ')') if login else ''}</option>"
         )
     if not opts:
         return HTMLResponse('<option value="">Ничего не найдено</option>')
@@ -157,7 +161,9 @@ async def redmine_users_search(
 
 
 @router.get("/redmine/users/lookup")
-async def redmine_user_lookup(request: Request, user_id: int, session: AsyncSession = Depends(get_session)):
+async def redmine_user_lookup(
+    request: Request, user_id: int, session: AsyncSession = Depends(get_session)
+):
     """JSON для формы пользователя: по числовому Redmine user id подставить отображаемое имя."""
     user = getattr(request.state, "current_user", None)
     if not user or getattr(user, "role", "") != "admin":

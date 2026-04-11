@@ -163,7 +163,11 @@ def parse_events_log_for_table(raw: str) -> list[ParsedLogLine]:
     Служебные сообщения об отсутствии файла — одна строка таблицы без sort_key.
     """
     raw_str = str(raw)
-    if not raw_str or raw_str.startswith("Файл лога не найден") or raw_str.startswith("Не удалось прочитать"):
+    if (
+        not raw_str
+        or raw_str.startswith("Файл лога не найден")
+        or raw_str.startswith("Не удалось прочитать")
+    ):
         return [_unparsed_line(raw_str)]
 
     tz = _display_tz()
@@ -229,7 +233,11 @@ def events_log_to_csv_bytes(lines: list[ParsedLogLine], *, max_rows: int = 50_00
 
 def format_events_log_for_ui(raw: str) -> str:
     raw_str = str(raw)
-    if not raw_str or raw_str.startswith("Файл лога не найден") or raw_str.startswith("Не удалось прочитать"):
+    if (
+        not raw_str
+        or raw_str.startswith("Файл лога не найден")
+        or raw_str.startswith("Не удалось прочитать")
+    ):
         return raw_str
     assume_utc = _parse_as_utc()
     tz = _display_tz()

@@ -22,10 +22,12 @@ def _admin() -> object:
     (tests import 'src.admin.main', not 'admin.main').
     """
     import admin.main as _m
+
     return _m
 
 
 # ── GET /, /dashboard ────────────────────────────────────────────────────────
+
 
 async def _dashboard_page(request: Request, session: AsyncSession):
     admin = _admin()
@@ -83,6 +85,7 @@ async def dashboard(
 
 
 # ── GET /dash/service-strip ──────────────────────────────────────────────────
+
 
 @router.get("/dash/service-strip", response_class=HTMLResponse)
 async def dash_service_strip(request: Request):

@@ -18,10 +18,12 @@ router = APIRouter(tags=["routes_mgmt"])
 def _admin() -> object:
     """Late import to avoid circular dependency with main.py."""
     import admin.main as _m
+
     return _m
 
 
 # ── Status routes (legacy) ───────────────────────────────────────────────────
+
 
 @router.get("/routes/status")
 async def routes_status_legacy_redirect():
@@ -99,6 +101,7 @@ async def routes_status_del(
 
 
 # ── Version routes (global) ──────────────────────────────────────────────────
+
 
 @router.get("/routes/version", response_class=HTMLResponse)
 async def routes_version(

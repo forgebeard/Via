@@ -1,0 +1,10 @@
+{# Шаблон HTML-уведомления для Matrix #}
+<blockquote>
+<strong>{{ emoji }} {{ title }}</strong><br/>
+<br/>
+<a href="{{ issue_url }}">#{{ issue_id }}</a> — {{ subject }}<br/>
+<br/>
+Статус: <strong>{{ status }}</strong><br/>
+Приоритет: {{ priority }}{% if version %}<br/>Версия: {{ version }}{% endif %}{% if due_date %}<br/>📅 Срок: {{ due_date }}{% if overdue_text %}{{ overdue_text }}{% endif %}{% endif %}{% if extra_text %}<br/><br/>{{ extra_text }}{% endif %}<br/><br/>
+🔗 <a href="{{ issue_url }}">Открыть задачу</a>
+</blockquote>

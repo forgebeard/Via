@@ -32,7 +32,7 @@ def _admin_asset_version() -> str:
 
 
 _jinja_env.globals["asset_version"] = _admin_asset_version
-_jinja_env.globals["bot_timezone"] = lambda: (os.getenv("BOT_TIMEZONE") or "Europe/Moscow")
+_jinja_env.globals["bot_timezone"] = lambda: os.getenv("BOT_TIMEZONE") or "Europe/Moscow"
 
 
 def _format_datetime_ui(dt) -> str:
@@ -42,6 +42,7 @@ def _format_datetime_ui(dt) -> str:
     if isinstance(dt, str):
         try:
             from datetime import datetime as _dt
+
             dt = _dt.fromisoformat(dt)
         except ValueError:
             return str(dt)
@@ -77,13 +78,19 @@ DASHBOARD_PATH = "/dashboard"
 LOGIN_PATH = "/login"
 
 EXCLUDED_PATHS = {
-    "/health", "/health/live", "/health/ready",
-    "/login", "/logout", SETUP_PATH,
-    "/forgot-password", "/reset-password",
+    "/health",
+    "/health/live",
+    "/health/ready",
+    "/login",
+    "/logout",
+    SETUP_PATH,
+    "/forgot-password",
+    "/reset-password",
     "/static/",
 }
 
 # ── Rate limiter ────────────────────────────────────────────────────────────
+
 
 class _SimpleRateLimiter:
     def __init__(self):
@@ -100,6 +107,7 @@ class _SimpleRateLimiter:
         self._hits[key].append(now)
         return True
 
+
 _rate_limiter = _SimpleRateLimiter()
 
 # ── Admin existence cache ───────────────────────────────────────────────────
@@ -112,25 +120,32 @@ _integration_status_cache = TTLCache(maxsize=1, ttl=30)
 
 # ── Time helpers ─────────────────────────────────────────────────────────────
 
+
 def _now_utc() -> datetime:
     return datetime.now(tz=UTC)
+
 
 # ── Login helpers ───────────────────────────────────────────────────────────
 
 _ALLOWED_LOGINS_RAW = (os.getenv("ADMIN_LOGINS") or "").strip()
+
 
 def _login_allowed(login: str) -> bool:
     if not _ALLOWED_LOGINS_RAW:
         return True
     return login in (entry.strip() for entry in _ALLOWED_LOGINS_RAW.split(","))
 
+
 _GENERIC_LOGIN_ERROR = "Неверный логин или пароль"
+
 
 def _generic_login_error() -> str:
     return _GENERIC_LOGIN_ERROR
 
+
 def _normalize_login(raw: str) -> str:
     return (raw or "").strip().lower()
+
 
 def _login_format_ok(login: str) -> tuple[bool, str | None]:
     if not login:
@@ -141,7 +156,9 @@ def _login_format_ok(login: str) -> tuple[bool, str | None]:
         return False, "Логин: 3–255 символов, латиница, цифры и символы . _ + - @"
     return True, None
 
+
 # ── CSRF helpers ─────────────────────────────────────────────────────────────
+
 
 def _ensure_csrf(request: Request) -> tuple[str, bool]:
     token = request.cookies.get(CSRF_COOKIE_NAME, "")
@@ -150,13 +167,17 @@ def _ensure_csrf(request: Request) -> tuple[str, bool]:
     token = secrets.token_urlsafe(32)
     return token, True
 
+
 def _verify_csrf(request: Request, token: str) -> None:
     from fastapi import HTTPException
+
     cookie = request.cookies.get(CSRF_COOKIE_NAME, "")
     if not token or token != cookie:
         raise HTTPException(403, "Неверный CSRF-токен")
 
+
 # ── Client IP ────────────────────────────────────────────────────────────────
+
 
 def _client_ip(request: Request) -> str:
     forwarded = request.headers.get("x-forwarded-for", "")
@@ -164,7 +185,9 @@ def _client_ip(request: Request) -> str:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "127.0.0.1"
 
+
 # ── Has admin ────────────────────────────────────────────────────────────────
+
 
 async def _has_admin(session, use_cache: bool = True) -> bool:
     if use_cache:
@@ -174,15 +197,16 @@ async def _has_admin(session, use_cache: bool = True) -> bool:
     from sqlalchemy import select
 
     from database.models import BotAppUser
-    r = await session.execute(
-        select(BotAppUser.id).where(BotAppUser.role == "admin").limit(1)
-    )
+
+    r = await session.execute(select(BotAppUser.id).where(BotAppUser.role == "admin").limit(1))
     has = r.scalar_one_or_none() is not None
     if use_cache:
         _admin_exists_cache["flag"] = has
     return has
 
+
 # ── Events log ───────────────────────────────────────────────────────────────
+
 
 def _append_ops_to_events_log(line: str) -> None:
     events_log_path = (os.getenv("ADMIN_EVENTS_LOG_PATH") or "").strip()
@@ -209,7 +233,9 @@ def _append_audit_file_line(message: str) -> None:
     except Exception as e:
         logger.warning("audit_log write error: %s", e)
 
+
 # ── Secret masking ───────────────────────────────────────────────────────────
+
 
 def _mask_secret(value: str | None, mask_url: bool = False) -> str:
     if not value:
@@ -220,7 +246,9 @@ def _mask_secret(value: str | None, mask_url: bool = False) -> str:
         return "•" * len(value)
     return value[:2] + "•" * (len(value) - 4) + value[-2:]
 
+
 # ── Catalog parsing ──────────────────────────────────────────────────────────
+
 
 def _parse_catalog_payload(notify_json: str, versions_json: str) -> tuple[list[str], list[str]]:
     try:

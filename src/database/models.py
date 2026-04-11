@@ -75,7 +75,9 @@ class GroupVersionRoute(Base):
     """Версия Redmine (подстрока в названии версии задачи) → Matrix-комната для группы."""
 
     __tablename__ = "group_version_routes"
-    __table_args__ = (UniqueConstraint("group_id", "version_key", name="uq_group_version_routes_group_version"),)
+    __table_args__ = (
+        UniqueConstraint("group_id", "version_key", name="uq_group_version_routes_group_version"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     group_id: Mapped[int] = mapped_column(
@@ -92,7 +94,9 @@ class UserVersionRoute(Base):
     """Версия Redmine → Matrix-комната для пользователя бота (личные доп. маршруты)."""
 
     __tablename__ = "user_version_routes"
-    __table_args__ = (UniqueConstraint("bot_user_id", "version_key", name="uq_user_version_routes_user_version"),)
+    __table_args__ = (
+        UniqueConstraint("bot_user_id", "version_key", name="uq_user_version_routes_user_version"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     bot_user_id: Mapped[int] = mapped_column(
@@ -155,9 +159,7 @@ class BotUserLease(Base):
 
     # Если несколько инстансов бота одновременно, lease гарантирует:
     # один инстанс выполняет check_user_issues(user) в рамках одного цикла.
-    user_redmine_id: Mapped[int] = mapped_column(
-        BigInteger, primary_key=True, nullable=False
-    )
+    user_redmine_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, nullable=False)
     lease_owner_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
     lease_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -222,9 +224,7 @@ class BotMagicToken(Base):
 class BotSession(Base):
     __tablename__ = "bot_sessions"
 
-    session_token: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True
-    )
+    session_token: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     session_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -270,6 +270,7 @@ class AppSecret(Base):
 
 class RedmineStatus(Base):
     """Справочник статусов Redmine (загружается из API или вручную)."""
+
     __tablename__ = "redmine_statuses"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -284,6 +285,7 @@ class RedmineStatus(Base):
 
 class NotificationType(Base):
     """Типы уведомлений (эмодзи, название, ключ)."""
+
     __tablename__ = "notification_types"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -296,6 +298,7 @@ class NotificationType(Base):
 
 class CycleSettings(Base):
     """Настройки цикла опроса бота (интервалы, таймауты)."""
+
     __tablename__ = "cycle_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

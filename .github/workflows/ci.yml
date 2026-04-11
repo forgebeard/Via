@@ -36,12 +36,16 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt -r requirements-test.txt
+      - name: Ruff lint check
+        run: python -m ruff check src/
+      - name: Ruff format check
+        run: python -m ruff format --check src/
       - name: pytest (unit + API, без Playwright)
         run: |
           alembic upgrade head
           alembic downgrade -1 || true
           alembic upgrade head
-          python -m pytest tests/ -q --tb=short --ignore=tests/e2e --cov=src --cov-report=term-missing
+          python -m pytest tests/ -q --tb=short --ignore=tests/e2e --cov=src --cov-report=term-missing --cov-fail-under=60
 
   e2e:
     runs-on: ubuntu-latest

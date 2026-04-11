@@ -75,7 +75,9 @@ async def try_acquire_user_lease(
             "lease_owner_id": lease_owner_id,
             "lease_until": lease_until,
         },
-        where=or_(BotUserLease.lease_until < func.now(), BotUserLease.lease_owner_id == lease_owner_id),
+        where=or_(
+            BotUserLease.lease_until < func.now(), BotUserLease.lease_owner_id == lease_owner_id
+        ),
     ).returning(BotUserLease.user_redmine_id)
 
     res = await session.execute(stmt)
@@ -202,4 +204,3 @@ async def delete_state_rows_not_in_open(
         )
     )
     return getattr(res, "rowcount", 0) or 0
-

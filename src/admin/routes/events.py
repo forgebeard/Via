@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import re
-
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from sqlalchemy.ext.asyncio import AsyncSession
 from urllib.parse import urlencode
 
-from database.session import get_session
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
+
 from events_log_display import (
-    admin_events_log_timestamp_now,
     events_log_to_csv_bytes,
     filter_parsed_lines_by_local_date,
     parse_events_log_for_table,
@@ -25,10 +22,12 @@ router = APIRouter(tags=["events"])
 def _admin() -> object:
     """Late import to avoid circular dependency with main.py."""
     import admin.main as _m
+
     return _m
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def _events_filter_query_dict(
     date_from: str,
@@ -61,7 +60,9 @@ def _normalize_time_filter(value) -> str:
 def _load_filtered_event_lines(date_from_s, date_to_s, time_at_s):
     admin = _admin()
     path = admin._admin_events_log_path()
-    raw, truncated = admin._read_events_log_scan(path, max_bytes=admin._admin_events_log_scan_bytes())
+    raw, truncated = admin._read_events_log_scan(
+        path, max_bytes=admin._admin_events_log_scan_bytes()
+    )
     parsed = parse_events_log_for_table(raw)
     tz = bot_display_timezone()
     df = parse_ui_date_param(date_from_s)
@@ -83,13 +84,13 @@ def _load_filtered_event_lines(date_from_s, date_to_s, time_at_s):
     if time_filter and filtered:
         tf = str(time_filter)
         filtered = [
-            row for row in filtered
-            if str(getattr(row, "time_ui", "") or "").startswith(tf)
+            row for row in filtered if str(getattr(row, "time_ui", "") or "").startswith(tf)
         ]
     return filtered, truncated, path
 
 
 # ── GET /events ──────────────────────────────────────────────────────────────
+
 
 @router.get("/events", response_class=HTMLResponse)
 async def events_page(
@@ -117,7 +118,9 @@ async def events_page(
         page_size_i = 50
     page_size_i = min(200, max(5, page_size_i))
 
-    rows, truncated, _log_path = _load_filtered_event_lines(safe_date_from, safe_date_to, safe_time_at)
+    rows, truncated, _log_path = _load_filtered_event_lines(
+        safe_date_from, safe_date_to, safe_time_at
+    )
     normalized_time = _normalize_time_filter(safe_time_at)
     total = len(rows)
     total_pages = max(1, (total + page_size_i - 1) // page_size_i) if total > 0 else 1
@@ -151,6 +154,7 @@ async def events_page(
 
 # ── GET /audit (redirect) ───────────────────────────────────────────────────
 
+
 @router.get("/audit")
 async def audit_legacy_redirect(request: Request):
     """Старый URL: журнал перенесён на /events."""
@@ -163,6 +167,7 @@ async def audit_legacy_redirect(request: Request):
 
 
 # ── GET /events/export.csv ───────────────────────────────────────────────────
+
 
 @router.get("/events/export.csv")
 async def events_export_csv(
@@ -182,6 +187,7 @@ async def events_export_csv(
     rows, _truncated, _path = _load_filtered_event_lines(safe_date_from, safe_date_to, safe_time_at)
     body = events_log_to_csv_bytes(rows, max_rows=50_000)
     from datetime import UTC, datetime
+
     stamp = datetime.now(UTC).strftime("%Y%m%d")
     return Response(
         content=body,
@@ -191,6 +197,7 @@ async def events_export_csv(
 
 
 # ── GET /audit/export.csv (redirect) ─────────────────────────────────────────
+
 
 @router.get("/audit/export.csv")
 async def audit_export_legacy_redirect(request: Request):

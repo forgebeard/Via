@@ -73,6 +73,7 @@ def _update_env_file(updates: dict[str, str]) -> None:
 def _admin() -> object:
     """Late import to avoid circular dependency with main.py."""
     import admin.main as _m
+
     return _m
 
 
@@ -123,8 +124,10 @@ async def regenerate_db_config(
 
     if new_master_key:
         key = new_master_key.encode("utf-8")
-        from database.models import AppSecret
         from sqlalchemy import select
+
+        from database.models import AppSecret
+
         rows = await session.execute(select(AppSecret))
         for row in rows.scalars().all():
             try:
@@ -139,6 +142,7 @@ async def regenerate_db_config(
 
     if new_password:
         from sqlalchemy import text
+
         try:
             cfg = _load_db_config_from_env()
             sync_url = os.environ.get("DATABASE_URL", "").replace(
@@ -147,9 +151,12 @@ async def regenerate_db_config(
             if sync_url:
                 engine_url = admin.sync_database_url_for_alembic(sync_url)
                 from sqlalchemy import create_engine
+
                 eng = create_engine(engine_url)
                 with eng.connect() as c:
-                    c.execute(text(f"ALTER USER {cfg['postgres_user']} WITH PASSWORD '{new_password}'"))
+                    c.execute(
+                        text(f"ALTER USER {cfg['postgres_user']} WITH PASSWORD '{new_password}'")
+                    )
                     c.commit()
                 eng.dispose()
         except Exception as e:
