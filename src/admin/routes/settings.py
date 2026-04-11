@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import secrets
 from pathlib import Path
 from typing import Annotated
-from urllib.error import HTTPError, URLError
-from urllib.request import Request as URLRequest
-from urllib.request import urlopen
 
+import httpx
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from redminelib import Redmine
+from redminelib.exceptions import AuthError, ResourceNotFoundError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +23,77 @@ from security import decrypt_secret, encrypt_secret, load_master_key
 router = APIRouter(tags=["settings"])
 
 _ENV_FILE_PATH = Path("/app/.env")
+
+_SECRET_NAMES = [
+    "REDMINE_URL",
+    "REDMINE_API_KEY",
+    "MATRIX_HOMESERVER",
+    "MATRIX_ACCESS_TOKEN",
+    "MATRIX_USER_ID",
+]
+
+# Поля которые НЕ нужно маскировать (URL'ы и MXID)
+_UNMASKED_SECRETS = {"REDMINE_URL", "MATRIX_HOMESERVER", "MATRIX_USER_ID"}
+
+
+def _check_redmine_access(url: str, api_key: str) -> tuple[bool, str]:
+    base = (url or "").strip().rstrip("/")
+    key = (api_key or "").strip()
+    if not base or not key:
+        return False, "Redmine: укажите URL и API-ключ."
+    try:
+        rm = Redmine(base, key=key)
+        user = rm.user.get("current")
+        login = getattr(user, "login", "")
+        suffix = f" (user: {login})" if login else ""
+        return True, f"Redmine: подключение успешно{suffix}."
+    except AuthError:
+        return False, "Redmine: неверный API-ключ."
+    except ResourceNotFoundError:
+        return False, "Redmine: пользователь не найден."
+    except Exception as e:
+        return False, f"Redmine: ошибка ({type(e).__name__})."
+
+
+def _check_matrix_access(homeserver: str, user_id: str, token: str) -> tuple[bool, str]:
+    hs = (homeserver or "").strip().rstrip("/")
+    mxid = (user_id or "").strip()
+    access_token = (token or "").strip()
+    if not hs or not mxid or not access_token:
+        return False, "Matrix: укажите homeserver, user id и token."
+    try:
+        # 1. Проверка доступности сервера
+        with httpx.Client(timeout=6.0) as client:
+            resp = client.get(f"{hs}/_matrix/client/versions")
+            if resp.status_code != 200:
+                return False, f"Matrix: HTTP {resp.status_code}."
+
+            # 2. Проверка токена
+            who_resp = client.get(
+                f"{hs}/_matrix/client/v3/account/whoami",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if who_resp.status_code != 200:
+                return False, f"Matrix: токен недействителен (HTTP {who_resp.status_code})."
+
+            data = who_resp.json()
+            got_user = data.get("user_id", "")
+            if got_user and got_user != mxid:
+                return True, f"Matrix: подключение успешно, но token принадлежит {got_user}."
+            return True, "Matrix: подключение успешно."
+    except httpx.ConnectError:
+        return False, "Matrix: нет ответа (URL/сеть)."
+    except Exception as e:
+        return False, f"Matrix: ошибка ({type(e).__name__})."
+
+
+def _mask_secret_value(name: str, value: str) -> str:
+    """Маскирует секрет. URL'ы и MXID не маскируются."""
+    if name in _UNMASKED_SECRETS:
+        return value
+    if not value or len(value) <= 8:
+        return "••••••••"
+    return value[:4] + "•" * (len(value) - 8) + value[-4:]
 
 
 def _load_db_config_from_env() -> dict[str, str]:
@@ -131,10 +201,6 @@ async def regenerate_db_config(
 
     if new_master_key:
         key = new_master_key.encode("utf-8")
-        from sqlalchemy import select
-
-        from database.models import AppSecret
-
         rows = await session.execute(select(AppSecret))
         for row in rows.scalars().all():
             try:
@@ -180,84 +246,6 @@ async def regenerate_db_config(
 # ═══════════════════════════════════════════════════════════════════════════
 # Onboarding / Настройки сервиса
 # ═══════════════════════════════════════════════════════════════════════════
-
-_SECRET_NAMES = [
-    "REDMINE_URL",
-    "REDMINE_API_KEY",
-    "MATRIX_HOMESERVER",
-    "MATRIX_ACCESS_TOKEN",
-    "MATRIX_USER_ID",
-]
-
-# Поля которые НЕ нужно маскировать (URL'ы и MXID)
-_UNMASKED_SECRETS = {"REDMINE_URL", "MATRIX_HOMESERVER", "MATRIX_USER_ID"}
-
-
-def _check_redmine_access(url: str, api_key: str) -> tuple[bool, str]:
-    import logging
-    logger = logging.getLogger("redmine_bot")
-    base = (url or "").strip().rstrip("/")
-    key = (api_key or "").strip()
-    if not base or not key:
-        return False, "Redmine: укажите URL и API-ключ."
-    req = URLRequest(
-        f"{base}/users/current.json",
-        headers={"X-Redmine-API-Key": key, "Accept": "application/json"},
-    )
-    try:
-        with urlopen(req, timeout=6.0) as resp:
-            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-        user = payload.get("user") if isinstance(payload, dict) else {}
-        login = str((user or {}).get("login") or "").strip()
-        suffix = f" (user: {login})" if login else ""
-        return True, f"Redmine: подключение успешно{suffix}."
-    except UnicodeEncodeError:
-        return False, "Redmine: API-ключ содержит недопустимые символы (только латиница и цифры)."
-    except HTTPError as e:
-        return False, f"Redmine: HTTP {e.code}."
-    except URLError as e:
-        return False, f"Redmine: нет ответа ({e.reason})."
-    except Exception as e:
-        logger.error("Redmine check error: %s", e, exc_info=True)
-        return False, f"Redmine: ошибка проверки ({type(e).__name__})."
-
-
-def _check_matrix_access(homeserver: str, user_id: str, token: str) -> tuple[bool, str]:
-    hs = (homeserver or "").strip().rstrip("/")
-    mxid = (user_id or "").strip()
-    access_token = (token or "").strip()
-    if not hs or not mxid or not access_token:
-        return False, "Matrix: укажите homeserver, user id и token."
-    try:
-        with urlopen(URLRequest(f"{hs}/_matrix/client/versions"), timeout=6.0):
-            pass
-        who_req = URLRequest(
-            f"{hs}/_matrix/client/v3/account/whoami",
-            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
-        )
-        with urlopen(who_req, timeout=6.0) as resp:
-            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-        got_user = str((payload or {}).get("user_id") or "").strip()
-        if got_user and got_user != mxid:
-            return True, f"Matrix: подключение успешно, но token принадлежит {got_user}."
-        return True, "Matrix: подключение успешно."
-    except UnicodeEncodeError:
-        return False, "Matrix: токен содержит недопустимые символы (только латиница и цифры)."
-    except HTTPError as e:
-        return False, f"Matrix: HTTP {e.code}."
-    except URLError as e:
-        return False, f"Matrix: нет ответа ({e.reason})."
-    except Exception:
-        return False, "Matrix: ошибка проверки."
-
-
-def _mask_secret_value(name: str, value: str) -> str:
-    """Маскирует секрет. URL'ы и MXID не маскируются."""
-    if name in _UNMASKED_SECRETS:
-        return value
-    if not value or len(value) <= 8:
-        return "••••••••"
-    return value[:4] + "•" * (len(value) - 8) + value[-4:]
 
 
 @router.get("/onboarding", response_class=HTMLResponse)
