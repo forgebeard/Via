@@ -217,6 +217,7 @@ async def onboarding_page(request: Request, session: AsyncSession = Depends(get_
     csrf_token, _ = admin._ensure_csrf(request)
     error = request.query_params.get("error", "")
     db_config = _load_db_config_from_env()
+    tz_options = admin._top_timezone_options()
 
     return admin.templates.TemplateResponse(
         request,
@@ -229,6 +230,7 @@ async def onboarding_page(request: Request, session: AsyncSession = Depends(get_
             "csrf_token": csrf_token,
             "error": error,
             "db_config": db_config,
+            "timezone_top_options": tz_options,
         },
     )
 
