@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import secrets
 from pathlib import Path
 from typing import Annotated
+from urllib.error import HTTPError, URLError
+from urllib.request import Request as URLRequest
+from urllib.request import urlopen
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -184,9 +189,65 @@ _SECRET_NAMES = [
     "MATRIX_USER_ID",
 ]
 
+# Поля которые НЕ нужно маскировать (URL'ы и MXID)
+_UNMASKED_SECRETS = {"REDMINE_URL", "MATRIX_HOMESERVER", "MATRIX_USER_ID"}
 
-def _mask_secret_value(value: str) -> str:
-    """Маскирует секрет: показывает первые 4 и последние 4 символа."""
+
+def _check_redmine_access(url: str, api_key: str) -> tuple[bool, str]:
+    base = (url or "").strip().rstrip("/")
+    key = (api_key or "").strip()
+    if not base or not key:
+        return False, "Redmine: укажите URL и API-ключ."
+    req = URLRequest(
+        f"{base}/users/current.json",
+        headers={"X-Redmine-API-Key": key, "Accept": "application/json"},
+    )
+    try:
+        with urlopen(req, timeout=6.0) as resp:
+            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+        user = payload.get("user") if isinstance(payload, dict) else {}
+        login = str((user or {}).get("login") or "").strip()
+        suffix = f" (user: {login})" if login else ""
+        return True, f"Redmine: подключение успешно{suffix}."
+    except HTTPError as e:
+        return False, f"Redmine: HTTP {e.code}."
+    except URLError:
+        return False, "Redmine: нет ответа (URL/сеть/timeout)."
+    except Exception:
+        return False, "Redmine: ошибка проверки."
+
+
+def _check_matrix_access(homeserver: str, user_id: str, token: str) -> tuple[bool, str]:
+    hs = (homeserver or "").strip().rstrip("/")
+    mxid = (user_id or "").strip()
+    access_token = (token or "").strip()
+    if not hs or not mxid or not access_token:
+        return False, "Matrix: укажите homeserver, user id и token."
+    try:
+        with urlopen(URLRequest(f"{hs}/_matrix/client/versions"), timeout=6.0):
+            pass
+        who_req = URLRequest(
+            f"{hs}/_matrix/client/v3/account/whoami",
+            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
+        )
+        with urlopen(who_req, timeout=6.0) as resp:
+            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+        got_user = str((payload or {}).get("user_id") or "").strip()
+        if got_user and got_user != mxid:
+            return True, f"Matrix: подключение успешно, но token принадлежит {got_user}."
+        return True, "Matrix: подключение успешно."
+    except HTTPError as e:
+        return False, f"Matrix: HTTP {e.code}."
+    except URLError:
+        return False, "Matrix: нет ответа (URL/сеть/timeout)."
+    except Exception:
+        return False, "Matrix: ошибка проверки."
+
+
+def _mask_secret_value(name: str, value: str) -> str:
+    """Маскирует секрет. URL'ы и MXID не маскируются."""
+    if name in _UNMASKED_SECRETS:
+        return value
     if not value or len(value) <= 8:
         return "••••••••"
     return value[:4] + "•" * (len(value) - 8) + value[-4:]
@@ -209,7 +270,7 @@ async def onboarding_page(request: Request, session: AsyncSession = Depends(get_
         try:
             val = decrypt_secret(row.ciphertext, row.nonce, load_master_key())
             secrets_raw[row.name] = val
-            secrets_masked[row.name] = _mask_secret_value(val)
+            secrets_masked[row.name] = _mask_secret_value(row.name, val)
         except Exception:
             secrets_masked[row.name] = "••••••••"
 
@@ -278,3 +339,44 @@ async def onboarding_save(
 
     await session.commit()
     return RedirectResponse("/onboarding", status_code=303)
+
+
+@router.post("/onboarding/check")
+async def onboarding_check(
+    request: Request,
+    secret_REDMINE_URL: Annotated[str, Form()] = "",
+    secret_REDMINE_API_KEY: Annotated[str, Form()] = "",
+    secret_MATRIX_HOMESERVER: Annotated[str, Form()] = "",
+    secret_MATRIX_USER_ID: Annotated[str, Form()] = "",
+    secret_MATRIX_ACCESS_TOKEN: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+):
+    """Проверяет доступность Redmine и Matrix."""
+    admin = _admin()
+    user = getattr(request.state, "current_user", None)
+    if not user or getattr(user, "role", "") != "admin":
+        raise HTTPException(403, "Только admin")
+
+    admin._verify_csrf(request, csrf_token)
+
+    redmine_ok, redmine_msg = await asyncio.to_thread(
+        _check_redmine_access,
+        secret_REDMINE_URL,
+        secret_REDMINE_API_KEY,
+    )
+    matrix_ok, matrix_msg = await asyncio.to_thread(
+        _check_matrix_access,
+        secret_MATRIX_HOMESERVER,
+        secret_MATRIX_USER_ID,
+        secret_MATRIX_ACCESS_TOKEN,
+    )
+    ok = redmine_ok and matrix_ok
+    return JSONResponse(
+        {
+            "ok": ok,
+            "checks": [
+                {"service": "redmine", "ok": redmine_ok, "message": redmine_msg},
+                {"service": "matrix", "ok": matrix_ok, "message": matrix_msg},
+            ],
+        }
+    )
