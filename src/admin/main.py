@@ -95,6 +95,10 @@ async def _app_lifespan(_app: FastAPI):
 
 app = FastAPI(title="Matrix bot control panel", version="0.1.0", lifespan=_app_lifespan)
 
+# Re-export для route-файлов (через _admin() late-import)
+from admin.helpers import templates  # noqa: E402, F401
+from ops.docker_control import get_service_status  # noqa: E402, F401
+
 _STATIC_ROOT = _ROOT / "static"
 if _STATIC_ROOT.is_dir():
     app.mount("/static", StaticFiles(directory=str(_STATIC_ROOT)), name="static")
