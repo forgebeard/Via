@@ -2,7 +2,7 @@
 {% from "macros.html" import room_cell, page_head %}
 {% block title %}Версии по комнатам{% endblock %}
 {% block content %}
-<p class="muted" style="margin:0 0 0.75rem;"><a href="{{ dashboard_path }}">← Дашборд</a></p>
+<p class="muted back-link"><a href="{{ dashboard_path }}">← Дашборд</a></p>
 {{ page_head("Версии по комнатам", "Ключ версии (как в Redmine) → комната Matrix.") }}
 
 <div class="table-wrap">
@@ -14,7 +14,7 @@
         <td>{{ r.version_key }}</td>
         <td>{{ room_cell(r.room_id) }}</td>
         <td class="table-actions">
-          <form method="post" action="/routes/version/{{ r.id }}/delete" style="display:inline;" hx-confirm="Удалить?">
+          <form method="post" action="/routes/version/{{ r.id }}/delete" class="form-inline-delete" hx-confirm="Удалить?">
             <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
             <button type="submit" class="btn btn-danger">Удалить</button>
           </form>
@@ -27,8 +27,8 @@
   </table>
 </div>
 
-<div class="card" style="margin-top:1.5rem;">
-  <h2 style="margin-top:0;">Добавить</h2>
+<div class="card card--mt">
+  <h2 class="card__title--flush">Добавить</h2>
   <form class="form" method="post" action="/routes/version">
     <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
     <div class="field">

@@ -1,0 +1,326 @@
+/* ===========================
+   forms.css — inputs, labels, fields, radio, checkbox, day-pills, inline-range
+   =========================== */
+
+/* ---------- Field wrapper ---------- */
+.field {
+  margin-bottom: 1.25rem;
+}
+
+.field label,
+.field-label {
+  display: block;
+  margin-bottom: 0.45rem;
+  font-weight: 600;
+  font-size: 0.97rem;
+  color: var(--fg);
+}
+
+.field-hint {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 0.88rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.field-error {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 0.88rem;
+  color: #f87171;
+  line-height: 1.45;
+}
+
+/* ---------- Inputs ---------- */
+input[type="text"],
+input[type="password"],
+input[type="email"],
+input[type="number"],
+input[type="url"],
+input[type="tel"],
+input[type="search"],
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"],
+textarea,
+select {
+  width: 100%;
+  padding: 0.68rem 0.9rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg);
+  font-size: 1rem;
+  font-family: inherit;
+  line-height: 1.45;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  min-height: 2.85rem;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.15);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+input:disabled,
+textarea:disabled,
+select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 6rem;
+}
+
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%2394a3b8' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  padding-right: 2.25rem;
+}
+
+/* ---------- Input group (icon prefix etc.) ---------- */
+.input-group {
+  display: flex;
+  align-items: stretch;
+}
+
+.input-group input {
+  flex: 1;
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.input-group .input-group-append {
+  display: flex;
+  align-items: center;
+  padding: 0 0.75rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  white-space: nowrap;
+}
+
+/* ---------- Radio & Checkbox ---------- */
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+  padding: 0.25rem 0;
+}
+
+.choice input[type="radio"],
+.choice input[type="checkbox"] {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--cyan);
+  margin: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.choice-label {
+  font-size: 0.97rem;
+  font-weight: 500;
+}
+
+.choice-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+
+.choice-group--inline {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+}
+
+/* ---------- Day pills ---------- */
+.day-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+.day-pill {
+  cursor: pointer;
+  user-select: none;
+}
+
+.day-pill input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.day-pill span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.75rem;
+  min-height: 2.5rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--choice-radius-pill);
+  border: 1px solid var(--choice-border);
+  background: var(--choice-surface);
+  font-size: 0.92rem;
+  font-weight: 500;
+  color: var(--fg);
+  transition: background 0.15s, border-color 0.15s, transform 0.05s;
+}
+
+.day-pill:hover span {
+  border-color: var(--choice-active-border);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.day-pill:active span {
+  transform: translateY(1px);
+}
+
+.day-pill input:focus-visible + span {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+.day-pill input:checked + span {
+  background: var(--choice-active-bg);
+  border-color: var(--choice-active-border);
+  color: #fff;
+}
+
+/* ---------- Inline time range ---------- */
+.inline-range {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.inline-range input[type="time"] {
+  width: auto;
+  min-width: 7.5rem;
+  flex: 0 1 auto;
+}
+
+.range-sep {
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+/* ---------- Form sections ---------- */
+.form-section {
+  margin-bottom: 2rem;
+  padding-bottom: 1.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.form-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.form-section-title {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  color: var(--fg);
+}
+
+/* ---------- Form actions footer ---------- */
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+/* ---------- Inline form (e.g. table cell) ---------- */
+.form-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.form-inline input {
+  width: auto;
+  min-width: 10rem;
+  flex: 1 1 12rem;
+}
+
+/* ---------- Onboarding page actions ---------- */
+.page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.page-actions--onboarding {
+  margin-top: 2.5rem;
+  padding-top: 1.75rem;
+  border-top: 1px solid var(--border);
+}
+
+/* ---------- Checkbox standalone (no .choice wrapper) ---------- */
+input[type="checkbox"] {
+  accent-color: var(--cyan);
+}
+
+/* ---------- Mobile ---------- */
+@media (max-width: 768px) {
+  .inline-range {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .inline-range input[type="time"] {
+    width: 100%;
+    min-width: auto;
+  }
+
+  .day-pills {
+    gap: 0.4rem;
+  }
+
+  .day-pill span {
+    min-width: 2.4rem;
+    min-height: 2.2rem;
+    padding: 0.3rem 0.55rem;
+    font-size: 0.85rem;
+  }
+}
+
+/* Delete form inline (table rows) */
+.form-inline-delete {
+  display: inline;
+}

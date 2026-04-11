@@ -1,0 +1,182 @@
+/* ===========================
+   users.css — user form layout, switch toggle, summary sidebar
+   =========================== */
+
+/* ---------- User form layout ---------- */
+.user-form-layout {
+  display: grid;
+  grid-template-columns: 1.35fr 0.75fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+.user-form-main {
+  display: grid;
+  gap: 1rem;
+}
+
+.user-form-root {
+  width: 100%;
+}
+
+.user-form-section .section-title {
+  margin: 0 0 0.75rem;
+  font-size: 1.1rem;
+}
+
+.notify-presets-inline {
+  display: flex;
+  align-items: center;
+  gap: 1rem 1.4rem;
+  flex-wrap: wrap;
+}
+
+.notify-presets-inline .choice {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.user-form-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.field > select#timezone_name {
+  max-width: 26rem;
+}
+
+/* ---------- Field switch ---------- */
+.field-switch {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  padding-top: 1.9rem;
+  padding-bottom: 0;
+}
+
+.field-switch .switch {
+  width: 100%;
+  min-height: 3.15rem;
+  padding: 0.62rem 0.82rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.15);
+  margin-top: 0;
+}
+
+/* ---------- Switch toggle ---------- */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  cursor: pointer;
+  user-select: none;
+  margin-top: 0.2rem;
+}
+
+.switch input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+
+.switch-ui {
+  width: 2.6rem;
+  height: 1.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(148, 163, 184, 0.2);
+  position: relative;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.switch-ui::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: #e2e8f0;
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+
+.switch input[type="checkbox"]:checked + .switch-ui {
+  border-color: rgba(6, 182, 212, 0.55);
+  background: rgba(6, 182, 212, 0.3);
+}
+
+.switch input[type="checkbox"]:checked + .switch-ui::after {
+  transform: translateX(1.12rem);
+  background: #67e8f9;
+}
+
+.switch input[type="checkbox"]:focus-visible + .switch-ui {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+.switch-text {
+  font-size: 0.98rem;
+  font-weight: 500;
+}
+
+/* ---------- User form summary sidebar ---------- */
+.user-form-summary {
+  position: sticky;
+  top: 1rem;
+}
+
+.user-form-summary .summary-line {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 1px dashed var(--border);
+  padding: 0.42rem 0;
+  font-size: 0.94rem;
+}
+
+.user-form-summary .summary-line .k {
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.user-form-summary .summary-line .v {
+  color: var(--fg);
+  font-weight: 500;
+  text-align: right;
+  max-width: 16rem;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 1020px) {
+  .user-form-layout { grid-template-columns: 1fr; }
+  .user-form-summary { position: static; }
+  .field > select#timezone_name { max-width: none; }
+  .field-switch { align-self: auto; padding-top: 0; padding-bottom: 0; }
+}
+
+@media (max-width: 700px) {
+  .user-form-row-2 { grid-template-columns: 1fr; }
+}
+
+/* Inline actions row (lookup + test buttons) */
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+
+/* Page actions with top spacing (sidebar summary) */
+.page-actions--mt {
+  margin-top: 1rem;
+}

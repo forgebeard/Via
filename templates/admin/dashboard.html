@@ -3,17 +3,8 @@
 {% block content %}
 {% if ops_flash %}
 <div id="ops-flash" class="warning ops-flash" role="status">{{ ops_flash }}</div>
-<script>
-(function () {
-  var el = document.getElementById("ops-flash");
-  if (!el) return;
-  window.setTimeout(function () {
-    el.classList.add("ops-flash--dismissed");
-    window.setTimeout(function () { el.remove(); }, 400);
-  }, 10000);
-})();
-</script>
 {% endif %}
+
 <header class="page-head">
   <div class="page-head-row">
     <div class="page-head-text">
@@ -97,66 +88,5 @@
   </article>
 </div>
 
-<script>
-(function() {
-  var dot = document.getElementById("bot-status-dot");
-  var text = document.getElementById("bot-status-text");
-  if (!dot || !text) return;
-
-  function updateStatus(data) {
-    dot.className = "bot-status-dot";
-    if (data.status === "alive") {
-      dot.classList.add("bot-status-dot--alive");
-    } else if (data.status === "warning") {
-      dot.classList.add("bot-status-dot--warning");
-    } else if (data.status === "dead") {
-      dot.classList.add("bot-status-dot--dead");
-    } else {
-      dot.classList.add("bot-status-dot--unknown");
-    }
-    text.textContent = data.message || "Неизвестно";
-  }
-
-  function fetchStatus() {
-    fetch("/api/bot/status")
-      .then(function(r) { return r.json(); })
-      .then(updateStatus)
-      .catch(function() {
-        dot.className = "bot-status-dot bot-status-dot--unknown";
-        text.textContent = "Не удалось загрузить статус";
-      });
-  }
-
-  fetchStatus();
-  setInterval(fetchStatus, 30000); // Обновление каждые 30 сек
-})();
-</script>
-
-<style>
-.bot-status-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  margin-bottom: 0.75rem;
-  background: var(--card-bg, #1a1f2e);
-  border-radius: 0.5rem;
-  border: 1px solid var(--border-color, #2d3748);
-}
-.bot-status-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  transition: background-color 0.3s;
-}
-.bot-status-dot--alive { background-color: #10b981; box-shadow: 0 0 6px #10b981; }
-.bot-status-dot--warning { background-color: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
-.bot-status-dot--dead { background-color: #ef4444; box-shadow: 0 0 6px #ef4444; }
-.bot-status-dot--unknown { background-color: #6b7280; }
-.bot-status-text {
-  font-size: 0.875rem;
-  color: var(--text-color, #e2e8f0);
-}
-</style>
+<script src="/static/admin/js/dashboard.js?v={{ asset_version() }}"></script>
 {% endblock %}

@@ -10,7 +10,15 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="/static/admin/css/base.css?v={{ asset_version() }}"/>
+  <link rel="stylesheet" href="/static/admin/css/layout.css?v={{ asset_version() }}"/>
+  <link rel="stylesheet" href="/static/admin/css/components.css?v={{ asset_version() }}"/>
+  <link rel="stylesheet" href="/static/admin/css/forms.css?v={{ asset_version() }}"/>
   <link rel="stylesheet" href="/static/admin/css/panel.css?v={{ asset_version() }}"/>
+  <link rel="stylesheet" href="/static/admin/css/dashboard.css?v={{ asset_version() }}"/>
+  <link rel="stylesheet" href="/static/admin/css/settings.css?v={{ asset_version() }}"/>
+  <link rel="stylesheet" href="/static/admin/css/users.css?v={{ asset_version() }}"/>
+  <link rel="stylesheet" href="/static/admin/css/onboarding.css?v={{ asset_version() }}"/>
   <script src="/static/admin/js/timezone_select.js?v={{ asset_version() }}"></script>
   {% block head_extra %}{% endblock %}
 </head>
@@ -62,25 +70,25 @@
       </div>
       {% if _current_user %}
       <div class="topbar-right">
-        <button type="button" class="theme-toggle-btn" id="theme-toggle" aria-label="Переключить тему" title="Сменить тему (Тёмная/Светлая)">
-          <i class="fa-solid fa-circle-half-stroke" id="theme-icon"></i>
-        </button>
         <div class="user-menu-wrap" id="user-menu-wrap">
-        <div class="user-trigger" id="user-trigger" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-controls="user-dropdown">
-          <div class="user-meta">
-            <div class="name">{% if _current_user.role == 'admin' %}Администратор{% else %}Пользователь{% endif %}</div>
-            <div class="login" title="{{ _current_user.login }}">{{ _current_user.login }}</div>
+          <button type="button" class="theme-toggle-btn" id="theme-toggle" aria-label="Переключить тему" title="Сменить тему (Тёмная/Светлая)">
+            <i class="fa-solid fa-circle-half-stroke" id="theme-icon"></i>
+          </button>
+          <div class="user-trigger" id="user-trigger" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-controls="user-dropdown">
+            <div class="user-meta">
+              <div class="name">{% if _current_user.role == 'admin' %}Администратор{% else %}Пользователь{% endif %}</div>
+              <div class="login" title="{{ _current_user.login }}">{{ _current_user.login }}</div>
+            </div>
+            <div class="avatar" aria-hidden="true">{{ (_current_user.login[:1] or '?')|upper }}</div>
           </div>
-          <div class="avatar" aria-hidden="true">{{ (_current_user.login[:1] or '?')|upper }}</div>
+          <div class="dropdown" id="user-dropdown" role="menu">
+            {% if _current_user.role != 'admin' %}
+            <a href="/me/settings" role="menuitem"><i class="fa-solid fa-sliders"></i> Мои настройки</a>
+            <hr/>
+            {% endif %}
+            <a href="/logout" role="menuitem"><i class="fa-solid fa-right-from-bracket"></i> Выход</a>
+          </div>
         </div>
-        <div class="dropdown" id="user-dropdown" role="menu">
-          {% if _current_user.role != 'admin' %}
-          <a href="/me/settings" role="menuitem"><i class="fa-solid fa-sliders"></i> Мои настройки</a>
-          <hr/>
-          {% endif %}
-          <a href="/logout" role="menuitem"><i class="fa-solid fa-right-from-bracket"></i> Выход</a>
-        </div>
-      </div>
       </div>
       {% endif %}
     </header>
@@ -91,163 +99,6 @@
   </div>
 </div>
 
-<script>
-(function () {
-  // --- Theme Toggle ---
-  var html = document.documentElement;
-  var btn = document.getElementById("theme-toggle");
-  var icon = document.getElementById("theme-icon");
-  var STORAGE_KEY = "via-admin-theme";
-
-  function applyTheme(theme) {
-    if (theme === "light") {
-      html.classList.add("theme-light");
-      if (icon) {
-        icon.className = "fa-solid fa-sun";
-      }
-    } else {
-      html.classList.remove("theme-light");
-      if (icon) {
-        icon.className = "fa-solid fa-moon";
-      }
-    }
-  }
-
-  // Load saved theme
-  var savedTheme = localStorage.getItem(STORAGE_KEY);
-  if (savedTheme) {
-    applyTheme(savedTheme);
-  }
-
-  if (btn) {
-    btn.addEventListener("click", function(e) {
-      e.preventDefault();
-      e.stopPropagation();
-      var isLight = html.classList.contains("theme-light");
-      var newTheme = isLight ? "dark" : "light";
-      localStorage.setItem(STORAGE_KEY, newTheme);
-      applyTheme(newTheme);
-    });
-  }
-
-  // --- HTMX & Sidebar ---
-  document.body.addEventListener('htmx:configRequest', function (event) {
-    var meta = document.querySelector('meta[name="csrf-token"]');
-    if (meta && meta.content) {
-      event.detail.headers['X-CSRF-Token'] = meta.content;
-    }
-  });
-
-  var sidebar = document.getElementById('app-sidebar');
-  var backdrop = document.getElementById('sidebar-backdrop');
-  var toggle = document.getElementById('sidebar-toggle');
-  function closeSidebar() {
-    if (sidebar) sidebar.classList.remove('open');
-    if (backdrop) backdrop.classList.remove('show');
-  }
-  function openSidebar() {
-    if (sidebar) sidebar.classList.add('open');
-    if (backdrop) backdrop.classList.add('show');
-  }
-  if (toggle && sidebar && backdrop) {
-    toggle.addEventListener('click', function () {
-      if (sidebar.classList.contains('open')) closeSidebar(); else openSidebar();
-    });
-    backdrop.addEventListener('click', closeSidebar);
-  }
-  var ut = document.getElementById('user-trigger');
-  var dd = document.getElementById('user-dropdown');
-  var uw = document.getElementById('user-menu-wrap');
-  if (ut && dd && uw) {
-    function menuItems() {
-      return Array.prototype.slice.call(dd.querySelectorAll('a[role="menuitem"]'));
-    }
-    function openUserMenu() {
-      dd.classList.add('open');
-      ut.setAttribute('aria-expanded', 'true');
-      var items = menuItems();
-      if (items.length) {
-        requestAnimationFrame(function () { items[0].focus(); });
-      }
-    }
-    function closeUserMenu(focusTrigger) {
-      dd.classList.remove('open');
-      ut.setAttribute('aria-expanded', 'false');
-      if (focusTrigger) ut.focus();
-    }
-    function toggleUserMenu(e) {
-      e.stopPropagation();
-      if (dd.classList.contains('open')) {
-        closeUserMenu(true);
-      } else {
-        openUserMenu();
-      }
-    }
-    document.addEventListener('keydown', function (e) {
-      if (e.key !== 'Escape') return;
-      if (dd.classList.contains('open')) {
-        e.preventDefault();
-        closeUserMenu(true);
-        return;
-      }
-      closeSidebar();
-    });
-    ut.addEventListener('click', toggleUserMenu);
-    ut.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        toggleUserMenu(e);
-        return;
-      }
-      if (!dd.classList.contains('open')) {
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-          e.preventDefault();
-          openUserMenu();
-        }
-        return;
-      }
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        menuItems()[0].focus();
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        var its = menuItems();
-        if (its.length) its[its.length - 1].focus();
-      }
-    });
-    dd.addEventListener('keydown', function (e) {
-      var items = menuItems();
-      if (!items.length) return;
-      var i = items.indexOf(document.activeElement);
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        var next = i < 0 ? 0 : (i + 1) % items.length;
-        items[next].focus();
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        var prev = i < 0 ? items.length - 1 : (i - 1 + items.length) % items.length;
-        items[prev].focus();
-      } else if (e.key === 'Home') {
-        e.preventDefault();
-        items[0].focus();
-      } else if (e.key === 'End') {
-        e.preventDefault();
-        items[items.length - 1].focus();
-      }
-    });
-    document.addEventListener('click', function () {
-      if (!dd.classList.contains('open')) return;
-      var focusInside = dd.contains(document.activeElement);
-      closeUserMenu(false);
-      if (focusInside) ut.focus();
-    });
-    uw.addEventListener('click', function (e) { e.stopPropagation(); });
-  } else {
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') closeSidebar();
-    });
-  }
-})();
-</script>
+<script src="/static/admin/js/base.js?v={{ asset_version() }}"></script>
 </body>
 </html>

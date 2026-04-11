@@ -52,67 +52,7 @@
     </tbody>
   </table>
 </div>
-<script>
-  document.addEventListener('DOMContentLoaded', function () {
-    const row = document.getElementById('highlight-group-row');
-    if (!row) return;
-    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setTimeout(function () {
-      row.classList.remove('is-highlighted-row');
-    }, 2200);
-    const url = new URL(window.location.href);
-    if (url.searchParams.has('highlight_group_id')) {
-      url.searchParams.delete('highlight_group_id');
-      window.history.replaceState({}, '', url.pathname + (url.search || ''));
-    }
 
-    const bindInlineDelete = function (form, entityLabel) {
-      const deleteBtn = form.querySelector('button[type="submit"]');
-      if (!deleteBtn) return;
-      form.addEventListener('submit', function (e) {
-        if (form.dataset.confirmed === '1') return;
-        e.preventDefault();
-        if (form.dataset.confirming === '1') return;
-        form.dataset.confirming = '1';
-        deleteBtn.style.display = 'none';
-
-        const confirmWrap = document.createElement('span');
-        confirmWrap.className = 'inline-delete-confirm';
-
-        const ask = document.createElement('span');
-        ask.className = 'muted';
-        ask.textContent = 'Удалить ' + entityLabel + '?';
-
-        const yesBtn = document.createElement('button');
-        yesBtn.type = 'button';
-        yesBtn.className = 'btn btn-danger btn-small';
-        yesBtn.textContent = 'Удалить';
-
-        const noBtn = document.createElement('button');
-        noBtn.type = 'button';
-        noBtn.className = 'btn btn-ghost btn-small';
-        noBtn.textContent = 'Отмена';
-
-        yesBtn.addEventListener('click', function () {
-          form.dataset.confirmed = '1';
-          form.submit();
-        });
-        noBtn.addEventListener('click', function () {
-          delete form.dataset.confirming;
-          confirmWrap.remove();
-          deleteBtn.style.display = '';
-        });
-
-        confirmWrap.appendChild(ask);
-        confirmWrap.appendChild(yesBtn);
-        confirmWrap.appendChild(noBtn);
-        deleteBtn.insertAdjacentElement('afterend', confirmWrap);
-      });
-    };
-
-    Array.from(document.querySelectorAll('form[data-inline-delete-form]')).forEach(function (form) {
-      bindInlineDelete(form, 'группу');
-    });
-  });
-</script>
+<script src="/static/admin/js/inline_delete.js?v={{ asset_version() }}"></script>
+<script src="/static/admin/js/groups_list.js?v={{ asset_version() }}"></script>
 {% endblock %}

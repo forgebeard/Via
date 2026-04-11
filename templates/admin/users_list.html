@@ -7,7 +7,7 @@
   <a class="btn btn-primary" href="/users/new"><i class="fa-solid fa-plus"></i> Добавить</a>
 {% endcall %}
 
-<form method="get" action="/users" class="card form" style="margin-bottom:1rem;">
+<form method="get" action="/users" class="card form card--mb">
   <div class="filter-row">
     <div class="field">
       <label for="q">Поиск</label>
@@ -55,7 +55,7 @@
           <td>{{ "да" if u.dnd else "нет" }}</td>
           <td class="table-actions">
             <a class="btn btn-ghost" href="/users/{{ u.id }}/edit">Изменить</a>
-            <form method="post" action="/users/{{ u.id }}/delete" style="display:inline;" data-inline-delete-form>
+            <form method="post" action="/users/{{ u.id }}/delete" class="form--inline" data-inline-delete-form>
               <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
               <button type="submit" class="btn btn-danger">Удалить</button>
             </form>
@@ -69,67 +69,6 @@
 {% else %}
 <div class="card muted">Нет записей</div>
 {% endfor %}
-<script>
-  document.addEventListener('DOMContentLoaded', function () {
-    const row = document.getElementById('highlight-user-row');
-    if (!row) return;
-    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setTimeout(function () {
-      row.classList.remove('is-highlighted-row');
-    }, 2200);
-    const url = new URL(window.location.href);
-    if (url.searchParams.has('highlight_user_id')) {
-      url.searchParams.delete('highlight_user_id');
-      window.history.replaceState({}, '', url.pathname + (url.search || ''));
-    }
-
-    const bindInlineDelete = function (form, entityLabel) {
-      const deleteBtn = form.querySelector('button[type="submit"]');
-      if (!deleteBtn) return;
-      form.addEventListener('submit', function (e) {
-        if (form.dataset.confirmed === '1') return;
-        e.preventDefault();
-        if (form.dataset.confirming === '1') return;
-        form.dataset.confirming = '1';
-        deleteBtn.style.display = 'none';
-
-        const confirmWrap = document.createElement('span');
-        confirmWrap.className = 'inline-delete-confirm';
-
-        const ask = document.createElement('span');
-        ask.className = 'muted';
-        ask.textContent = 'Удалить ' + entityLabel + '?';
-
-        const yesBtn = document.createElement('button');
-        yesBtn.type = 'button';
-        yesBtn.className = 'btn btn-danger btn-small';
-        yesBtn.textContent = 'Удалить';
-
-        const noBtn = document.createElement('button');
-        noBtn.type = 'button';
-        noBtn.className = 'btn btn-ghost btn-small';
-        noBtn.textContent = 'Отмена';
-
-        yesBtn.addEventListener('click', function () {
-          form.dataset.confirmed = '1';
-          form.submit();
-        });
-        noBtn.addEventListener('click', function () {
-          delete form.dataset.confirming;
-          confirmWrap.remove();
-          deleteBtn.style.display = '';
-        });
-
-        confirmWrap.appendChild(ask);
-        confirmWrap.appendChild(yesBtn);
-        confirmWrap.appendChild(noBtn);
-        deleteBtn.insertAdjacentElement('afterend', confirmWrap);
-      });
-    };
-
-    Array.from(document.querySelectorAll('form[data-inline-delete-form]')).forEach(function (form) {
-      bindInlineDelete(form, 'пользователя');
-    });
-  });
-</script>
+<script src="/static/admin/js/inline_delete.js"></script>
+<script src="/static/admin/js/users_list.js"></script>
 {% endblock %}

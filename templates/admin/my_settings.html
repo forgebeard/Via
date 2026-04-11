@@ -98,25 +98,9 @@
   </form>
 </div>
 </div>
-<script>
-  (function () {
-    const radios = Array.from(document.querySelectorAll('input[name="notify_preset"]'));
-    const box = document.getElementById('notify_custom_box');
-    function refresh() {
-      const current = radios.find(r => r.checked);
-      if (!box) return;
-      box.style.display = current && current.value === 'custom' ? 'block' : 'none';
-    }
-    radios.forEach(r => r.addEventListener('change', refresh));
-    refresh();
-  })();
 
-  initTimezoneSelect({
-    searchId: 'timezone_search_me',
-    selectId: 'timezone_name',
-    zones: {{ timezone_all_options | tojson }},
-    defaultLimit: 30,
-    filterLimit: 50
-  });
-</script>
+<script id="timezone-data" type="application/json">{{ timezone_all_options | tojson }}</script>
+<script src="/static/admin/js/notify_toggle.js?v={{ asset_version() }}"></script>
+<script src="/static/admin/js/timezone_select.js?v={{ asset_version() }}"></script>
+<script src="/static/admin/js/my_settings.js?v={{ asset_version() }}"></script>
 {% endblock %}

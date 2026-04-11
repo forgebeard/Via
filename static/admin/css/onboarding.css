@@ -1,0 +1,150 @@
+/* ===========================
+   onboarding.css — wizard, steps, setup-card
+   =========================== */
+
+/* ---------- Wizard container ---------- */
+.wizard {
+  max-width: 36rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+
+/* ---------- Steps indicator ---------- */
+.wizard-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-bottom: 2.5rem;
+}
+
+.wizard-step {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.92rem;
+  font-weight: 500;
+  color: var(--muted);
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+
+.wizard-step.is-active {
+  opacity: 1;
+  color: var(--cyan);
+}
+
+.wizard-step.is-done {
+  opacity: 0.75;
+  color: #10b981;
+}
+
+.wizard-step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  font-size: 0.88rem;
+  font-weight: 600;
+  flex-shrink: 0;
+  transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+
+.wizard-step.is-active .wizard-step-number {
+  border-color: var(--cyan);
+  background: rgba(6, 182, 212, 0.15);
+  color: var(--cyan);
+}
+
+.wizard-step.is-done .wizard-step-number {
+  border-color: #10b981;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+.wizard-step-label {
+  display: none;
+}
+
+@media (min-width: 480px) {
+  .wizard-step-label {
+    display: inline;
+  }
+}
+
+.wizard-step-sep {
+  width: 1.5rem;
+  height: 1px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+/* ---------- Setup card ---------- */
+.setup-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 16px;
+  padding: 2rem;
+}
+
+.setup-card-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+  color: var(--fg);
+}
+
+.setup-card-desc {
+  font-size: 0.97rem;
+  color: var(--muted);
+  margin-bottom: 1.75rem;
+  line-height: 1.55;
+}
+
+/* ---------- Done / finish screen ---------- */
+.setup-done {
+  text-align: center;
+  padding: 2rem 1rem;
+}
+
+.setup-done-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  color: #10b981;
+}
+
+.setup-done-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.6rem;
+}
+
+.setup-done-desc {
+  font-size: 1rem;
+  color: var(--muted);
+  margin-bottom: 2rem;
+  line-height: 1.55;
+}
+
+/* ---------- Mobile ---------- */
+@media (max-width: 768px) {
+  .wizard {
+    margin: 1rem auto;
+  }
+
+  .setup-card {
+    padding: 1.5rem 1.25rem;
+    border-radius: 12px;
+  }
+
+  .setup-card-title {
+    font-size: 1.2rem;
+  }
+
+  .wizard-steps {
+    margin-bottom: 1.75rem;
+  }
+}
