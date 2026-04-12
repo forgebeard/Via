@@ -15,8 +15,8 @@
   --muted:       #9ca3af;
 
   /* Accent */
-  --cyan:        #06b6d4;
-  --cyan-dim:    rgba(6, 182, 212, 0.12);
+  --cyan:        #2563eb;
+  --cyan-dim:    rgba(37, 99, 235, 0.12);
   --primary:     var(--cyan);
 
   /* Semantic */
@@ -36,8 +36,8 @@
   --choice-border:        var(--border);
   --choice-radius-pill:   999px;
   --choice-radius-soft:   0.65rem;
-  --choice-active-bg:     rgba(6, 182, 212, 0.14);
-  --choice-active-border: rgba(6, 182, 212, 0.5);
+  --choice-active-bg:     rgba(37, 99, 235, 0.65);
+  --choice-active-border: rgba(37, 99, 235, 0.8);
 
   /* Layout */
   --sidebar-w:         18rem;

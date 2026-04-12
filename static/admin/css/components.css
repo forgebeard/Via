@@ -10,7 +10,7 @@
   min-height: 2.65rem;
 }
 
-.btn-primary { background: linear-gradient(135deg, var(--cyan), #0891b2); color: #fff; }
+.btn-primary { background: linear-gradient(135deg, var(--cyan), #1d4ed8); color: #fff; }
 .btn-primary:hover { filter: brightness(1.06); }
 
 .btn-danger { background: rgba(248, 113, 113, 0.2); color: #fecaca; border: 1px solid rgba(248,113,113,0.35); }
@@ -198,13 +198,13 @@ td.cell-form input[type="text"] {
 }
 
 .switch input[type="checkbox"]:checked + .switch-ui {
-  border-color: rgba(6, 182, 212, 0.55);
-  background: rgba(6, 182, 212, 0.3);
+  border-color: rgba(37, 99, 235, 0.55);
+  background: rgba(37, 99, 235, 0.3);
 }
 
 .switch input[type="checkbox"]:checked + .switch-ui::after {
   transform: translateX(1.12rem);
-  background: #67e8f9;
+  background: #93c5fd;
 }
 
 .switch input[type="checkbox"]:focus-visible + .switch-ui {

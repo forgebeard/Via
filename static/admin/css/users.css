@@ -19,6 +19,10 @@
   width: 100%;
 }
 
+.user-form-section {
+  padding: 1.25rem;
+}
+
 .user-form-section .section-title {
   margin: 0 0 0.75rem;
   font-size: 1.1rem;
@@ -44,20 +48,40 @@
   padding-bottom: 0;
 }
 
-.field-switch .switch {
+.field-switch .switch-wrapper {
+  display: flex;
+  align-items: center;
   width: 100%;
   min-height: 3.15rem;
-  padding: 0.62rem 0.82rem;
+  padding: 0.5rem 0.82rem;
   border-radius: 0.75rem;
   border: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.15);
   margin-top: 0;
 }
 
+/* Override global .switch for wrapper context */
+.field-switch .switch {
+  margin-top: 0;
+  margin-right: 0.75rem;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.field-switch .switch-text {
+  font-size: 0.98rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 /* ---------- User form summary sidebar ---------- */
 .user-form-summary {
   position: sticky;
   top: 1rem;
+  padding: 1.25rem;
 }
 
 .user-form-summary .summary-line {

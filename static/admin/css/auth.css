@@ -149,7 +149,7 @@ body.auth-body {
 }
 
 .auth-card .btn-primary {
-  background: linear-gradient(135deg, var(--cyan), #0891b2);
+  background: linear-gradient(135deg, var(--cyan), #1d4ed8);
   color: #fff;
   width: 100%;
   padding: 0.85rem 1rem;
