@@ -82,7 +82,10 @@
 
     <div class="section-header section-header--action">
       <h2>База данных сервиса</h2>
-      <button class="btn btn-ghost" type="button" id="regenerate-db-credentials">Сгенерировать новые</button>
+      <div class="head-line"></div>
+      <div class="section-actions">
+        <button class="btn btn-secondary" type="button" id="regenerate-db-credentials">Сгенерировать новые</button>
+      </div>
     </div>
     <section class="service-bubble">
       <div class="db-grid">
@@ -117,23 +120,6 @@
     </section>
 
     <div class="section-header">
-      <h2>Таймзона сервиса</h2>
-    </div>
-    <section class="service-bubble service-timezone-block">
-      <div class="field">
-        <label for="service_timezone">Таймзона сервиса</label>
-        <select id="service_timezone" name="service_timezone">
-          {% if service_timezone and service_timezone not in timezone_all_options %}
-          <option value="{{ service_timezone }}" selected>{{ timezone_labels.get(service_timezone, service_timezone) }}</option>
-          {% endif %}
-          {% for tz_name in timezone_all_options %}
-          <option value="{{ tz_name }}" {% if tz_name == service_timezone %}selected{% endif %}>{{ timezone_labels.get(tz_name, tz_name) }}</option>
-          {% endfor %}
-        </select>
-      </div>
-    </section>
-
-    <div class="section-header">
       <h2>Справочник</h2>
     </div>
     <p id="catalog-save-status" class="muted form-status form-status--catalog" aria-live="polite"></p>
@@ -155,6 +141,23 @@
         </div>
       </section>
     </div>
+
+    <div class="section-header">
+      <h2>Таймзона сервиса</h2>
+    </div>
+    <section class="service-bubble service-timezone-block">
+      <div class="field">
+        <label for="service_timezone">Таймзона сервиса</label>
+        <select id="service_timezone" name="service_timezone">
+          {% if service_timezone and service_timezone not in timezone_all_options %}
+          <option value="{{ service_timezone }}" selected>{{ timezone_labels.get(service_timezone, service_timezone) }}</option>
+          {% endif %}
+          {% for tz_name in timezone_all_options %}
+          <option value="{{ tz_name }}" {% if tz_name == service_timezone %}selected{% endif %}>{{ timezone_labels.get(tz_name, tz_name) }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </section>
   </form>
 </div>
 
