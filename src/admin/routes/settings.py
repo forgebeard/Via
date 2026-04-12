@@ -376,6 +376,39 @@ async def onboarding_save(
     return RedirectResponse("/onboarding", status_code=303)
 
 
+@router.post("/onboarding/catalog/save", response_class=JSONResponse)
+async def catalog_save(
+    request: Request,
+    csrf_token: Annotated[str, Form()] = "",
+    catalog_notify_json: Annotated[str, Form()] = "[]",
+    catalog_versions_json: Annotated[str, Form()] = "[]",
+    session: AsyncSession = Depends(get_session),
+):
+    """Сохраняет справочники (уведомления и версии) как секреты."""
+    admin = _admin()
+    user = getattr(request.state, "current_user", None)
+    if not user or getattr(user, "role", "") != "admin":
+        raise HTTPException(403, "Только admin")
+
+    admin._verify_csrf(request, csrf_token)
+
+    for name, json_value in [
+        ("__catalog_notify", catalog_notify_json),
+        ("__catalog_versions", catalog_versions_json),
+    ]:
+        enc = encrypt_secret(json_value, load_master_key())
+        existing = await session.execute(select(AppSecret).where(AppSecret.name == name))
+        row = existing.scalar_one_or_none()
+        if row:
+            row.ciphertext = enc.ciphertext
+            row.nonce = enc.nonce
+        else:
+            session.add(AppSecret(name=name, ciphertext=enc.ciphertext, nonce=enc.nonce))
+
+    await session.commit()
+    return {"ok": True}
+
+
 @router.post("/onboarding/check")
 async def onboarding_check(
     request: Request,

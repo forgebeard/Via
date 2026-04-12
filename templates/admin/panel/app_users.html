@@ -46,7 +46,7 @@
       <td class="cell-form">
         <form method="post" action="/app-users/{{ u.id }}/reset-password-admin">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
-          <input type="password" name="new_password" placeholder="Новый пароль" required/>
+          <input type="password" name="new_password" placeholder="Новый пароль" autocomplete="new-password" required/>
           <button class="btn btn-danger" type="submit">Сбросить</button>
         </form>
       </td>

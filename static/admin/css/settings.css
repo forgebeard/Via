@@ -408,6 +408,16 @@ fieldset.settings-fieldset > legend {
   min-height: 0;
   padding-top: 0.65rem;
   padding-bottom: 0.65rem;
+  gap: 0 !important;
+}
+
+.catalog-grid .catalog-list {
+  min-height: 0 !important;
+  margin-bottom: 0.1rem !important;
+}
+
+.catalog-grid .card-title {
+  margin-bottom: 0.15rem !important;
 }
 
 .catalog-list {
@@ -499,7 +509,13 @@ fieldset.settings-fieldset > legend {
   box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.15);
 }
 
-.catalog-add input::placeholder {
+/* Placeholder для инпутов справочника — максимально специфичный селектор */
+#notify-add-input::placeholder,
+#notify-add-input::-webkit-input-placeholder,
+#notify-add-input::-moz-placeholder,
+#versions-add-input::placeholder,
+#versions-add-input::-webkit-input-placeholder,
+#versions-add-input::-moz-placeholder {
   color: #8b92a5 !important;
   opacity: 1 !important;
 }
