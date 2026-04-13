@@ -125,6 +125,9 @@ from admin.middleware import (
     _admin_csp_value,
 )
 
+# ── Из routes/ops (ре-экспорт для тестов) ────────────────────────────────────
+from admin.routes.ops import _restart_in_background
+
 # ── Из внешних модулей ───────────────────────────────────────────────────────
 from dash_service_display import service_card_context
 from ops.docker_control import get_service_status
@@ -244,4 +247,6 @@ __all__ = [
     # внешние модули
     "service_card_context",
     "get_service_status",
+    # routes/ops (ре-экспорт)
+    "_restart_in_background",
 ]

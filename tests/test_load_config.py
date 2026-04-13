@@ -14,12 +14,12 @@ def _make_user(**kwargs):
     u.redmine_id = kwargs.get("redmine_id", 100)
     u.room = kwargs.get("room", "!room:server")
     u.notify = kwargs.get("notify", ["all"])
-    u.group_id = kwargs.get("group_id", None)
-    u.work_hours = kwargs.get("work_hours", None)
-    u.work_days = kwargs.get("work_days", None)
+    u.group_id = kwargs.get("group_id")
+    u.work_hours = kwargs.get("work_hours")
+    u.work_days = kwargs.get("work_days")
     u.dnd = kwargs.get("dnd", False)
-    u.redmine_api_key_ciphertext = kwargs.get("ciphertext", None)
-    u.redmine_api_key_nonce = kwargs.get("nonce", None)
+    u.redmine_api_key_ciphertext = kwargs.get("ciphertext")
+    u.redmine_api_key_nonce = kwargs.get("nonce")
     return u
 
 
@@ -29,10 +29,10 @@ def _make_group(**kwargs):
     g.id = kwargs.get("id", 1)
     g.name = kwargs.get("name", "Test Group")
     g.room_id = kwargs.get("room_id", "!grp:server")
-    g.timezone = kwargs.get("timezone", None)
+    g.timezone = kwargs.get("timezone")
     g.notify = kwargs.get("notify", ["all"])
-    g.work_hours = kwargs.get("work_hours", None)
-    g.work_days = kwargs.get("work_days", None)
+    g.work_hours = kwargs.get("work_hours")
+    g.work_days = kwargs.get("work_days")
     g.dnd = kwargs.get("dnd", False)
     return g
 

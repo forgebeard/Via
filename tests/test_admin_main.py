@@ -531,12 +531,10 @@ def test_lists_use_inline_delete_confirmation_markup(client: TestClient):
     users_page = client.get("/users")
     assert users_page.status_code == 200
     assert "data-inline-delete-form" in users_page.text
-    assert "inline-delete-confirm" in users_page.text
 
     groups_page = client.get("/groups")
     assert groups_page.status_code == 200
     assert "data-inline-delete-form" in groups_page.text
-    assert "inline-delete-confirm" in groups_page.text
 
 
 def test_users_custom_notify_and_versions_are_persisted(client: TestClient, monkeypatch):

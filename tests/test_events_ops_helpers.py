@@ -117,7 +117,7 @@ class TestTruncateOpsDetail:
         s = "line1\nline2\nline3"
         result = ops_mod._truncate_ops_detail(s)
         assert "\n" not in result
-        assert "line1 line2 line3" == result
+        assert result == "line1 line2 line3"
 
     def test_carriage_returns_replaced(self):
         s = "line1\rline2"

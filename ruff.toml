@@ -29,6 +29,7 @@ ignore = [
     "SIM103",  # return condition directly — не всегда уместно
     "SIM105",  # contextlib.suppress — явный try/except читаемее
     "SIM108",  # ternary operator — не всегда читаемее
+    "SIM117",  # nested with — иногда читаемее
 ]
 
 [lint.isort]

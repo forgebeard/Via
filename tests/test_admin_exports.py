@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import ast
 import re
 from pathlib import Path
 
@@ -26,9 +25,20 @@ def _find_admin_calls(route_code: str) -> set[str]:
         if name in ("__file__", "__name__", "__doc__", "__package__"):
             continue
         # Исключаем модули и SQLAlchemy internals
-        if name in ("api_schemas", "env_manager", "helpers", "main", "helpers_ext",
-                     "middleware", "db_config", "crud_events_log",
-                     "or_", "update", "scalar_one_or_none", "sync_database_url_for_alembic"):
+        if name in (
+            "api_schemas",
+            "env_manager",
+            "helpers",
+            "main",
+            "helpers_ext",
+            "middleware",
+            "db_config",
+            "crud_events_log",
+            "or_",
+            "update",
+            "scalar_one_or_none",
+            "sync_database_url_for_alembic",
+        ):
             continue
         calls.add(name)
     return calls

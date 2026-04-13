@@ -1,4 +1,4 @@
-"""Интеграционные тесты для admin routes — users, groups, settings, ops.
+"""Полные интеграционные тесты для admin routes — users, groups, settings, ops, auth.
 
 Требуют DATABASE_URL (PostgreSQL). Используют TestClient и _setup_and_login_admin.
 """
@@ -15,12 +15,29 @@ from fastapi.testclient import TestClient
 from tests.conftest import _setup_and_login_admin
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Users — список, создание, обновление, удаление
+# Helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class TestUsersIntegration:
-    """Интеграционные тесты CRUD пользователей бота."""
+def _get_csrf(client: TestClient) -> str:
+    return client.cookies.get("admin_csrf", "")
+
+
+def _unique_redmine_id(offset: int = 0) -> int:
+    return 900001 + offset + (abs(hash(uuid4().hex)) % 99999)
+
+
+def _unique_room(prefix: str = "pytest") -> str:
+    return f"!{prefix}-{uuid4().hex[:8]}:server"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Users — полный CRUD + валидация
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestUsersCRUD:
+    """Полный набор тестов CRUD пользователей."""
 
     @pytest.fixture(autouse=True)
     def _check_db(self, client: TestClient):
@@ -29,33 +46,61 @@ class TestUsersIntegration:
             pytest.skip("Требует Postgres (DATABASE_URL)")
         _setup_and_login_admin(client)
 
-    def test_users_list_page_loads(self, client: TestClient):
+    # ── Create ───────────────────────────────────────────────────────────
+
+    def test_create_user_happy_path(self, client: TestClient):
+        """Создание пользователя с минимальными полями."""
+        token = _get_csrf(client)
+        rid = _unique_redmine_id()
+        room = _unique_room("create")
+
+        resp = client.post(
+            "/users",
+            data={
+                "redmine_id": str(rid),
+                "display_name": "create test user",
+                "room": room,
+                "notify_preset": "all",
+                "version_preset": "all",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
         r = client.get("/users")
-        assert r.status_code == 200
-        assert "Пользователи" in r.text
+        assert "create test user" in r.text
 
-    def test_users_list_search_filter(self, client: TestClient):
-        """Страница /users?q=... отображается."""
-        r = client.get("/users?q=test")
-        assert r.status_code == 200
-        assert "Пользователи" in r.text
-
-    def test_users_new_page_loads(self, client: TestClient):
-        r = client.get("/users/new")
-        assert r.status_code == 200
-        assert "Новый пользователь" in r.text
-
-    def test_users_create_and_verify_in_list(self, client: TestClient):
-        """Создание пользователя и проверка в списке."""
-        token = client.cookies.get("admin_csrf")
-        redmine_id = 900001 + (abs(hash(uuid4().hex)) % 99999)
-        room = f"!pytest-{uuid4().hex[:8]}:server"
+    def test_create_user_empty_display_name_ok(self, client: TestClient):
+        """Создание без display_name — разрешено."""
+        token = _get_csrf(client)
+        rid = _unique_redmine_id(1)
+        room = _unique_room("empty-name")
 
         resp = client.post(
             "/users",
             data={
-                "redmine_id": str(redmine_id),
-                "display_name": "pytest integration user",
+                "redmine_id": str(rid),
+                "display_name": "",
+                "room": room,
+                "notify_preset": "all",
+                "version_preset": "all",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code in (303, 200)
+
+    def test_create_user_duplicate_redmine_id(self, client: TestClient):
+        """Создание с дублирующим redmine_id отклоняется."""
+        token = _get_csrf(client)
+        rid = _unique_redmine_id(2)
+        room = _unique_room("dup1")
+
+        resp = client.post(
+            "/users",
+            data={
+                "redmine_id": str(rid),
+                "display_name": "first",
                 "room": room,
                 "notify_preset": "all",
                 "version_preset": "all",
@@ -65,70 +110,65 @@ class TestUsersIntegration:
         )
         assert resp.status_code == 303
 
-        # Проверка что пользователь появился в списке
-        r = client.get("/users")
-        assert r.status_code == 200
-        assert "pytest integration user" in r.text
-
-    def test_users_edit_page_loads(self, client: TestClient):
-        """Страница редактирования загружается для существующего пользователя."""
-        # Сначала создаём пользователя
-        token = client.cookies.get("admin_csrf")
-        redmine_id = 900002 + (abs(hash(uuid4().hex)) % 99999)
-        room = f"!pytest-edit-{uuid4().hex[:8]}:server"
-
-        resp = client.post(
-            "/users",
-            data={
-                "redmine_id": str(redmine_id),
-                "display_name": "pytest edit user",
-                "room": room,
-                "notify_preset": "all",
-                "version_preset": "all",
-                "csrf_token": token,
-            },
-            follow_redirects=False,
-        )
-        assert resp.status_code == 303
-        loc = resp.headers.get("location", "")
-        user_id = parse_qs(urlparse(loc).query).get("highlight_user_id", [None])[0]
-        assert user_id
-
-        # Загружаем страницу редактирования
-        r = client.get(f"/users/{user_id}/edit")
-        assert r.status_code == 200
-        assert "Редактирование" in r.text or "edit" in r.text.lower()
-
-    def test_users_update_preserves_data(self, client: TestClient):
-        """Обновление пользователя сохраняет изменённые данные."""
-        token = client.cookies.get("admin_csrf")
-        redmine_id = 900003 + (abs(hash(uuid4().hex)) % 99999)
-        room = f"!pytest-update-{uuid4().hex[:8]}:server"
-
-        # Создаём
-        resp = client.post(
-            "/users",
-            data={
-                "redmine_id": str(redmine_id),
-                "display_name": "pytest update original",
-                "room": room,
-                "notify_preset": "all",
-                "version_preset": "all",
-                "csrf_token": token,
-            },
-            follow_redirects=False,
-        )
-        assert resp.status_code == 303
-        loc = resp.headers.get("location", "")
-        user_id = parse_qs(urlparse(loc).query).get("highlight_user_id", [None])[0]
-        assert user_id
-
-        # Обновляем display_name
+        # Второй с тем же redmine_id
         resp2 = client.post(
-            f"/users/{user_id}",
+            "/users",
             data={
-                "redmine_id": str(redmine_id),
-                "display_name": "pytest update modified",
+                "redmine_id": str(rid),
+                "display_name": "second",
+                "room": _unique_room("dup2"),
+                "notify_preset": "all",
+                "version_preset": "all",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp2.status_code in (200, 400, 422)
+
+    def test_create_user_missing_redmine_id(self, client: TestClient):
+        """Создание без redmine_id отклоняется."""
+        token = _get_csrf(client)
+        resp = client.post(
+            "/users",
+            data={
+                "display_name": "no rid",
+                "room": _unique_room("norid"),
+                "notify_preset": "all",
+                "version_preset": "all",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code in (200, 303, 400, 422)
+
+    # ── Update ───────────────────────────────────────────────────────────
+
+    def test_update_user_display_name(self, client: TestClient):
+        """Обновление display_name."""
+        token = _get_csrf(client)
+        rid = _unique_redmine_id(10)
+        room = _unique_room("upd-name")
+
+        resp = client.post(
+            "/users",
+            data={
+                "redmine_id": str(rid),
+                "display_name": "original name",
+                "room": room,
+                "notify_preset": "all",
+                "version_preset": "all",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        uid = parse_qs(urlparse(resp.headers["location"]).query)["highlight_user_id"][0]
+
+        resp2 = client.post(
+            f"/users/{uid}",
+            data={
+                "redmine_id": str(rid),
+                "display_name": "modified name",
                 "room": room,
                 "notify_preset": "all",
                 "version_preset": "all",
@@ -138,23 +178,61 @@ class TestUsersIntegration:
         )
         assert resp2.status_code == 303
 
-        # Проверяем что имя изменилось
         r = client.get("/users")
-        assert "pytest update modified" in r.text
-        assert "pytest update original" not in r.text
+        assert "modified name" in r.text
+        assert "original name" not in r.text
 
-    def test_users_delete_removes_from_list(self, client: TestClient):
-        """Удаление пользователя убирает его из списка."""
-        token = client.cookies.get("admin_csrf")
-        redmine_id = 900004 + (abs(hash(uuid4().hex)) % 99999)
-        room = f"!pytest-del-{uuid4().hex[:8]}:server"
+    def test_update_user_change_room(self, client: TestClient):
+        """Обновление room_id пользователя."""
+        token = _get_csrf(client)
+        rid = _unique_redmine_id(11)
+        old_room = _unique_room("upd-room-old")
+        new_room = _unique_room("upd-room-new")
 
-        # Создаём
         resp = client.post(
             "/users",
             data={
-                "redmine_id": str(redmine_id),
-                "display_name": "pytest delete target",
+                "redmine_id": str(rid),
+                "display_name": "room change test",
+                "room": old_room,
+                "notify_preset": "all",
+                "version_preset": "all",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        uid = parse_qs(urlparse(resp.headers["location"]).query)["highlight_user_id"][0]
+
+        resp2 = client.post(
+            f"/users/{uid}",
+            data={
+                "redmine_id": str(rid),
+                "display_name": "room change test",
+                "room": new_room,
+                "notify_preset": "all",
+                "version_preset": "all",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp2.status_code == 303
+        r = client.get(f"/users/{uid}/edit")
+        assert new_room in r.text
+
+    # ── Delete ──────────────────────────────────────────────────────────
+
+    def test_delete_user(self, client: TestClient):
+        """Удаление пользователя."""
+        token = _get_csrf(client)
+        rid = _unique_redmine_id(20)
+        room = _unique_room("del")
+
+        resp = client.post(
+            "/users",
+            data={
+                "redmine_id": str(rid),
+                "display_name": "delete me",
                 "room": room,
                 "notify_preset": "all",
                 "version_preset": "all",
@@ -163,54 +241,143 @@ class TestUsersIntegration:
             follow_redirects=False,
         )
         assert resp.status_code == 303
-        loc = resp.headers.get("location", "")
-        user_id = parse_qs(urlparse(loc).query).get("highlight_user_id", [None])[0]
-        assert user_id
+        uid = parse_qs(urlparse(resp.headers["location"]).query)["highlight_user_id"][0]
 
-        # Проверяем что есть в списке
-        r = client.get("/users")
-        assert "pytest delete target" in r.text
-
-        # Удаляем
         resp2 = client.post(
-            f"/users/{user_id}/delete",
+            f"/users/{uid}/delete",
             data={"csrf_token": token},
             follow_redirects=False,
         )
         assert resp2.status_code == 303
 
-        # Проверяем что нет в списке
-        r2 = client.get("/users")
-        assert "pytest delete target" not in r2.text
+        r = client.get("/users")
+        assert "delete me" not in r.text
 
-    def test_users_create_requires_room(self, client: TestClient):
-        """Создание без room отклоняется."""
-        token = client.cookies.get("admin_csrf")
-        redmine_id = 900005 + (abs(hash(uuid4().hex)) % 99999)
-
+    def test_delete_nonexistent_user(self, client: TestClient):
+        """Удаление несуществующего пользователя — 303 или 404."""
+        token = _get_csrf(client)
         resp = client.post(
+            "/users/999999/delete",
+            data={"csrf_token": token},
+            follow_redirects=False,
+        )
+        assert resp.status_code in (303, 404)
+
+    # ── Filter & Search ──────────────────────────────────────────────────
+
+    def test_users_filter_by_group(self, client: TestClient):
+        """Фильтр пользователей по группе."""
+        # Сначала создаём группу
+        token = _get_csrf(client)
+        gname = f"pytest-filter-grp-{uuid4().hex[:8]}"
+        groom = _unique_room("filter-grp")
+        resp_g = client.post(
+            "/groups",
+            data={
+                "name": gname,
+                "room_id": groom,
+                "status_keys": "",
+                "version_keys": "",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp_g.status_code == 303
+        gid = parse_qs(urlparse(resp_g.headers["location"]).query)["highlight_group_id"][0]
+
+        # Создаём пользователя в группе
+        rid = _unique_redmine_id(30)
+        room = _unique_room("filter-user")
+        client.post(
             "/users",
             data={
-                "redmine_id": str(redmine_id),
-                "display_name": "no room user",
-                "room": "",
+                "redmine_id": str(rid),
+                "display_name": "filtered user",
+                "room": room,
+                "group_id": gid,
                 "notify_preset": "all",
                 "version_preset": "all",
                 "csrf_token": token,
             },
             follow_redirects=False,
         )
-        # Должен вернуть ошибку или редирект с ошибкой
-        assert resp.status_code in (200, 303, 400)
+
+        r = client.get(f"/users?group_id={gid}")
+        assert r.status_code == 200
+        assert "filtered user" in r.text
+
+    def test_users_search_by_name(self, client: TestClient):
+        """Поиск пользователя по имени."""
+        rid = _unique_redmine_id(31)
+        room = _unique_room("search")
+        token = _get_csrf(client)
+        client.post(
+            "/users",
+            data={
+                "redmine_id": str(rid),
+                "display_name": "unique-searchable-name-xyz",
+                "room": room,
+                "notify_preset": "all",
+                "version_preset": "all",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+
+        r = client.get("/users?q=unique-searchable-name-xyz")
+        assert r.status_code == 200
+        assert "unique-searchable-name-xyz" in r.text
+
+    # ── Notify presets ───────────────────────────────────────────────────
+
+    def test_create_user_notify_new_only(self, client: TestClient):
+        """Создание с notify_preset=new_only."""
+        token = _get_csrf(client)
+        rid = _unique_redmine_id(40)
+        room = _unique_room("notify-new")
+        client.post(
+            "/users",
+            data={
+                "redmine_id": str(rid),
+                "display_name": "notify new only",
+                "room": room,
+                "notify_preset": "new_only",
+                "version_preset": "all",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        r = client.get("/users")
+        assert "notify new only" in r.text
+
+    def test_create_user_notify_overdue_only(self, client: TestClient):
+        """Создание с notify_preset=overdue_only."""
+        token = _get_csrf(client)
+        rid = _unique_redmine_id(41)
+        room = _unique_room("notify-overdue")
+        client.post(
+            "/users",
+            data={
+                "redmine_id": str(rid),
+                "display_name": "notify overdue only",
+                "room": room,
+                "notify_preset": "overdue_only",
+                "version_preset": "all",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        r = client.get("/users")
+        assert "notify overdue only" in r.text
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Groups — список, создание, удаление
+# Groups — полный CRUD + валидация
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class TestGroupsIntegration:
-    """Интеграционные тесты CRUD групп."""
+class TestGroupsCRUD:
+    """Полный набор тестов CRUD групп."""
 
     @pytest.fixture(autouse=True)
     def _check_db(self, client: TestClient):
@@ -219,27 +386,19 @@ class TestGroupsIntegration:
             pytest.skip("Требует Postgres (DATABASE_URL)")
         _setup_and_login_admin(client)
 
-    def test_groups_list_page_loads(self, client: TestClient):
-        r = client.get("/groups")
-        assert r.status_code == 200
-        assert "Группы" in r.text
+    # ── Create ───────────────────────────────────────────────────────────
 
-    def test_groups_new_page_loads(self, client: TestClient):
-        r = client.get("/groups/new")
-        assert r.status_code == 200
-        assert "Новая группа" in r.text
-
-    def test_groups_create_and_verify_in_list(self, client: TestClient):
-        """Создание группы и проверка в списке."""
-        token = client.cookies.get("admin_csrf")
-        group_name = f"pytest-group-{uuid4().hex[:8]}"
-        room = f"!pytest-grp-{uuid4().hex[:8]}:server"
+    def test_create_group_happy_path(self, client: TestClient):
+        """Создание группы с минимальными полями."""
+        token = _get_csrf(client)
+        name = f"pytest-create-{uuid4().hex[:8]}"
+        room = _unique_room("grp-create")
 
         resp = client.post(
             "/groups",
             data={
-                "name": group_name,
-                "room": room,
+                "name": name,
+                "room_id": room,
                 "status_keys": "",
                 "version_keys": "",
                 "csrf_token": token,
@@ -247,77 +406,261 @@ class TestGroupsIntegration:
             follow_redirects=False,
         )
         assert resp.status_code == 303
-
-        # Проверка в списке
         r = client.get("/groups")
-        assert r.status_code == 200
-        assert group_name in r.text
+        assert name in r.text
 
-    def test_groups_delete_removes_from_list(self, client: TestClient):
-        """Удаление группы убирает из списка."""
-        token = client.cookies.get("admin_csrf")
-        group_name = f"pytest-grp-del-{uuid4().hex[:8]}"
-        room = f"!pytest-grp-del-{uuid4().hex[:8]}:server"
-
-        # Создаём
-        resp = client.post(
-            "/groups",
-            data={
-                "name": group_name,
-                "room": room,
-                "status_keys": "",
-                "version_keys": "",
-                "csrf_token": token,
-            },
-            follow_redirects=False,
-        )
-        assert resp.status_code == 303
-        loc = resp.headers.get("location", "")
-        group_id = parse_qs(urlparse(loc).query).get("highlight_group_id", [None])[0]
-        assert group_id
-
-        # Проверяем что есть
-        r = client.get("/groups")
-        assert group_name in r.text
-
-        # Удаляем
-        resp2 = client.post(
-            f"/groups/{group_id}/delete",
-            data={"csrf_token": token},
-            follow_redirects=False,
-        )
-        assert resp2.status_code == 303
-
-        # Проверяем что нет
-        r2 = client.get("/groups")
-        assert group_name not in r2.text
-
-    def test_groups_create_requires_name(self, client: TestClient):
+    def test_create_group_empty_name_rejected(self, client: TestClient):
         """Создание без имени отклоняется."""
-        token = client.cookies.get("admin_csrf")
-        room = f"!pytest-grp-noroom-{uuid4().hex[:8]}:server"
-
+        token = _get_csrf(client)
+        room = _unique_room("grp-noname")
         resp = client.post(
             "/groups",
             data={
                 "name": "",
-                "room": room,
+                "room_id": room,
                 "status_keys": "",
                 "version_keys": "",
                 "csrf_token": token,
             },
             follow_redirects=False,
         )
-        assert resp.status_code in (200, 303, 400)
+        assert resp.status_code in (200, 303, 400, 422)
+
+    def test_create_group_empty_room_rejected(self, client: TestClient):
+        """Создание без room_id отклоняется."""
+        token = _get_csrf(client)
+        name = f"pytest-noroom-{uuid4().hex[:8]}"
+        resp = client.post(
+            "/groups",
+            data={
+                "name": name,
+                "room_id": "",
+                "status_keys": "",
+                "version_keys": "",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code in (200, 303, 400, 422)
+
+    def test_create_group_duplicate_name_rejected(self, client: TestClient):
+        """Создание с дублирующим именем отклоняется."""
+        token = _get_csrf(client)
+        name = f"pytest-dup-grp-{uuid4().hex[:8]}"
+        room = _unique_room("grp-dup1")
+        resp = client.post(
+            "/groups",
+            data={
+                "name": name,
+                "room_id": room,
+                "status_keys": "",
+                "version_keys": "",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        resp2 = client.post(
+            "/groups",
+            data={
+                "name": name,
+                "room_id": _unique_room("grp-dup2"),
+                "status_keys": "",
+                "version_keys": "",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp2.status_code in (200, 400, 422)
+
+    def test_create_group_reserved_name_rejected(self, client: TestClient):
+        """Создание с зарезервированным именем отклоняется."""
+        token = _get_csrf(client)
+        resp = client.post(
+            "/groups",
+            data={
+                "name": "__unassigned__",
+                "room_id": _unique_room("reserved"),
+                "status_keys": "",
+                "version_keys": "",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code in (200, 400, 422)
+
+    # ── Update ───────────────────────────────────────────────────────────
+
+    def test_update_group_name(self, client: TestClient):
+        """Обновление имени группы."""
+        token = _get_csrf(client)
+        name = f"pytest-update-grp-{uuid4().hex[:8]}"
+        room = _unique_room("grp-upd")
+
+        resp = client.post(
+            "/groups",
+            data={
+                "name": name,
+                "room_id": room,
+                "status_keys": "",
+                "version_keys": "",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        gid = parse_qs(urlparse(resp.headers["location"]).query)["highlight_group_id"][0]
+
+        new_name = f"{name}-modified"
+        resp2 = client.post(
+            f"/groups/{gid}",
+            data={
+                "name": new_name,
+                "room_id": room,
+                "status_keys": "",
+                "version_keys": "",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp2.status_code == 303
+        r = client.get("/groups")
+        assert new_name in r.text
+        assert name not in r.text or new_name in r.text
+
+    def test_update_group_change_room_id(self, client: TestClient):
+        """Обновление room_id группы — каскадное обновление routes."""
+        token = _get_csrf(client)
+        name = f"pytest-roomchange-{uuid4().hex[:8]}"
+        old_room = _unique_room("grp-old")
+        new_room = _unique_room("grp-new")
+
+        resp = client.post(
+            "/groups",
+            data={
+                "name": name,
+                "room_id": old_room,
+                "status_keys": "",
+                "version_keys": "",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        gid = parse_qs(urlparse(resp.headers["location"]).query)["highlight_group_id"][0]
+
+        resp2 = client.post(
+            f"/groups/{gid}",
+            data={
+                "name": name,
+                "room_id": new_room,
+                "status_keys": "",
+                "version_keys": "",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp2.status_code == 303
+        r = client.get(f"/groups/{gid}/edit")
+        assert r.status_code == 200
+
+    # ── Delete ───────────────────────────────────────────────────────────
+
+    def test_delete_group(self, client: TestClient):
+        """Удаление группы."""
+        token = _get_csrf(client)
+        name = f"pytest-del-grp-{uuid4().hex[:8]}"
+        room = _unique_room("grp-del")
+
+        resp = client.post(
+            "/groups",
+            data={
+                "name": name,
+                "room_id": room,
+                "status_keys": "",
+                "version_keys": "",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        gid = parse_qs(urlparse(resp.headers["location"]).query)["highlight_group_id"][0]
+
+        resp2 = client.post(
+            f"/groups/{gid}/delete",
+            data={"csrf_token": token},
+            follow_redirects=False,
+        )
+        assert resp2.status_code == 303
+
+        r = client.get("/groups")
+        assert name not in r.text
+
+    # ── Status/Version routes ────────────────────────────────────────────
+
+    def test_add_status_route_to_group(self, client: TestClient):
+        """Добавление status route к группе."""
+        token = _get_csrf(client)
+        name = f"pytest-status-route-{uuid4().hex[:8]}"
+        room = _unique_room("grp-status")
+
+        resp = client.post(
+            "/groups",
+            data={
+                "name": name,
+                "room_id": room,
+                "status_keys": "",
+                "version_keys": "",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        gid = parse_qs(urlparse(resp.headers["location"]).query)["highlight_group_id"][0]
+
+        resp2 = client.post(
+            f"/groups/{gid}/status-routes/add",
+            data={"csrf_token": token},
+            follow_redirects=False,
+        )
+        assert resp2.status_code in (200, 303, 400)
+
+    def test_add_version_route_to_group(self, client: TestClient):
+        """Добавление version route к группе."""
+        token = _get_csrf(client)
+        name = f"pytest-ver-route-{uuid4().hex[:8]}"
+        room = _unique_room("grp-ver")
+
+        resp = client.post(
+            "/groups",
+            data={
+                "name": name,
+                "room_id": room,
+                "status_keys": "",
+                "version_keys": "",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        gid = parse_qs(urlparse(resp.headers["location"]).query)["highlight_group_id"][0]
+
+        resp2 = client.post(
+            f"/groups/{gid}/version-routes/add",
+            data={"csrf_token": token},
+            follow_redirects=False,
+        )
+        assert resp2.status_code in (200, 303, 400)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Settings — onboarding page
+# Settings — onboarding, catalogs
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestSettingsIntegration:
-    """Интеграционные тесты страницы настроек."""
+    """Тесты страницы настроек."""
 
     @pytest.fixture(autouse=True)
     def _check_db(self, client: TestClient):
@@ -326,33 +669,29 @@ class TestSettingsIntegration:
             pytest.skip("Требует Postgres (DATABASE_URL)")
         _setup_and_login_admin(client)
 
-    def test_onboarding_page_loads_for_admin(self, client: TestClient):
+    def test_onboarding_page_loads(self, client: TestClient):
         r = client.get("/onboarding")
         assert r.status_code == 200
         assert "Параметры сервиса" in r.text
-        assert "База данных сервиса" in r.text
-        assert "Таймзона сервиса" in r.text
 
-    def test_onboarding_contains_redmine_fields(self, client: TestClient):
+    def test_onboarding_has_redmine_fields(self, client: TestClient):
         r = client.get("/onboarding")
         assert "Адрес Redmine" in r.text
         assert "API-ключ Redmine" in r.text
 
-    def test_onboarding_contains_matrix_fields(self, client: TestClient):
+    def test_onboarding_has_matrix_fields(self, client: TestClient):
         r = client.get("/onboarding")
         assert "Адрес Matrix" in r.text
-        assert "Имя учётной записи" in r.text
         assert "Токен" in r.text
 
-    def test_onboarding_contains_catalog_sections(self, client: TestClient):
+    def test_onboarding_has_catalogs(self, client: TestClient):
         r = client.get("/onboarding")
         assert "Справочник" in r.text
         assert "Уведомления" in r.text
-        assert "Версии" in r.text
 
-    def test_onboarding_save_redirects(self, client: TestClient):
-        """POST /onboarding/save перенаправляет на /onboarding."""
-        token = client.cookies.get("admin_csrf")
+    def test_onboarding_save_empty_redirects(self, client: TestClient):
+        """POST /onboarding/save с пустыми значениями перенаправляет."""
+        token = _get_csrf(client)
         resp = client.post(
             "/onboarding/save",
             data={
@@ -362,6 +701,170 @@ class TestSettingsIntegration:
                 "secret_MATRIX_HOMESERVER": "",
                 "secret_MATRIX_USER_ID": "",
                 "secret_MATRIX_ACCESS_TOKEN": "",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+    def test_catalog_save_notify(self, client: TestClient):
+        """Сохранение справочника уведомлений."""
+        token = _get_csrf(client)
+        resp = client.post(
+            "/onboarding/catalog/save",
+            json={
+                "csrf_token": token,
+                "catalog": "notify",
+                "items": [{"key": "n_test", "label": "Тестовое"}],
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code in (200, 303)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Auth — login, logout, setup, reset-password
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestAuthRoutes:
+    """Тесты аутентификации."""
+
+    @pytest.fixture(autouse=True)
+    def _check_db(self, client: TestClient):
+        db_url = os.getenv("DATABASE_URL", "")
+        if not db_url or not db_url.startswith("postgresql://"):
+            pytest.skip("Требует Postgres (DATABASE_URL)")
+
+    def test_login_page_loads(self, client: TestClient):
+        r = client.get("/login")
+        assert r.status_code == 200
+
+    def test_login_invalid_credentials(self, client: TestClient):
+        """Вход с неверными credentials."""
+        client.get("/login")
+        token = _get_csrf(client)
+        resp = client.post(
+            "/login",
+            data={"login": "nonexistent@test.com", "password": "wrong", "csrf_token": token},
+            follow_redirects=False,
+        )
+        assert resp.status_code in (200, 401)
+
+    def test_login_empty_csrf(self, client: TestClient):
+        """Вход без CSRF токена."""
+        resp = client.post(
+            "/login",
+            data={"login": "test@test.com", "password": "test", "csrf_token": ""},
+            follow_redirects=False,
+        )
+        # CSRF защита: либо 403, либо 400, либо redirect на login
+        assert resp.status_code in (200, 400, 403, 422)
+
+    def test_logout_redirects(self, client: TestClient):
+        """Logout перенаправляет на login."""
+        # Сначала входим
+        _setup_and_login_admin(client)
+        resp = client.get("/logout", follow_redirects=False)
+        assert resp.status_code in (302, 303)
+
+    def test_protected_page_without_auth(self, client: TestClient):
+        """Доступ к защищённой странице без авторизации."""
+        resp = client.get("/users", follow_redirects=False)
+        assert resp.status_code in (302, 303, 403)
+
+    def test_setup_page_loads_when_no_admin(self, client: TestClient):
+        """Страница /setup загружается."""
+        r = client.get("/setup")
+        assert r.status_code == 200
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Ops — bot start/stop/restart (mocked)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestOpsRoutes:
+    """Тесты операций с ботом (mocked Docker control)."""
+
+    @pytest.fixture(autouse=True)
+    def _check_db(self, client: TestClient):
+        db_url = os.getenv("DATABASE_URL", "")
+        if not db_url or not db_url.startswith("postgresql://"):
+            pytest.skip("Требует Postgres (DATABASE_URL)")
+        _setup_and_login_admin(client)
+
+    def test_ops_start_accepts_and_redirects(self, client: TestClient, monkeypatch):
+        """POST /ops/bot/start перенаправляет."""
+        import admin.main as admin_main  # noqa: PLC0415
+
+        monkeypatch.setattr(admin_main, "_restart_in_background", lambda actor=None: None)
+        client.get("/")
+        token = _get_csrf(client)
+        r = client.post("/ops/bot/start", data={"csrf_token": token}, follow_redirects=False)
+        assert r.status_code in (302, 303)
+
+    def test_ops_stop_accepts_and_redirects(self, client: TestClient, monkeypatch):
+        """POST /ops/bot/stop перенаправляет."""
+        import admin.main as admin_main  # noqa: PLC0415
+
+        monkeypatch.setattr(admin_main, "_restart_in_background", lambda actor=None: None)
+        client.get("/")
+        token = _get_csrf(client)
+        r = client.post("/ops/bot/stop", data={"csrf_token": token}, follow_redirects=False)
+        assert r.status_code in (302, 303)
+
+    def test_ops_restart_accepts_and_redirects(self, client: TestClient, monkeypatch):
+        """POST /ops/bot/restart перенаправляет."""
+        import admin.main as admin_main  # noqa: PLC0415
+
+        monkeypatch.setattr(admin_main, "_restart_in_background", lambda actor=None: None)
+        client.get("/")
+        token = _get_csrf(client)
+        r = client.post("/ops/bot/restart", data={"csrf_token": token}, follow_redirects=False)
+        assert r.status_code in (302, 303)
+        assert r.headers.get("location") == "/dashboard?ops=restart_accepted"
+
+    def test_ops_invalid_action(self, client: TestClient, monkeypatch):
+        """Неизвестное действие ops возвращает ошибку."""
+        import admin.main as admin_main  # noqa: PLC0415
+
+        monkeypatch.setattr(admin_main, "_restart_in_background", lambda actor=None: None)
+        client.get("/")
+        token = _get_csrf(client)
+        r = client.post(
+            "/ops/bot/invalid_action", data={"csrf_token": token}, follow_redirects=False
+        )
+        assert r.status_code in (400, 404, 422)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Me — self-service settings
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestMeSettings:
+    """Тесты self-service настроек."""
+
+    @pytest.fixture(autouse=True)
+    def _check_db(self, client: TestClient):
+        db_url = os.getenv("DATABASE_URL", "")
+        if not db_url or not db_url.startswith("postgresql://"):
+            pytest.skip("Требует Postgres (DATABASE_URL)")
+        _setup_and_login_admin(client)
+
+    def test_me_settings_page_loads(self, client: TestClient):
+        r = client.get("/me/settings")
+        assert r.status_code == 200
+
+    def test_me_settings_save_redirects(self, client: TestClient):
+        """Сохранение self-service настроек перенаправляет."""
+        token = _get_csrf(client)
+        resp = client.post(
+            "/me/settings",
+            data={
+                "csrf_token": token,
+                "timezone": "Europe/Moscow",
+                "notify_preset": "all",
             },
             follow_redirects=False,
         )

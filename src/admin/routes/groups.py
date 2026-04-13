@@ -9,7 +9,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -490,12 +490,12 @@ async def groups_update(
         session.add(GroupVersionRoute(group_id=group_id, version_key=key, room_id=new_room))
     if old_room and new_room and old_room != new_room:
         await session.execute(
-            admin.update(StatusRoomRoute)
+            update(StatusRoomRoute)
             .where(StatusRoomRoute.room_id == old_room)
             .values(room_id=new_room)
         )
         await session.execute(
-            admin.update(GroupVersionRoute)
+            update(GroupVersionRoute)
             .where(GroupVersionRoute.group_id == group_id, GroupVersionRoute.room_id == old_room)
             .values(room_id=new_room)
         )

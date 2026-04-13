@@ -31,7 +31,7 @@
 </form>
 
 {% for dep_name, dep_users in grouped_users.items() %}
-<details class="card" {% if department_filter or q %}open{% elif loop.index0 == 0 %}open{% endif %}>
+<details class="card" {% if department_filter or q or not group_filter %}open{% elif loop.index0 == 0 %}open{% endif %}>
   <summary><strong>{{ dep_name }}</strong> — {{ dep_users|length }} чел.</summary>
   <div class="table-wrap">
     <table>
