@@ -20,6 +20,17 @@ logger = logging.getLogger("redmine_admin")
 
 router = APIRouter(tags=["users"])
 
+_TIME_RE = __import__("re").compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+
+
+def _validate_work_time(val: str, label: str) -> str:
+    val = (val or "").strip()
+    if not val:
+        raise HTTPException(400, f"{label}: обязательное поле")
+    if not _TIME_RE.match(val):
+        raise HTTPException(400, f"{label}: неверный формат (ожидается HH:MM, например 09:00)")
+    return val
+
 
 def _admin() -> object:
     """Late import to avoid circular dependency with main.py."""
@@ -171,7 +182,9 @@ async def users_create(
     if not user or getattr(user, "role", "") != "admin":
         raise HTTPException(403, "Только admin")
     if work_hours_from and work_hours_to:
-        wh = f"{work_hours_from.strip()}-{work_hours_to.strip()}"
+        wh_from = _validate_work_time(work_hours_from, "Время начала")
+        wh_to = _validate_work_time(work_hours_to, "Время окончания")
+        wh = f"{wh_from}-{wh_to}"
     else:
         wh = work_hours.strip() or None
     if work_days_values:
@@ -232,7 +245,7 @@ async def users_create(
             "group_id": row.group_id,
         },
     )
-    return RedirectResponse(f"/users?highlight_user_id={row.id}", status_code=303)
+    return RedirectResponse(f"/users?highlight_user_id={row.id}&saved=1", status_code=303)
 
 
 @router.post("/users/test-message")
@@ -536,7 +549,9 @@ async def users_update(
     else:
         row.notify = admin._parse_notify(notify_json)
     if work_hours_from and work_hours_to:
-        row.work_hours = f"{work_hours_from.strip()}-{work_hours_to.strip()}"
+        wh_from = _validate_work_time(work_hours_from, "Время начала")
+        wh_to = _validate_work_time(work_hours_to, "Время окончания")
+        row.work_hours = f"{wh_from}-{wh_to}"
     else:
         row.work_hours = work_hours.strip() or None
     if work_days_values:
@@ -585,7 +600,7 @@ async def users_update(
         "update",
         {"id": user_id, "redmine_id": redmine_id},
     )
-    return RedirectResponse(f"/users?highlight_user_id={user_id}", status_code=303)
+    return RedirectResponse(f"/users?highlight_user_id={user_id}&saved=1", status_code=303)
 
 
 @router.post("/users/{user_id}/version-routes/add")

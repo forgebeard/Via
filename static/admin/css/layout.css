@@ -215,7 +215,7 @@
 }
 
 .theme-toggle-btn {
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: center;
   width: 2.25rem;

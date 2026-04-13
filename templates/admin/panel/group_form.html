@@ -81,9 +81,9 @@
             <div class="field">
               <label for="work_hours_from_group">Рабочие часы</label>
               <div class="inline-range">
-                <input type="time" id="work_hours_from_group" name="work_hours_from" value="{% if g and g.work_hours and '-' in g.work_hours %}{{ g.work_hours.split('-')[0] }}{% else %}09:00{% endif %}"/>
+                <input type="text" id="work_hours_from_group" name="work_hours_from" pattern="[0-9]{2}:[0-9]{2}" placeholder="09:00" maxlength="5" value="{% if g and g.work_hours and '-' in g.work_hours %}{{ g.work_hours.split('-')[0] }}{% else %}09:00{% endif %}"/>
                 <span class="sep">—</span>
-                <input type="time" id="work_hours_to_group" name="work_hours_to" value="{% if g and g.work_hours and '-' in g.work_hours %}{{ g.work_hours.split('-')[1] }}{% else %}18:00{% endif %}"/>
+                <input type="text" id="work_hours_to_group" name="work_hours_to" pattern="[0-9]{2}:[0-9]{2}" placeholder="18:00" maxlength="5" value="{% if g and g.work_hours and '-' in g.work_hours %}{{ g.work_hours.split('-')[1] }}{% else %}18:00{% endif %}"/>
               </div>
             </div>
             <div class="field">
@@ -116,10 +116,10 @@
             <div class="field field-switch">
               <div class="switch-wrapper">
                 <label class="switch" for="dnd_group">
-                  <input type="checkbox" name="dnd" value="on" id="dnd_group" {% if g and g.dnd %}checked{% endif %}/>
+                  <input type="checkbox" name="dnd" value="on" id="dnd_group" aria-labelledby="dnd_group_text" {% if g and g.dnd %}checked{% endif %}/>
                   <span class="switch-ui" aria-hidden="true"></span>
                 </label>
-                <span class="switch-text">Отключить уведомления группы</span>
+                <span class="switch-text" id="dnd_group_text">Отключить уведомления группы</span>
               </div>
             </div>
           </div>
@@ -147,5 +147,6 @@
   </form>
 </div>
 
+<script src="/static/admin/js/toast.js?v={{ asset_version() }}"></script>
 <script src="/static/admin/js/group_form.js?v={{ asset_version() }}"></script>
 {% endblock %}

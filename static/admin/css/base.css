@@ -17,6 +17,13 @@
   /* Accent */
   --cyan:        #2563eb;
   --cyan-dim:    rgba(37, 99, 235, 0.12);
+  --accent-500:  var(--cyan);
+  --accent-600:  #1d4ed8;
+  --accent-200:  #93c5fd;
+  --accent-dim:  rgba(37, 99, 235, 0.12);
+  --accent-focus: rgba(37, 99, 235, 0.25);
+  --accent-glow: rgba(37, 99, 235, 0.3);
+  --accent-glow-border: rgba(37, 99, 235, 0.55);
   --primary:     var(--cyan);
 
   /* Semantic */
@@ -36,8 +43,8 @@
   --choice-border:        var(--border);
   --choice-radius-pill:   999px;
   --choice-radius-soft:   0.65rem;
-  --choice-active-bg:     rgba(37, 99, 235, 0.65);
-  --choice-active-border: rgba(37, 99, 235, 0.8);
+  --choice-active-bg:     var(--accent-500);
+  --choice-active-border: var(--accent-600);
 
   /* Layout */
   --sidebar-w:         18rem;

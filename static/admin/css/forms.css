@@ -54,7 +54,7 @@ select {
   font-size: 1rem;
   font-family: inherit;
   line-height: 1.45;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
   min-height: 2.85rem;
 }
 
@@ -63,7 +63,7 @@ textarea:focus,
 select:focus {
   outline: none;
   border-color: var(--cyan);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25);
+  box-shadow: 0 0 0 3px var(--accent-focus);
 }
 
 input::placeholder,
@@ -222,13 +222,19 @@ select {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
-.inline-range input[type="time"] {
+.inline-range input[type="time"],
+.inline-range input[type="text"] {
   width: auto;
   min-width: 7.5rem;
+  max-width: 10rem;
   flex: 0 1 auto;
+}
+
+.inline-range input[type="text"].is-invalid {
+  border-color: #f87171;
 }
 
 /* Force 24-hour time display in WebKit/Blink browsers */

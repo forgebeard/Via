@@ -49,7 +49,8 @@
 }
 
 .field-switch .switch-wrapper {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr;
   align-items: center;
   width: 100%;
   min-height: 3.15rem;
@@ -63,7 +64,6 @@
 /* Override global .switch for wrapper context */
 .field-switch .switch {
   margin-top: 0;
-  margin-right: 0.75rem;
   cursor: pointer;
   user-select: none;
   flex-shrink: 0;
@@ -75,6 +75,7 @@
   font-size: 0.98rem;
   font-weight: 500;
   white-space: nowrap;
+  padding-left: 0.75rem;
 }
 
 /* ---------- User form summary sidebar ---------- */
@@ -127,8 +128,11 @@
   .user-form-summary { position: static; }
   .field > select#timezone_name { max-width: none; }
   .field-switch { align-self: auto; padding-top: 0; padding-bottom: 0; }
+  .field-switch .switch-text { white-space: normal; }
 }
 
 @media (max-width: 700px) {
   .user-form-row-2 { grid-template-columns: 1fr; }
+  .field-switch .switch-wrapper { padding: 0.5rem 0.65rem; }
+  .field-switch .switch-text { font-size: 0.9rem; }
 }

@@ -83,8 +83,8 @@
 }
 
 .room-field__action:hover {
-  background: rgba(37, 99, 235, 0.12);
-  color: #93c5fd;
+  background: var(--accent-dim);
+  color: var(--accent-200);
 }
 
 /* ---------- Settings fieldset ---------- */
@@ -197,7 +197,7 @@ fieldset.settings-fieldset > legend {
 
 .btn-settings-save {
   width: 100%;
-  background: linear-gradient(135deg, var(--cyan), #1d4ed8);
+  background: linear-gradient(135deg, var(--accent-500), var(--accent-600));
   color: #f8fafc;
   font-weight: 600;
   font-size: 1.0625rem;

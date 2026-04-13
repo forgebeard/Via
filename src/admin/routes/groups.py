@@ -20,6 +20,17 @@ logger = logging.getLogger("redmine_admin")
 
 router = APIRouter(tags=["groups"])
 
+_TIME_RE = __import__("re").compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+
+
+def _validate_work_time(val: str, label: str) -> str:
+    val = (val or "").strip()
+    if not val:
+        raise HTTPException(400, f"{label}: обязательное поле")
+    if not _TIME_RE.match(val):
+        raise HTTPException(400, f"{label}: неверный формат (ожидается HH:MM, например 09:00)")
+    return val
+
 
 def _admin() -> object:
     """Late import to avoid circular dependency with main.py."""
@@ -299,7 +310,9 @@ async def groups_create(
         raise HTTPException(400, "Укажите ID комнаты группы")
     status_keys = admin._parse_status_keys_list(initial_status_keys)
     if work_hours_from and work_hours_to:
-        wh = f"{work_hours_from.strip()}-{work_hours_to.strip()}"
+        wh_from = _validate_work_time(work_hours_from, "Время начала")
+        wh_to = _validate_work_time(work_hours_to, "Время окончания")
+        wh = f"{wh_from}-{wh_to}"
     else:
         wh = work_hours.strip() or None
     if work_days_values:
@@ -363,7 +376,7 @@ async def groups_create(
         "create",
         {"id": rid, "name": n},
     )
-    return RedirectResponse(f"/groups?highlight_group_id={rid}", status_code=303)
+    return RedirectResponse(f"/groups?highlight_group_id={rid}&saved=1", status_code=303)
 
 
 @router.post("/groups/{group_id}")
@@ -417,7 +430,9 @@ async def groups_update(
     if existing_name.scalar_one_or_none() is not None:
         raise HTTPException(400, "Группа с таким названием уже существует")
     if work_hours_from and work_hours_to:
-        wh = f"{work_hours_from.strip()}-{work_hours_to.strip()}"
+        wh_from = _validate_work_time(work_hours_from, "Время начала")
+        wh_to = _validate_work_time(work_hours_to, "Время окончания")
+        wh = f"{wh_from}-{wh_to}"
     else:
         wh = work_hours.strip() or None
     if work_days_values:
@@ -495,7 +510,7 @@ async def groups_update(
         "update",
         {"id": group_id, "name": n},
     )
-    return RedirectResponse(f"/groups?highlight_group_id={group_id}", status_code=303)
+    return RedirectResponse(f"/groups?highlight_group_id={group_id}&saved=1", status_code=303)
 
 
 @router.post("/groups/{group_id}/status-routes/add")
