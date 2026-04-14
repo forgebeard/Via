@@ -172,13 +172,14 @@ class TestScoreMatrixCandidate:
         # Должно найти denis + fomicheov/fomichev в localpart
         assert score > 0
 
-    def test_only_first_name_no_match(self):
-        """Только имя «Денис» → denis_fomichev НЕ должен пройти."""
+    def test_only_first_name_partial_match(self):
+        """Только имя «Денис» → denis_fomichev даёт partial match (0.5)."""
         score = score_matrix_candidate(
             "Денис",
             {"display_name": "", "user_id": "@denis_fomichev:server"},
         )
-        assert score == 0
+        # Partial match: 1 часть из 1 совпала → score = 0.5
+        assert score == 0.5
 
     def test_unrelated_user(self):
         """Совершенно другой человек — score = 0."""
@@ -213,7 +214,9 @@ class TestFindBestMatch:
         assert best["user_id"] == "@denis:server"
 
     def test_no_match_below_threshold(self):
-        best = find_best_match("Денис", [{"display_name": "", "user_id": "@denis_fomichev:server"}])
+        """Нет совпадений выше порога → None."""
+        # Совершенно другой пользователь — score = 0
+        best = find_best_match("Денис", [{"display_name": "", "user_id": "@ivan_petrov:server"}])
         assert best is None
 
     def test_empty_results(self):

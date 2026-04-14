@@ -5,3 +5,4 @@
 13.04.2026 06:52:52 [AUDIT] ADMIN_CRUD entity=bot_user action=update actor=admin entity_id=2 details={"id": "2", "redmine_id": "1971"}
 13.04.2026 19:54:57 [AUDIT] ADMIN_CRUD entity=bot_user action=delete actor=admin entity_id=46 details={"id": "46", "redmine_id": "5508"}
 13.04.2026 19:55:00 [AUDIT] ADMIN_CRUD entity=bot_user action=delete actor=admin entity_id=19 details={"id": "19", "redmine_id": "1749"}
+14.04.2026 06:12:13 [AUDIT] ADMIN_CRUD entity=bot_user action=bulk_delete actor=admin details={"count": "58", "ids": "[omitted]"}

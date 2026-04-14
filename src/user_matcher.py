@@ -227,9 +227,19 @@ def score_matrix_candidate(redmine_name: str, matrix_user: dict[str, Any]) -> fl
     rn_parts_noyo = [normalize_yo(p) for p in rn_parts]
     total_name_parts = len(rn_parts)
 
+    # Разбиваем localpart на части по разделителям (., _, -)
+    # e.g. "sergey.tikhonenko" -> ["sergey", "tikhonenko"]
+    localpart_parts = re.split(r"[._\-]+", localpart.lower())
+    localpart_parts = [p for p in localpart_parts if p]
+
+    # Также создаём "чистую" версию без разделителей для legacy-сравнений
+    localpart_clean = re.sub(r"[._\-]", "", localpart.lower())
+
     score = 0.0
     display_matched_parts = 0
+    localpart_matched_parts = 0
 
+    # ── 1. Matching against display_name ──
     if matrix_display:
         mn_parts = set(normalize_name(matrix_display).split())
         mn_parts_noyo = set(normalize_name(normalize_yo(matrix_display)).split())
@@ -242,15 +252,43 @@ def score_matrix_candidate(redmine_name: str, matrix_user: dict[str, Any]) -> fl
         if display_matched_parts >= 2:
             score += display_matched_parts * 2.0
 
-    localpart_clean = re.sub(r"[._\-]", "", localpart.lower())
+    # ── 2. Matching against localpart parts (разделённые точками/подчёркиваниями) ──
+    # Сравниваем каждую часть localpart с транслитом каждой части имени Redmine
+    for lp_part in localpart_parts:
+        if len(lp_part) < 2:
+            continue
+        for rn_part in rn_parts:
+            if len(rn_part) < 2:
+                continue
+            # Транслитерация части имени
+            rn_translit = transliterate(rn_part.lower())
+            rn_translit_noyo = transliterate(normalize_yo(rn_part.lower()))
+            # Также генерируем варианты
+            rn_variants = transliterate_variants(rn_part) | transliterate_variants(normalize_yo(rn_part))
 
-    lp_matches = count_translit_matches(localpart_clean, rn_parts)
-    lp_matches_noyo = count_translit_matches(localpart_clean, rn_parts_noyo)
-    localpart_matched_parts = max(lp_matches, lp_matches_noyo)
+            if (lp_part == rn_translit or
+                lp_part == rn_translit_noyo or
+                lp_part in rn_variants or
+                rn_translit in lp_part or
+                rn_translit_noyo in lp_part):
+                localpart_matched_parts += 1
+                break  # Одна часть имени уже совпала с частью localpart
 
     if localpart_matched_parts >= 2:
-        score += localpart_matched_parts * 1.5
+        score += localpart_matched_parts * 2.0
+    elif localpart_matched_parts == 1:
+        score += 0.5  # Частичное совпадение
 
+    # ── 3. Legacy matching (чистый localpart без разделителей) ──
+    # Для случаев когда localpart слитный, e.g. "sergeytikhonenko"
+    lp_matches = count_translit_matches(localpart_clean, rn_parts)
+    lp_matches_noyo = count_translit_matches(localpart_clean, rn_parts_noyo)
+    legacy_matched = max(lp_matches, lp_matches_noyo)
+
+    if legacy_matched >= 2 and legacy_matched > localpart_matched_parts:
+        score += legacy_matched * 1.5
+
+    # ── 4. Translit matching against display_name ──
     if matrix_display:
         display_clean = re.sub(r"[._\-]", " ", normalize_name(matrix_display))
         display_parts = display_clean.split()
@@ -268,7 +306,8 @@ def score_matrix_candidate(redmine_name: str, matrix_user: dict[str, Any]) -> fl
         if translit_display_matches >= 2:
             score += translit_display_matches * 1.0
 
-    best_part_matches = max(display_matched_parts, localpart_matched_parts)
+    # ── 5. Final check: минимум 2 части должны совпасть ──
+    best_part_matches = max(display_matched_parts, localpart_matched_parts, legacy_matched)
     if best_part_matches < 2 and total_name_parts >= 2:
         return 0.0
 
@@ -276,7 +315,7 @@ def score_matrix_candidate(redmine_name: str, matrix_user: dict[str, Any]) -> fl
 
 
 def find_best_match(
-    redmine_name: str, matrix_results: list[dict[str, Any]], min_score: float = 1.5
+    redmine_name: str, matrix_results: list[dict[str, Any]], min_score: float = 0.5
 ) -> dict[str, Any] | None:
     if not matrix_results:
         return None
@@ -614,7 +653,7 @@ async def _search_and_match(
     homeserver: str,
     access_token: str,
     rm_name: str,
-    seen_ids: set[str],
+    _unused_seen_ids: set[str] | None = None,  # оставлен для совместимости сигнатуры
 ) -> dict[str, Any] | None:
     """Ищет сотрудника в Matrix: кириллица → транслит. Оптимизировано для скорости."""
     import asyncio as _asyncio
@@ -626,11 +665,23 @@ async def _search_and_match(
     _t0 = _st.monotonic()
     combined: list[dict[str, Any]] = []
 
-    # Шаг 1: прямой поиск по кириллице (2 запроса: прямой + обратный порядок)
+    # seen_ids — ЛОКАЛЬНЫЙ для каждого поиска, чтобы не терять кандидатов
+    # из-за того что другой пользователь в батче уже нашёл этого же человека
+    local_seen: set[str] = set()
+
+    # Шаг 1: прямой поиск по кириллице (3 запроса: прямой + обратный + только фамилия)
     search_names = [rm_name]
     name_noyo = normalize_yo(rm_name)
     if name_noyo != rm_name:
         search_names.append(name_noyo)
+
+    # Добавляем поиск только по фамилии (первое слово)
+    parts = rm_name.split()
+    if len(parts) >= 2:
+        search_names.append(parts[0])  # Фамилия
+        name_noyo_parts = name_noyo.split()
+        if len(name_noyo_parts) >= 2 and name_noyo_parts[0] != parts[0]:
+            search_names.append(name_noyo_parts[0])
 
     for name in search_names:
         _sys.stderr.write(f"[MATCH-SEARCH] '{rm_name}' → searching '{name}'...\n")
@@ -643,8 +694,8 @@ async def _search_and_match(
             _sys.stderr.flush()
         for user in results:
             uid = user.get("user_id", "")
-            if uid not in seen_ids:
-                seen_ids.add(uid)
+            if uid not in local_seen:
+                local_seen.add(uid)
                 combined.append(user)
 
         # Обратный порядок слов
@@ -658,8 +709,8 @@ async def _search_and_match(
             _sys.stderr.flush()
             for user in results_rev:
                 uid = user.get("user_id", "")
-                if uid not in seen_ids:
-                    seen_ids.add(uid)
+                if uid not in local_seen:
+                    local_seen.add(uid)
                     combined.append(user)
 
     _sys.stderr.write(f"[MATCH-SEARCH] '{rm_name}': {len(combined)} candidates after direct search\n")
@@ -672,15 +723,22 @@ async def _search_and_match(
         return match
 
     # Шаг 1.5: поиск по транслиту (для имён вроде "irina_sorochan")
+    # Также ищем по отдельным словам, чтобы найти "sergey.tikhonenko"
     translit_name = transliterate(rm_name)
     translit_rev = " ".join(reversed(translit_name.split()))
     translit_searches = [translit_name]
     if translit_rev != translit_name:
         translit_searches.append(translit_rev)
-
+    
+    # Добавляем поиск по отдельным словам (транслит)
+    for part in rm_name.split():
+        t_part = transliterate(part)
+        if len(t_part) >= 3 and t_part not in translit_searches:
+            translit_searches.append(t_part)
+    
     _sys.stderr.write(f"[MATCH-SEARCH] '{rm_name}': falling back to translit searches: {translit_searches}\n")
     _sys.stderr.flush()
-
+    
     for t_name in translit_searches:
         results_t = await search_matrix_user(client, homeserver, access_token, t_name)
         _sys.stderr.write(f"[MATCH-SEARCH]   translit '{t_name}' got {len(results_t)} results\n")
@@ -690,8 +748,8 @@ async def _search_and_match(
             _sys.stderr.flush()
         for user in results_t:
             uid = user.get("user_id", "")
-            if uid not in seen_ids:
-                seen_ids.add(uid)
+            if uid not in local_seen:
+                local_seen.add(uid)
                 combined.append(user)
 
     match = find_best_match(rm_name, combined)
@@ -713,8 +771,8 @@ async def _search_and_match(
         new_results = []
         for user in results:
             uid = user.get("user_id", "")
-            if uid not in seen_ids:
-                seen_ids.add(uid)
+            if uid not in local_seen:
+                local_seen.add(uid)
                 new_results.append(user)
                 combined.append(user)
 

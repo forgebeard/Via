@@ -189,11 +189,24 @@
   // ── Bulk create ──────────────────────────────────────────────
 
   async function bulkCreate() {
+    console.log('[parse] bulkCreate called');
+    console.log('[parse] lastScanData:', lastScanData);
+
+    if (!lastScanData || !lastScanData.matches) {
+      console.error('[parse] No scan data available!');
+      if (typeof toast !== 'undefined') {
+        toast.error('Нет данных для создания. Сначала выполните сканирование.');
+      }
+      return;
+    }
+
     var selected = [];
     resultsBody.querySelectorAll('.parse-cb:checked').forEach(function (cb) {
       var idx = parseInt(cb.getAttribute('data-idx'), 10);
+      console.log('[parse] Checkbox checked: idx=' + idx);
       if (lastScanData && lastScanData.matches[idx]) {
         var m = lastScanData.matches[idx];
+        console.log('[parse] Adding user:', m.redmine_name, m.matrix_localpart, m.status);
         selected.push({
           redmine_id: m.redmine_id,
           redmine_name: m.redmine_name,
@@ -202,7 +215,10 @@
       }
     });
 
+    console.log('[parse] Selected users count:', selected.length);
+
     if (selected.length === 0) {
+      console.warn('[parse] No users selected');
       if (typeof toast !== 'undefined') {
         toast.warning('Выберите хотя бы одного пользователя');
       }
@@ -213,16 +229,22 @@
     createBtn.textContent = 'Создаю...';
 
     try {
+      console.log('[parse] Sending bulk-create request with', selected.length, 'users');
       var r = await fetch('/api/users/bulk-create', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': getCsrfToken(),
+        },
         body: JSON.stringify({
           users: selected,
           csrf_token: getCsrfToken(),
         }),
       });
 
+      console.log('[parse] Bulk-create response status:', r.status);
       var data = await r.json();
+      console.log('[parse] Bulk-create response data:', data);
 
       if (!r.ok) {
         if (typeof toast !== 'undefined') {
@@ -241,6 +263,7 @@
 
       setTimeout(function () { window.location.href = '/users'; }, 500);
     } catch (e) {
+      console.error('[parse] Bulk-create error:', e);
       if (typeof toast !== 'undefined') {
         toast.error('Ошибка сети: ' + e.message);
       }

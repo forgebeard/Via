@@ -459,6 +459,40 @@ async def user_test_message(
         )
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# bulk-delete ДОЛЖЕН идти ПЕРЕД всеми /users/{user_id}..., иначе FastAPI
+# интерпретирует "bulk-delete" как user_id=int → 422 ошибка
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.post("/users/bulk-delete")
+async def users_bulk_delete(
+    request: Request,
+    user_ids: Annotated[list[str], Form()],
+    csrf_token: Annotated[str, Form()] = "",
+    session: AsyncSession = Depends(get_session),
+):
+    """Массовое удаление пользователей."""
+    admin = _admin()
+    admin._verify_csrf(request, csrf_token)
+    user = getattr(request.state, "current_user", None)
+    if not user or getattr(user, "role", "") != "admin":
+        return JSONResponse({"success": False, "error": "Только admin"}, status_code=403)
+
+    deleted_count = 0
+    for uid in user_ids:
+        if uid.isdigit():
+            row = await session.get(BotUser, int(uid))
+            if row:
+                await session.delete(row)
+                deleted_count += 1
+
+    await session.commit()
+    await admin._maybe_log_admin_crud(
+        session, user, "bot_user", "bulk_delete", {"count": deleted_count, "ids": user_ids}
+    )
+    return JSONResponse({"success": True, "deleted": deleted_count})
+
+
 @router.get("/users/{user_id}/edit", response_class=HTMLResponse)
 async def users_edit(
     request: Request,
@@ -718,35 +752,6 @@ async def users_delete(
             session, user, "bot_user", "delete", {"id": uid, "redmine_id": rmid}
         )
     return RedirectResponse("/users", status_code=303)
-
-
-@router.post("/users/bulk-delete")
-async def users_bulk_delete(
-    request: Request,
-    user_ids: Annotated[list[str], Form()],
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    """Массовое удаление пользователей."""
-    admin = _admin()
-    admin._verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        return JSONResponse({"success": False, "error": "Только admin"}, status_code=403)
-
-    deleted_count = 0
-    for uid in user_ids:
-        if uid.isdigit():
-            row = await session.get(BotUser, int(uid))
-            if row:
-                await session.delete(row)
-                deleted_count += 1
-
-    await session.commit()
-    await admin._maybe_log_admin_crud(
-        session, user, "bot_user", "bulk_delete", {"count": deleted_count, "ids": user_ids}
-    )
-    return JSONResponse({"success": True, "deleted": deleted_count})
 
 
 # --- Bot Heartbeat API ---

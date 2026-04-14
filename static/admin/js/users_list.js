@@ -67,9 +67,23 @@ document.addEventListener('DOMContentLoaded', function () {
 
       fetch('/users/bulk-delete', {
         method: 'POST',
+        credentials: 'include',
         body: formData,
       })
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (!r.ok) {
+          // Сервер вернул ошибку (403, 500 и т.д.)
+          return r.text().then(function (text) {
+            // Пытаемся распарсить как JSON, иначе покажем текст
+            try {
+              return { success: false, error: JSON.parse(text).error || text };
+            } catch (e) {
+              return { success: false, error: 'Сервер вернул ошибку: ' + r.status + ' ' + text.substring(0, 100) };
+            }
+          });
+        }
+        return r.json();
+      })
       .then(function (data) {
         if (data.success) {
           window.location.reload();
@@ -80,7 +94,8 @@ document.addEventListener('DOMContentLoaded', function () {
         }
       })
       .catch(function (e) {
-        alert('Ошибка сети');
+        console.error('[bulk-delete] Network error:', e);
+        alert('Ошибка сети: ' + e.message);
         bulkDeleteBtn.disabled = false;
         bulkDeleteBtn.innerHTML = '<i class="fa-solid fa-trash"></i> Удалить выбранных';
       });
