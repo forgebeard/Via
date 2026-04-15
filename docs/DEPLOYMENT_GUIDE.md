@@ -1,3 +1,4 @@
+```markdown
 # 📘 Руководство по развёртыванию Via (RHEL/AlmaLinux/Rocky)
 
 > Для настройки после развёртывания см. [ADMINISTRATOR_GUIDE.md](ADMINISTRATOR_GUIDE.md).
@@ -46,9 +47,9 @@ chmod +x deploy.sh && ./deploy.sh
 ```
 
 **Что делает `deploy.sh`:**
-1. Создаёт `.env` (если отсутствует).
+1. Создаёт `.env` из шаблона (если отсутствует).
 2. Загружает образы (PostgreSQL, Python).
-3. Сервис `init` заполняет `.env` случайными `POSTGRES_PASSWORD` и `APP_MASTER_KEY`.
+3. Генерирует `POSTGRES_PASSWORD` и `APP_MASTER_KEY` (сервис `init`).
 4. Запускает БД, веб-панель и бота.
 
 > ⚠️ Сохраните `.env` — credentials для восстановления системы.
@@ -58,25 +59,37 @@ chmod +x deploy.sh && ./deploy.sh
 1. Откройте `http://<IP>:8080/setup` — создайте администратора.
 2. Войдите: `http://<IP>:8080/login`.
 3. Перейдите в **Настройки** (`/onboarding`):
-   - Скопируйте credentials из раздела **«База данных сервиса»**.
+   - Скопируйте credentials из раздела **«База данных сервиса»** в безопасное место.
    - Введите параметры Redmine и Matrix в разделе **«Параметры сервиса»**.
    - Нажмите **«Проверить доступ»** → **«Сохранить»**.
 4. Перезапустите бота: `docker compose restart bot`.
 
 Подробности: [ADMINISTRATOR_GUIDE.md](ADMINISTRATOR_GUIDE.md).
 
-## 6. Полезные команды
+## 6. Обновление
+
+```bash
+cd ~/via/Via
+git pull
+docker compose up -d --build
+```
+
+Если в релизе есть новые миграции БД — они применяются автоматически при старте контейнеров.
+
+## 7. Полезные команды
 
 ```bash
 docker compose logs -f bot       # Логи бота
 docker compose restart bot       # Перезапуск бота
 docker compose ps                # Статус контейнеров
-docker compose down --rmi all -v # Полная очистка (данные БД удалятся!)
+docker compose down              # Остановка (данные БД сохраняются)
+docker compose down -v           # Полная очистка (данные БД удалятся!)
 ```
 
-## 7. Безопасность
+## 8. Безопасность
 
 - Используйте SSH-ключи вместо паролей.
 - Регулярно обновляйте систему и Docker-образы.
 - Храните `.env` в защищённом месте.
 - Для production используйте Docker secrets вместо `APP_MASTER_KEY` в `.env` (см. [secrets-storage.md](secrets-storage.md)).
+```

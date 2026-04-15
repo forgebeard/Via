@@ -1,3 +1,4 @@
+```markdown
 # Руководство администратора
 
 > Для развёртывания на сервере см. [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
@@ -17,7 +18,7 @@
 
 ### 1.2. Ограничение по логину
 
-Переменная `ADMIN_LOGINS` в `.env` — список разрешённых логинов (через запятую). Пустое = без ограничения.
+Переменная `ADMIN_LOGINS` в `.env` — список разрешённых логинов (через запятую). Пустое значение = без ограничения.
 
 ## 2. Настройка интеграций
 
@@ -33,54 +34,59 @@
 |--------|-----|----------|
 | Дашборд | `/dashboard` | Плитки Пользователи / Группы / События, блок «Что сделать сейчас», управление ботом (Старт/Стоп/Рестарт) |
 | Пользователи | `/users` | Список, создание, редактирование (Redmine ID, Matrix user, настройки) |
-| Группы | `/groups` | Комната Matrix группы, статусы Redmine, версии |
+| Группы | `/groups` | Комната Matrix группы, маршруты по статусам Redmine, версии |
+| Маршруты по версии | `/routes/version` | Глобальная карта «версия → комната Matrix» |
 | Настройки | `/onboarding` | Параметры сервиса, БД, таймзона, справочник |
 | Аккаунты панели | `/app-users` | Управление аккаунтами админки (смена логина, сброс пароля) |
-| События | `/events` | Таблица по файлу лога + CSV-экспорт |
-| Маршруты по версии | `/routes/version` | Глобальная карта версия → комната |
+| События | `/events` | Журнал событий бота и панели, фильтр по датам, CSV-экспорт |
 
-После правок в панели **перезапустите bot** — он подгружает конфигурацию из Postgres при старте.
+### Когда нужен перезапуск бота
+
+Бот периодически подгружает конфигурацию из БД (интервал `CONFIG_POLL_INTERVAL_SEC`, по умолчанию 30 сек). Перезапуск **обязателен** только после:
+
+- Первичной настройки подключений (Redmine / Matrix) в `/onboarding`
+- Изменения переменных в `.env`
+
+Добавление и редактирование пользователей, групп, маршрутов подхватывается автоматически.
 
 ## 4. Смена пароля админки
 
 Самообслуживания по форме «забыли пароль» нет. Варианты:
 
-1. Другой администратор в разделе **«Аккаунты панели»**.
-2. Скрипт: `python scripts/reset_admin_password.py --login admin --password 'NewPassword123'`.
+1. Другой администратор — в разделе **«Аккаунты панели»**.
+2. Скрипт:
+   ```bash
+   python scripts/reset_admin_password.py --login admin --password 'NewPassword123'
+   ```
 3. Страница `/reset-password?token=…` — смена по одноразовому токену (таблица `password_reset_tokens`).
 
 ## 5. События и аудит
 
-Подробно: [AUDIT_LOGGING.md](AUDIT_LOGGING.md).
+На странице **События** (`/events`) отображается журнал событий — записи бота и действия в панели (строки с меткой `[ADMIN]`).
 
-**Кратко:**
-- Файл событий (`ADMIN_EVENTS_LOG_PATH` / `data/bot.log`) — строки бота + `[ADMIN]` от панели (вход, выход, Docker-операции).
-- Файл аудита (`ADMIN_AUDIT_LOG_PATH` / `data/admin_audit.log`) — отдельный журнал операций панели.
-- Страница `/events` — таблица по хвосту файла (`ADMIN_EVENTS_LOG_SCAN_BYTES`, по умолчанию 8 МБ), фильтр по датам, CSV-экспорт.
+**Что попадает в журнал:**
+- Циклы опроса Redmine, отправка уведомлений, ошибки бота
+- Вход / выход из панели
+- Управление ботом (Старт / Стоп / Рестарт)
+- CRUD-операции (при включённом `ADMIN_EVENTS_LOG_CRUD=1`)
 
-## 6. Локальные команды разработчика
+**Фильтрация:** по диапазону дат. **Экспорт:** кнопка CSV.
 
-Когда Postgres доступен с хоста (Compose поднят, порт 5433):
+Подробнее о каналах логирования и аудите: [AUDIT_LOGGING.md](AUDIT_LOGGING.md).
 
-```bash
-export DATABASE_URL=postgresql://bot:<ПАРОЛЬ>@127.0.0.1:5433/via
-export APP_MASTER_KEY=<32-символьный ключ>
-pip install -r requirements.txt -r requirements-test.txt
-python -m alembic upgrade head
-python -m pytest tests/ -q --tb=short --ignore=tests/e2e
-```
-
-Если `DATABASE_URL` не задан, часть тестов будет пропущена — это нормально.
-
-## 7. Типичные проблемы
+## 6. Типичные проблемы
 
 ### `password authentication failed for user "bot"`
 
 Том `postgres_data` создан раньше с другим `POSTGRES_PASSWORD`. Варианты:
 
-- Подставить в `DATABASE_URL` точно значение из текущего `.env`.
-- Выровнять пароль: `docker compose exec postgres psql -U bot -d via -c "ALTER USER bot WITH PASSWORD 'новый_пароль';"`
-- Для чистого dev: `docker compose down -v` (данные БД удалятся).
+- Подставить в `DATABASE_URL` значение из текущего `.env`.
+- Выровнять пароль:
+  ```bash
+  docker compose exec postgres psql -U bot -d via \
+    -c "ALTER USER bot WITH PASSWORD 'новый_пароль';"
+  ```
+- Для чистого окружения: `docker compose down -v` (данные БД удалятся).
 
 ### `ERR_CONNECTION_REFUSED` на `127.0.0.1`
 
@@ -96,16 +102,23 @@ docker compose logs --tail=80 admin
 
 Очистите state:
 ```bash
-docker compose exec postgres psql -U bot -d via -c "delete from bot_issue_state;"
+docker compose exec postgres psql -U bot -d via \
+  -c "DELETE FROM bot_issue_state;"
 docker compose restart bot
 ```
 
-## 8. Остановка и бэкап
+## 7. Остановка и бэкап
 
 ```bash
 docker compose down
 ```
 
-Данные БД в томе `postgres_data` при `down` **не удаляются**. Бэкапы — `pg_dump`.
+Данные БД в томе `postgres_data` при `down` **не удаляются**. Бэкап:
+
+```bash
+docker compose exec postgres sh -lc \
+  'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > backup_$(date +%F).sql
+```
 
 Аварийный откат: [rollback-runbook.md](rollback-runbook.md).
+```

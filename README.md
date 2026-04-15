@@ -1,3 +1,4 @@
+```markdown
 # Via — Redmine → Matrix Notification Bot
 
 Бот автоматически отслеживает изменения в задачах Redmine и отправляет уведомления в Matrix.
@@ -6,13 +7,19 @@
 
 ```bash
 git clone git@github.com:forgebeard/Via.git && cd Via
-docker compose up --build -d
+chmod +x deploy.sh && ./deploy.sh
 ```
 
+**Что делает `deploy.sh`:**
+1. Создаёт `.env` из шаблона (если отсутствует).
+2. Генерирует `POSTGRES_PASSWORD` и `APP_MASTER_KEY`.
+3. Запускает PostgreSQL, веб-панель и бота.
+
 После запуска:
-1. Откройте `http://<хост>:8080/setup` — создайте первого администратора
-2. Перейдите в **Настройки** (`/onboarding`) и введите параметры Matrix и Redmine
-3. Заполните пользователей и группы в панели
+1. Откройте `http://<хост>:8080/setup` — создайте первого администратора.
+2. Перейдите в **Настройки** (`/onboarding`) — введите параметры Matrix и Redmine, нажмите **«Проверить доступ»** → **«Сохранить»**.
+3. Перезапустите бота: `docker compose restart bot`.
+4. Заполните пользователей и группы в панели.
 
 > ⚠️ Сохраните `.env` — в нём credentials для восстановления системы.
 
@@ -156,3 +163,4 @@ python -m pytest tests/e2e/ -v --tb=short
 ## Лицензия
 
 MIT
+```
