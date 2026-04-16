@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
     BotUser,
+    CycleSettings,
     GroupVersionRoute,
     StatusRoomRoute,
     SupportGroup,
@@ -118,3 +119,18 @@ async def row_counts(session: AsyncSession | None = None) -> tuple[int, int, int
     ns = await session.scalar(select(func.count()).select_from(StatusRoomRoute))
     nv = await session.scalar(select(func.count()).select_from(VersionRoomRoute))
     return int(nu or 0), int(ns or 0), int(nv or 0)
+
+# src/database/load_config.py — добавить в конец файла:
+
+async def fetch_cycle_settings(session: AsyncSession | None = None) -> dict[str, str]:
+    """
+    Загружает настройки цикла из таблицы cycle_settings.
+    Возвращает {key: value} — например {"CHECK_INTERVAL": "90", "REMINDER_AFTER": "3600"}.
+    """
+    if session is None:
+        factory = get_session_factory()
+        async with factory() as s:
+            return await fetch_cycle_settings(s)
+
+    result = await session.execute(select(CycleSettings))
+    return {row.key: row.value for row in result.scalars().all()}

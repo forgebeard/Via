@@ -358,6 +358,41 @@ async def main() -> None:
     _SV.update(VERSION_ROOM_MAP)
 
     logger.info("Конфиг из БД обновлён, пользователей: %s", len(USERS))
+        # ── Загрузка cycle_settings (интервалы, таймзона из БД) ──────────────
+    from database.load_config import fetch_cycle_settings
+
+    try:
+        async with session_factory() as session:
+            cycle = await fetch_cycle_settings(session)
+    except Exception as e:
+        logger.warning("⚠ cycle_settings не загружены (%s), используем .env значения", e)
+        cycle = {}
+
+    if cycle:
+        CHECK_INTERVAL = int(cycle.get("CHECK_INTERVAL", str(CHECK_INTERVAL)))
+        REMINDER_AFTER = int(cycle.get("REMINDER_AFTER", str(REMINDER_AFTER)))
+        GROUP_REPEAT_SECONDS = int(cycle.get("GROUP_REPEAT_SECONDS", str(GROUP_REPEAT_SECONDS)))
+
+        new_tz = cycle.get("BOT_TIMEZONE", "").strip()
+        if new_tz:
+            BOT_TIMEZONE = new_tz
+            BOT_TZ = ZoneInfo(BOT_TIMEZONE)
+
+        new_lease = cycle.get("BOT_LEASE_TTL_SECONDS", "").strip()
+        if new_lease:
+            BOT_LEASE_TTL_SECONDS = max(15, min(int(new_lease), 3600))
+
+        logger.info(
+            "⚙ cycle_settings из БД: interval=%ds, reminder=%ds, "
+            "group_repeat=%ds, tz=%s, lease_ttl=%ds",
+            CHECK_INTERVAL,
+            REMINDER_AFTER,
+            GROUP_REPEAT_SECONDS,
+            BOT_TZ,
+            BOT_LEASE_TTL_SECONDS,
+        )
+    else:
+        logger.info("⚙ cycle_settings: таблица пуста, используются значения из .env")
 
     # ── Инициализация sender template ──
     import bot.sender as _sender_mod
