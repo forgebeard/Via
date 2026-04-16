@@ -299,7 +299,7 @@ class AppSecret(Base):
 
 
 class RedmineStatus(Base):
-    """Справочник статусов Redmine (загружается из API или вручную)."""
+    """Справочник статусов Redmine (загружается из API через админку)."""
 
     __tablename__ = "redmine_statuses"
 
@@ -309,6 +309,12 @@ class RedmineStatus(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_closed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # Семантическая роль — назначается админом в UI.
+    # Допустимые: "trigger_new", "trigger_info_provided",
+    #             "trigger_reopened", "trigger_transferred", None
+    role: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
@@ -330,7 +336,7 @@ class RedmineVersion(Base):
 
 
 class RedminePriority(Base):
-    """Справочник приоритетов Redmine."""
+    """Справочник приоритетов Redmine (загружается из API через админку)."""
 
     __tablename__ = "redmine_priorities"
 
@@ -339,6 +345,10 @@ class RedminePriority(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # Пробивает DND (аварийный приоритет) — назначается админом
+    is_emergency: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from bot.async_utils import run_in_thread
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from redminelib.exceptions import AuthError, BaseRedmineError, ForbiddenError
@@ -20,6 +20,17 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("redmine_bot")
+
+
+# ── Формат даты для Redmine API ─────────────────────────────────────────────
+
+def _redmine_ts(dt: datetime) -> str:
+    """Конвертирует datetime в строку, которую принимает фильтр updated_on.
+
+    Redmine отвергает offset-формат (+03:00).
+    Приводим к UTC и отдаём «YYYY-MM-DDTHH:MM:SSZ».
+    """
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 async def check_user_issues(
@@ -62,7 +73,7 @@ async def check_user_issues(
             "include": ["journals"],
         }
         if last_check:
-            params["updated_on"] = f">={last_check.isoformat()}"
+            params["updated_on"] = f">={_redmine_ts(last_check)}"
 
         # redminelib — синхронная, выносим в thread чтобы не блокировать event loop
         issues = await run_in_thread(lambda: list(redmine.issue.filter(**params)))
