@@ -120,7 +120,9 @@ async def row_counts(session: AsyncSession | None = None) -> tuple[int, int, int
     nv = await session.scalar(select(func.count()).select_from(VersionRoomRoute))
     return int(nu or 0), int(ns or 0), int(nv or 0)
 
+
 # src/database/load_config.py — добавить в конец файла:
+
 
 async def fetch_cycle_settings(session: AsyncSession | None = None) -> dict[str, str]:
     """

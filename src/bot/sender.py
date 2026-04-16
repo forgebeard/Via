@@ -88,7 +88,8 @@ async def prewarm_dm_rooms(client: AsyncClient, mxids: list[str]) -> None:
 
     logger.info(
         "🔗 Pre-warm DM: %d в кеше, %d нужно резолвить...",
-        found_in_cache, len(to_resolve),
+        found_in_cache,
+        len(to_resolve),
     )
 
     created_count = 0
@@ -118,7 +119,10 @@ async def prewarm_dm_rooms(client: AsyncClient, mxids: list[str]) -> None:
             created_count += 1
             logger.info(
                 "✅ DM создан (%d/%d): %s → %s",
-                i + 1, len(need_create), target_mxid, room_id,
+                i + 1,
+                len(need_create),
+                target_mxid,
+                room_id,
             )
         except TimeoutError:
             logger.warning("⏱ Pre-warm DM timeout: %s (пропуск)", target_mxid)
@@ -128,7 +132,8 @@ async def prewarm_dm_rooms(client: AsyncClient, mxids: list[str]) -> None:
             if "429" in error_msg or "ratelimited" in error_msg.lower():
                 # Rate-limited — ждём дольше и пробуем дальше
                 logger.warning(
-                    "⚠ Rate-limited при создании DM %s, пауза 60с...", target_mxid,
+                    "⚠ Rate-limited при создании DM %s, пауза 60с...",
+                    target_mxid,
                 )
                 await asyncio.sleep(60)
                 # Повторная попытка
@@ -153,7 +158,10 @@ async def prewarm_dm_rooms(client: AsyncClient, mxids: list[str]) -> None:
 
     logger.info(
         "✅ Pre-warm DM завершён: %d найдено, %d создано, %d неудачно (всего %d)",
-        found_count, created_count, failed_count, len(to_resolve),
+        found_count,
+        created_count,
+        failed_count,
+        len(to_resolve),
     )
     # Сбрасываем failed — при первом цикле попробуем ещё раз
     _dm_failed.clear()
@@ -199,9 +207,11 @@ async def _create_dm(client: AsyncClient, target_mxid: str) -> str:
                 wait_s = (retry_ms / 1000) + 2  # +2с запас
                 if attempt < max_attempts:
                     logger.warning(
-                        "⚠ Rate-limited при создании DM %s (попытка %d/%d), "
-                        "ждём %.0fс...",
-                        target_mxid, attempt, max_attempts, wait_s,
+                        "⚠ Rate-limited при создании DM %s (попытка %d/%d), ждём %.0fс...",
+                        target_mxid,
+                        attempt,
+                        max_attempts,
+                        wait_s,
                     )
                     await asyncio.sleep(wait_s)
                     continue
@@ -209,6 +219,7 @@ async def _create_dm(client: AsyncClient, target_mxid: str) -> str:
         raise RuntimeError(f"Не удалось создать DM с {target_mxid}: {resp}")
 
     raise RuntimeError(f"Не удалось создать DM с {target_mxid} после {max_attempts} попыток")
+
 
 async def _resolve_room_id(client: AsyncClient, room_or_mxid: str) -> str:
     """Если room_or_mxid — MXID (@user:server), находит или создаёт DM.
@@ -261,16 +272,16 @@ async def _resolve_room_id(client: AsyncClient, room_or_mxid: str) -> str:
         return new_room_id
     except TimeoutError:
         _dm_failed.add(target_mxid)
-        raise RuntimeError(
-            f"Таймаут создания DM с {target_mxid} ({DM_CREATE_TIMEOUT}с)"
-        )
+        raise RuntimeError(f"Таймаут создания DM с {target_mxid} ({DM_CREATE_TIMEOUT}с)")
     except Exception:
         _dm_failed.add(target_mxid)
         raise
 
+
 async def resolve_room(client: AsyncClient, room_or_mxid: str) -> str:
     """Публичный хелпер: резолвит MXID → room_id через кеш. Для использования вне sender."""
     return await _resolve_room_id(client, room_or_mxid)
+
 
 async def send_matrix_message(
     client: AsyncClient,
