@@ -280,7 +280,7 @@ async def send_matrix_message(
     extra_text: str = "",
 ) -> None:
     """Формирует и отправляет HTML-сообщение в Matrix через Jinja2-шаблон."""
-    from bot.logic import NOTIFICATION_TYPES, get_version_name, plural_days
+    from bot.config_state import CATALOGS, get_version_name, plural_days
 
     global _notification_template
     if _notification_template is None:

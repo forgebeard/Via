@@ -394,6 +394,43 @@ async def main() -> None:
     else:
         logger.info("⚙ cycle_settings: таблица пуста, используются значения из .env")
 
+     ── Загрузка справочников (каталогов) из БД ──────────────
+    from bot.catalogs import load_catalogs
+    import bot.config_state as _cs
+
+    try:
+        async with session_factory() as session:
+            CATALOGS = await load_catalogs(session)
+    _cs.CATALOGS = CATALOGS
+    logger.info(
+        "✅ Справочники загружены: %d статусов, %d приоритетов, %d типов уведомлений",
+        len(CATALOGS.status_id_to_name),
+        len(CATALOGS.priority_id_to_name),
+        len(CATALOGS.notification_types),
+    )
+    except Exception as e:
+        logger.error("❌ Справочники не загружены: %s", e, exc_info=True)
+        return
+
+    # Переопределяем интервалы через каталоги (fallback на уже загруженные значения)
+    CHECK_INTERVAL = CATALOGS.cycle_int("CHECK_INTERVAL", CHECK_INTERVAL)
+    REMINDER_AFTER = CATALOGS.cycle_int("REMINDER_AFTER", REMINDER_AFTER)
+    GROUP_REPEAT_SECONDS = CATALOGS.cycle_int("GROUP_REPEAT_SECONDS", GROUP_REPEAT_SECONDS)
+    BOT_LEASE_TTL_SECONDS = max(15, min(
+        CATALOGS.cycle_int("BOT_LEASE_TTL_SECONDS", BOT_LEASE_TTL_SECONDS), 3600
+    ))
+
+    # Таймзона
+    new_tz = (CATALOGS.cycle_settings.get("BOT_TIMEZONE") or "").strip()
+    if new_tz:
+        BOT_TIMEZONE = new_tz
+        BOT_TZ = ZoneInfo(BOT_TIMEZONE)
+
+    logger.info(
+        "⚙ cycle: interval=%ds, reminder=%ds, repeat=%ds, tz=%s",
+        CHECK_INTERVAL, REMINDER_AFTER, GROUP_REPEAT_SECONDS, BOT_TZ,
+    )
+
     # ── Инициализация sender template ──
     import bot.sender as _sender_mod
     from bot.sender import init_template

@@ -33,68 +33,6 @@ else:
 # КОНСТАНТЫ
 # ═══════════════════════════════════════════════════════════════════════════
 
-STATUS_NEW = "Новая"
-STATUS_INFO_PROVIDED = "Информация предоставлена"
-STATUS_REOPENED = "Открыто повторно"
-STATUS_RV = "Передано в работу.РВ"
-
-STATUSES_TRANSFERRED = {
-    "Передано в работу.РВ",
-    "Передано в работу.РА.Стд",
-    "Передано в работу.РА.Пром",
-    "Передано в работу.РБД",
-    "Передано в работу.ВРМ",
-}
-
-NOTIFICATION_TYPES: dict[str, tuple[str, str]] = {
-    "new": ("🆕", "Новая задача"),
-    "info": ("✅", "Информация предоставлена"),
-    "reminder": ("⏰", "Напоминание"),
-    "overdue": ("⚠️", "Просроченная задача"),
-    "status_change": ("🔄", "Смена статуса"),
-    "issue_updated": ("📝", "Задача обновлена"),
-    "reopened": ("🔁", "Открыто повторно"),
-}
-
-# Имена статусов по ID
-STATUS_NAMES: dict[str, str] = {
-    "1": "Новая",
-    "2": "В работе",
-    "5": "Завершена",
-    "6": "Отклонена",
-    "8": "Ожидание",
-    "12": "Запрос информации",
-    "13": "Информация предоставлена",
-    "17": "Ожидается решение",
-    "18": "Открыто повторно",
-    "22": "Передано в работу.РВ",
-    "23": "Передано в работу.РБД",
-    "25": "Передано в работу.РА.Стд",
-    "26": "Передано в работу.РА.Пром",
-    "27": "Проектирование",
-    "28": "Передано в работу.ВРМ",
-    "29": "Приостановлено",
-    "30": "Передано на L2",
-    "31": "Эскалация",
-    "32": "Решен",
-    "33": "Возвращен (L1)",
-}
-
-PRIORITY_NAMES: dict[str, str] = {
-    "1": "4 (Низкий)",
-    "2": "3 (Нормальный)",
-    "3": "2 (Высокий)",
-    "4": "1 (Аварийный)",
-}
-
-# Приоритет «Аварийный» — пробивает DND и выходные
-PRIORITY_EMERGENCY = "1 (Аварийный)"
-
-ID_FIELD_RESOLVERS: dict[str, dict[str, str]] = {
-    "status_id": STATUS_NAMES,
-    "priority_id": PRIORITY_NAMES,
-}
-
 FIELD_NAMES: dict[str, str | None] = {
     "status_id": "Статус",
     "assigned_to_id": "Назначена",
@@ -348,17 +286,18 @@ def detect_new_journals(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def resolve_field_value(field_name: str, value: Any) -> str:
+def resolve_field_value(field_name: str, value: Any, catalogs: BotCatalogs | None = None) -> str:
     """Переводит ID в человекочитаемое имя для известных полей."""
     if value is None or value == "":
         return "—"
-    resolver = ID_FIELD_RESOLVERS.get(field_name)
-    if resolver:
-        return resolver.get(str(value), str(value))
+    if field_name == "status_id" and catalogs:
+        return catalogs.status_name(int(value), default=str(value))
+    if field_name == "priority_id" and catalogs:
+        return catalogs.priority_name(int(value), default=str(value))
     return str(value)
 
 
-def describe_journal(journal: IssueJournal, skip_status: bool = False) -> str | None:
+def describe_journal(journal: IssueJournal, skip_status: bool = False, catalogs: BotCatalogs | None = None) -> str | None:
     """Описывает одну запись журнала в человекочитаемом виде."""
     parts: list[str] = []
 
@@ -381,8 +320,8 @@ def describe_journal(journal: IssueJournal, skip_status: bool = False) -> str | 
             if field_label is None:
                 continue
 
-            old_val = resolve_field_value(prop, detail.get("old_value"))
-            new_val = resolve_field_value(prop, detail.get("new_value"))
+            old_val = resolve_field_value(prop, detail.get("old_value"), catalogs)
+            new_val = resolve_field_value(prop, detail.get("new_value"), catalogs)
             parts.append(f"{field_label}: {old_val} → {new_val}")
     except Exception:
         pass
