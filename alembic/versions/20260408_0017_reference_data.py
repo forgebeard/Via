@@ -87,9 +87,17 @@ def upgrade() -> None:
             sa.column("description", sa.String),
         ),
         [
-            {"key": "check_interval", "value": "90", "description": "Интервал опроса Redmine (сек)"},
+            {
+                "key": "check_interval",
+                "value": "90",
+                "description": "Интервал опроса Redmine (сек)",
+            },
             {"key": "reminder_after", "value": "3600", "description": "Напоминать через (сек)"},
-            {"key": "group_repeat_seconds", "value": "1800", "description": "Повтор группового уведомления (сек)"},
+            {
+                "key": "group_repeat_seconds",
+                "value": "1800",
+                "description": "Повтор группового уведомления (сек)",
+            },
         ],
     )
 

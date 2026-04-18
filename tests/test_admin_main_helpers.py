@@ -31,6 +31,32 @@ class TestNotifyPreset:
     def test_single_custom(self):
         assert main._status_preset(["overdue"]) == "custom"
 
+    def test_matches_catalog_defaults_is_default(self):
+        assert main._status_preset(["a", "b"], ["a", "b"]) == "default"
+        assert main._status_preset(["b", "a"], ["a", "b"]) == "default"
+
+    def test_subset_of_defaults_is_custom(self):
+        assert main._status_preset(["a"], ["a", "b"]) == "custom"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# _dimension_preset
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestDimensionPreset:
+    def test_empty_and_all(self):
+        assert main._dimension_preset(None, ["1"]) == "default"
+        assert main._dimension_preset([], ["1"]) == "default"
+        assert main._dimension_preset(["all"], ["1"]) == "default"
+
+    def test_matches_defaults(self):
+        assert main._dimension_preset(["x", "y"], ["x", "y"]) == "default"
+        assert main._dimension_preset(["y", "x"], ["x", "y"]) == "default"
+
+    def test_custom(self):
+        assert main._dimension_preset(["x"], ["x", "y"]) == "custom"
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # _parse_work_hours_range

@@ -98,6 +98,7 @@ async def check_all_users(
     """Проверка задач ВСЕХ пользователей. Параллельно по max_concurrent."""
     import asyncio
 
+    from bot.config_hot_reload import refresh_runtime_lists_from_db
     from bot.config_state import USERS
     from bot.sender import reset_dm_failed
     from database.session import get_session_factory
@@ -108,6 +109,7 @@ async def check_all_users(
     logger.info("🔍 Проверка в %s...", now_tz().strftime("%H:%M:%S"))
 
     session_factory = get_session_factory()
+    await refresh_runtime_lists_from_db(session_factory)
     lease_owner_id = bot_instance_id
     lease_ttl = bot_lease_ttl
     error_count = 0
@@ -207,7 +209,8 @@ async def check_unassigned_new_issues(
 ) -> None:
     """Checks NEW unassigned issues and routes by status/version/priority."""
     from bot.async_utils import run_in_thread
-    from bot.config_state import CATALOGS, GROUPS, USERS
+    from bot.config_hot_reload import refresh_runtime_lists_from_db
+    from bot.config_state import CATALOGS, GROUPS
     from bot.logic import STATUS_NEW, issue_matches_cfg, should_notify
     from bot.sender import send_safe
     from database.session import get_session_factory
@@ -217,6 +220,8 @@ async def check_unassigned_new_issues(
         upsert_user_issue_state,
     )
     from preferences import can_notify
+
+    await refresh_runtime_lists_from_db(get_session_factory())
 
     state_key = "unassigned_new"
     prev_check = last_check_time.get(state_key)
@@ -364,12 +369,15 @@ async def daily_report(
     redmine_url: str,
 ) -> None:
     """Утренний отчёт (09:00) — каждому пользователю с notify=all."""
+    from bot.config_hot_reload import refresh_runtime_lists_from_db
     from bot.config_state import USERS
     from bot.logic import STATUS_INFO_PROVIDED, plural_days, should_notify
     from bot.sender import resolve_room
+    from database.session import get_session_factory
     from matrix_send import room_send_with_retry
     from preferences import can_notify
-    from utils import safe_html
+
+    await refresh_runtime_lists_from_db(get_session_factory())
 
     logger.info("📊 Утренний отчёт...")
 
@@ -393,7 +401,9 @@ async def daily_report(
         except Exception as e:
             logger.error(
                 "❌ Не удалось резолвить комнату для user %s (%s): %s",
-                uid, room_raw, e,
+                uid,
+                room_raw,
+                e,
             )
             continue
 
@@ -464,12 +474,15 @@ async def cleanup_state_files(
     redmine_client_for_user: Callable[[Redmine, dict[str, Any]], Redmine],
 ) -> None:
     """Очистка state в Postgres для закрытых задач (03:00)."""
+    from bot.config_hot_reload import refresh_runtime_lists_from_db
     from bot.config_state import USERS
     from database.session import get_session_factory
     from database.state_repo import delete_state_rows_not_in_open
 
-    logger.info("🧹 Очистка state в Postgres для закрытых задач (03:00)...")
     session_factory = get_session_factory()
+    await refresh_runtime_lists_from_db(session_factory)
+
+    logger.info("🧹 Очистка state в Postgres для закрытых задач (03:00)...")
 
     async with session_factory() as session:
         for user_cfg in USERS:

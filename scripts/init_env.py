@@ -99,7 +99,9 @@ def main() -> None:
     print("[INIT] 💡 You can view them later in the admin panel at /onboarding")
 
     if regenerate:
-        print("[INIT] 🔄 After regenerating, restart containers: docker compose restart postgres bot admin")
+        print(
+            "[INIT] 🔄 After regenerating, restart containers: docker compose restart postgres bot admin"
+        )
 
 
 if __name__ == "__main__":

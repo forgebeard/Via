@@ -23,6 +23,7 @@ from redminelib import Redmine
 from redminelib.exceptions import AuthError, BaseRedmineError, ForbiddenError
 
 from bot.logic import (
+    NOTIFICATION_TYPES,
     STATUS_INFO_PROVIDED,
     STATUS_NEW,
     STATUS_REOPENED,
@@ -48,6 +49,7 @@ from logging_config import get_log_formatter, setup_json_logging
 
 # Re-export для тестов (чистые функции из logic.py)
 __all__ = [
+    "NOTIFICATION_TYPES",
     "STATUS_NEW",
     "STATUS_INFO_PROVIDED",
     "STATUS_REOPENED",
@@ -136,6 +138,8 @@ from config import (  # noqa: E402, I001
     MATRIX_DEVICE_ID as MATRIX_DEVICE_ID_ENV,
     REMINDER_AFTER,
 )
+
+import config as cfg  # noqa: E402
 
 MATRIX_DEVICE_ID = MATRIX_DEVICE_ID_ENV or "redmine_bot"
 BOT_TZ = ZoneInfo(BOT_TIMEZONE)
@@ -263,12 +267,10 @@ async def main() -> None:
         GROUP_REPEAT_SECONDS, \
         BOT_TIMEZONE, \
         BOT_TZ, \
-        BOT_LEASE_TTL_SECONDS
+        BOT_LEASE_TTL_SECONDS, \
+        MATRIX_DEVICE_ID
 
     logger.info("🚀 Бот запущен")
-
-    for hint in env_placeholder_hints():
-        logger.warning("⚠ Похоже на плейсхолдер из .env.example (замените в .env): %s", hint)
 
     # ── Ожидание готовности конфигурации из БД ──
     from sqlalchemy import text
@@ -322,7 +324,12 @@ async def main() -> None:
                 REDMINE_URL = config["REDMINE_URL"]
                 REDMINE_KEY = config["REDMINE_API_KEY"]
                 logger.info("✅ Конфиг загружен из БД")
-                logger.info("🔑 [TEMP] REDMINE_URL = '%s'", config["REDMINE_URL"])
+                _env_hints = env_placeholder_hints()
+                if _env_hints:
+                    logger.debug(
+                        "В .env ещё похожие на плейсхолдеры значения (конфиг берётся из БД): %s",
+                        "; ".join(_env_hints),
+                    )
                 break
             else:
                 logger.warning(
@@ -390,7 +397,8 @@ async def main() -> None:
         logger.info("📣 Групповые комнаты из БД: %s", ", ".join(group_rooms))
     else:
         logger.info("📣 Групповые комнаты из БД: не заданы")
-        # ── Загрузка cycle_settings (интервалы, таймзона из БД) ──────────────
+
+    # Интервалы и таймзона из cycle_settings — загружаем всегда (не только при пустых групповых комнатах).
     from database.load_config import fetch_cycle_settings
 
     try:
@@ -427,8 +435,8 @@ async def main() -> None:
         logger.info("⚙ cycle_settings: таблица пуста, используются значения из .env")
 
     # ── Загрузка справочников (каталогов) из БД ──────────────
-    from bot.catalogs import load_catalogs
     import bot.config_state as _cs
+    from bot.catalogs import load_catalogs
 
     try:
         async with session_factory() as session:
@@ -448,9 +456,9 @@ async def main() -> None:
     CHECK_INTERVAL = CATALOGS.cycle_int("CHECK_INTERVAL", CHECK_INTERVAL)
     REMINDER_AFTER = CATALOGS.cycle_int("REMINDER_AFTER", REMINDER_AFTER)
     GROUP_REPEAT_SECONDS = CATALOGS.cycle_int("GROUP_REPEAT_SECONDS", GROUP_REPEAT_SECONDS)
-    BOT_LEASE_TTL_SECONDS = max(15, min(
-        CATALOGS.cycle_int("BOT_LEASE_TTL_SECONDS", BOT_LEASE_TTL_SECONDS), 3600
-    ))
+    BOT_LEASE_TTL_SECONDS = max(
+        15, min(CATALOGS.cycle_int("BOT_LEASE_TTL_SECONDS", BOT_LEASE_TTL_SECONDS), 3600)
+    )
 
     # Таймзона
     new_tz = (CATALOGS.cycle_settings.get("BOT_TIMEZONE") or "").strip()
@@ -458,9 +466,17 @@ async def main() -> None:
         BOT_TIMEZONE = new_tz
         BOT_TZ = ZoneInfo(BOT_TIMEZONE)
 
+    md_db = (CATALOGS.cycle_settings.get("MATRIX_DEVICE_ID") or "").strip()
+    if md_db:
+        MATRIX_DEVICE_ID = md_db[:255]
+
     logger.info(
-        "⚙ cycle: interval=%ds, reminder=%ds, repeat=%ds, tz=%s",
-        CHECK_INTERVAL, REMINDER_AFTER, GROUP_REPEAT_SECONDS, BOT_TZ,
+        "⚙ cycle: interval=%ds, reminder=%ds, repeat=%ds, tz=%s, matrix_device_id=%s",
+        CHECK_INTERVAL,
+        REMINDER_AFTER,
+        GROUP_REPEAT_SECONDS,
+        BOT_TZ,
+        MATRIX_DEVICE_ID or "(env default)",
     )
 
     # ── Инициализация sender template ──
@@ -488,7 +504,7 @@ async def main() -> None:
     # ── Первичная синхронизация Matrix (нужна для поиска DM-комнат) ──
     logger.info("📡 Matrix: первичная синхронизация...")
     try:
-        sync_resp = await client.sync(timeout=30000, full_state=True)
+        await client.sync(timeout=30000, full_state=True)
         logger.info(
             "✅ Matrix sync: %d комнат загружено",
             len(client.rooms),
@@ -524,6 +540,7 @@ async def main() -> None:
         return
 
     # ── Импорт функций для scheduler ──
+    from bot.command_worker import process_backend_commands
     from bot.heartbeat import start_heartbeat_task
     from bot.processor import check_user_issues
     from bot.scheduler import (
@@ -532,7 +549,6 @@ async def main() -> None:
         cleanup_state_files,
         daily_report,
     )
-    from bot.command_worker import process_backend_commands
 
     def _redmine_client_for_user(redmine_inst, user_cfg):
         from bot.sender import REDMINE_URL as _RU
@@ -557,6 +573,27 @@ async def main() -> None:
     # ── Планировщик ──
     scheduler = AsyncIOScheduler(timezone=BOT_TZ)
 
+    _reload_ctx = {
+        "client": client,
+        "redmine": redmine,
+        "daily_kwargs": {
+            "now_tz": now_tz,
+            "today_tz": today_tz,
+            "redmine_client_for_user": _redmine_client_for_user,
+            "redmine_url": REDMINE_URL,
+        },
+    }
+
+    from bot.config_hot_reload import (
+        JOB_DAILY_REPORT,
+        JOB_HOT_RELOAD,
+        JOB_POLL_ALL,
+        JOB_POLL_UNASSIGNED,
+        hot_reload_interval_sec,
+        is_hot_reload_enabled,
+        run_hot_reload_once,
+    )
+
     scheduler.add_job(
         check_all_users,
         "interval",
@@ -573,6 +610,7 @@ async def main() -> None:
             "last_check_time": _last_check_time,
             "max_concurrent": 5,
         },
+        id=JOB_POLL_ALL,
         max_instances=1,
         coalesce=True,
         misfire_grace_time=30,
@@ -590,13 +628,16 @@ async def main() -> None:
             "bot_instance_id": BOT_INSTANCE_ID_UUID,
             "bot_lease_ttl": BOT_LEASE_TTL_SECONDS,
         },
+        id=JOB_POLL_UNASSIGNED,
         max_instances=1,
         coalesce=True,
         misfire_grace_time=30,
         next_run_time=datetime.now(tz=BOT_TZ),
     )
 
-    daily_report_enabled = str(CATALOGS.cycle_settings.get("DAILY_REPORT_ENABLED", "1")).lower() in (
+    daily_report_enabled = str(
+        CATALOGS.cycle_settings.get("DAILY_REPORT_ENABLED", "1")
+    ).lower() in (
         "1",
         "true",
         "on",
@@ -610,12 +651,8 @@ async def main() -> None:
             hour=daily_report_hour,
             minute=daily_report_minute,
             args=[client, redmine],
-            kwargs={
-                "now_tz": now_tz,
-                "today_tz": today_tz,
-                "redmine_client_for_user": _redmine_client_for_user,
-                "redmine_url": REDMINE_URL,
-            },
+            kwargs=_reload_ctx["daily_kwargs"],
+            id=JOB_DAILY_REPORT,
         )
         logger.info(
             "📊 Утренний отчёт включен: %02d:%02d (%s)",
@@ -650,6 +687,42 @@ async def main() -> None:
         max_instances=1,
         coalesce=True,
     )
+
+    import bot.main as _bot_main
+
+    _bot_main._bot_scheduler = scheduler
+    _bot_main._reload_ctx = _reload_ctx
+
+    if is_hot_reload_enabled():
+
+        async def _hot_reload_wrapper() -> None:
+            from bot.config_hot_reload import EnvBaseline
+
+            baseline = EnvBaseline(
+                check_interval=cfg.CHECK_INTERVAL,
+                reminder_after=cfg.REMINDER_AFTER,
+                group_repeat_seconds=cfg.GROUP_REPEAT_SECONDS,
+                bot_lease_ttl=cfg.BOT_LEASE_TTL_SECONDS,
+                bot_timezone=cfg.BOT_TIMEZONE,
+                matrix_device_id=(cfg.MATRIX_DEVICE_ID or "").strip() or "redmine_bot",
+            )
+            await run_hot_reload_once(
+                session_factory=session_factory,
+                baseline=baseline,
+                main_mod=_bot_main,
+                scheduler=scheduler,
+                reload_ctx=_reload_ctx,
+            )
+
+        scheduler.add_job(
+            _hot_reload_wrapper,
+            "interval",
+            seconds=hot_reload_interval_sec(),
+            id=JOB_HOT_RELOAD,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=30,
+        )
 
     scheduler.start()
     logger.info(

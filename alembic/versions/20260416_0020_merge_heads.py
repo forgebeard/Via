@@ -7,8 +7,6 @@ Create Date: 2026-04-16
 
 from collections.abc import Sequence
 
-from alembic import op
-
 revision: str = "0020_merge_heads"
 down_revision: str | Sequence[str] | None = (
     "0019_status_role_emergency",

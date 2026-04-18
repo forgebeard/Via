@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.dlq_repo import MAX_DLQ_RETRIES
-from database.dlq_repo import mark_failed, mark_sent
+from database.dlq_repo import MAX_DLQ_RETRIES, mark_failed, mark_sent
 from database.models import PendingNotification
 from database.session import get_session
 

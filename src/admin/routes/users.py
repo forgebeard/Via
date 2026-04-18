@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import BotHeartbeat, BotUser, SupportGroup, UserVersionRoute
 from database.session import get_session
+from database.user_runtime_cleanup import delete_runtime_data_for_redmine_user
 
 logger = logging.getLogger("redmine_admin")
 
@@ -257,7 +258,7 @@ async def users_create(
             400, "Не удалось создать пользователя: проверьте уникальность redmine_id"
         )
     version_keys: list[str] = []
-    for key in (row.versions or []):
+    for key in row.versions or []:
         key_norm = str(key).strip()
         if not key_norm or key_norm == "all":
             continue
@@ -496,6 +497,7 @@ async def user_test_message(
 # интерпретирует "bulk-delete" как user_id=int → 422 ошибка
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 @router.post("/users/bulk-delete")
 async def users_bulk_delete(
     request: Request,
@@ -515,6 +517,8 @@ async def users_bulk_delete(
         if uid.isdigit():
             row = await session.get(BotUser, int(uid))
             if row:
+                rid = row.redmine_id
+                await delete_runtime_data_for_redmine_user(session, rid)
                 await session.delete(row)
                 deleted_count += 1
 
@@ -538,14 +542,6 @@ async def users_edit(
     row = await session.get(BotUser, user_id)
     if not row:
         raise HTTPException(404)
-    version_err = (request.query_params.get("version_err") or "").strip()
-    version_msg = (request.query_params.get("version_msg") or "").strip()
-    uv_stmt = (
-        select(UserVersionRoute)
-        .where(UserVersionRoute.bot_user_id == user_id)
-        .order_by(UserVersionRoute.version_key)
-    )
-    version_rows = list((await session.execute(uv_stmt)).scalars().all())
     groups_rows = list(
         (await session.execute(select(SupportGroup).order_by(SupportGroup.name.asc())))
         .scalars()
@@ -559,7 +555,7 @@ async def users_edit(
     status_keys = {item["key"] for item in statuses_catalog}
     status_default_keys = [item["key"] for item in statuses_catalog if item.get("is_default")]
     notify_selected = [str(x).strip() for x in (row.notify or ["all"]) if str(x).strip()]
-    preset = admin._status_preset(row.notify)
+    preset = admin._status_preset(row.notify, status_default_keys)
     if preset == "default":
         status_selected = status_default_keys
     else:
@@ -568,14 +564,14 @@ async def users_edit(
     # Версии (из БД, пока legacy)
     version_default_keys = [item["key"] for item in versions_catalog if item.get("is_default")]
     version_selected = row.versions or []
-    version_preset = "default" if (not version_selected or version_selected == ["all"]) else "custom"
+    version_preset = admin._dimension_preset(version_selected, version_default_keys)
     if version_preset == "default":
         version_selected = version_default_keys
 
     # Приоритеты
     priority_default_keys = [item["key"] for item in priorities_catalog if item.get("is_default")]
     priority_selected = row.priorities or []
-    priority_preset = "default" if (not priority_selected or priority_selected == ["all"]) else "custom"
+    priority_preset = admin._dimension_preset(priority_selected, priority_default_keys)
     if priority_preset == "default":
         priority_selected = priority_default_keys
 
@@ -652,7 +648,6 @@ async def users_update(
     row = await session.get(BotUser, user_id)
     if not row:
         raise HTTPException(404)
-    old_room = (row.room or "").strip()
     new_room = await admin._build_room_id_async(room.strip(), session)
     row.redmine_id = redmine_id
     row.display_name = display_name.strip() or None
@@ -791,6 +786,7 @@ async def users_delete(
     row = await session.get(BotUser, user_id)
     if row:
         uid, rmid = row.id, row.redmine_id
+        await delete_runtime_data_for_redmine_user(session, rmid)
         await session.delete(row)
         await admin._maybe_log_admin_crud(
             session, user, "bot_user", "delete", {"id": uid, "redmine_id": rmid}

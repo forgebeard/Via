@@ -43,12 +43,12 @@ async def _app_lifespan(_app: FastAPI):
     except SecurityError as e:
         raise RuntimeError(f"startup failed: {e}") from e
     try:
-        from admin._exports import _load_secret_plain, _normalize_service_timezone_name
+        from admin._exports import effective_bot_timezone_for_admin
 
         factory = get_session_factory()
         async with factory() as session:
-            tz_saved = await _load_secret_plain(session, SERVICE_TIMEZONE_SECRET)
-        os.environ["BOT_TIMEZONE"] = _normalize_service_timezone_name(tz_saved)
+            tz_eff = await effective_bot_timezone_for_admin(session)
+        os.environ["BOT_TIMEZONE"] = tz_eff
     except Exception:
         logger.warning("service_timezone_load_failed", exc_info=True)
     logger.info("✅ Admin panel ready")

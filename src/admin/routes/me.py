@@ -86,8 +86,8 @@ async def me_settings_get(
         raise HTTPException(404, "BotUser не найден")
     notify_selected = [str(x).strip() for x in (bot_user.notify or ["all"]) if str(x).strip()]
     status_keys = {item["key"] for item in statuses_catalog}
-    status_default_keys = [item["key"] for item in statuses_catalog]
-    preset = admin._status_preset(bot_user.notify)
+    status_default_keys = [item["key"] for item in statuses_catalog if item.get("is_default")]
+    preset = admin._status_preset(bot_user.notify, status_default_keys)
     if preset == "default":
         status_selected = status_default_keys
     else:

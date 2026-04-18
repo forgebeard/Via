@@ -26,7 +26,9 @@ def upgrade() -> None:
         sa.Column("room_id", sa.Text(), nullable=False),
         sa.ForeignKeyConstraint(["group_id"], ["support_groups.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("group_id", "version_key", name="uq_group_version_routes_group_version"),
+        sa.UniqueConstraint(
+            "group_id", "version_key", name="uq_group_version_routes_group_version"
+        ),
     )
     op.create_index(
         op.f("ix_group_version_routes_group_id"),
@@ -43,7 +45,9 @@ def upgrade() -> None:
         sa.Column("room_id", sa.Text(), nullable=False),
         sa.ForeignKeyConstraint(["bot_user_id"], ["bot_users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("bot_user_id", "version_key", name="uq_user_version_routes_user_version"),
+        sa.UniqueConstraint(
+            "bot_user_id", "version_key", name="uq_user_version_routes_user_version"
+        ),
     )
     op.create_index(
         op.f("ix_user_version_routes_bot_user_id"),

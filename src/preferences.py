@@ -11,6 +11,7 @@
 from datetime import time
 
 from bot.config_state import CATALOGS
+from bot.logic import PRIORITY_EMERGENCY
 from utils import now_tz
 
 # ═══════════════════════════════════════════════════════════════
@@ -76,14 +77,22 @@ def is_dnd(user_cfg: dict) -> bool:
     return user_cfg.get("dnd", False) is True
 
 
+def _priority_is_emergency(priority: str) -> bool:
+    p = (priority or "").strip()
+    if not p:
+        return False
+    if CATALOGS and CATALOGS.is_emergency(priority_name=p):
+        return True
+    return p == PRIORITY_EMERGENCY
+
+
 def can_notify(user_cfg: dict, priority: str = "", dt=None) -> bool:
     """
     Главная функция: можно ли отправить уведомление.
 
     Аварийный приоритет пробивает DND и выходные.
     """
-    # Аварийный — всегда
-    if CATALOGS and CATALOGS.is_emergency(priority_name=priority):
+    if _priority_is_emergency(priority):
         return True
 
     # Ручной DND

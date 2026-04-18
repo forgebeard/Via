@@ -14,9 +14,6 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from admin.api_schemas import (
-    OkResponse,
-)
 from admin.helpers import (
     DASHBOARD_PATH,
     _append_audit_file_line,
@@ -172,5 +169,3 @@ async def bot_ops_action(
     if ops_detail_err and ops_q.endswith("_error"):
         q["ops_detail"] = _truncate_ops_detail(ops_detail_err)
     return RedirectResponse(DASHBOARD_PATH + "?" + urlencode(q), status_code=303)
-
-

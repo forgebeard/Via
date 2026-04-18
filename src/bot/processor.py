@@ -25,6 +25,7 @@ logger = logging.getLogger("redmine_bot")
 
 # ── Формат даты для Redmine API ─────────────────────────────────────────────
 
+
 def _redmine_ts(dt: datetime) -> str:
     """Конвертирует datetime в строку, которую принимает фильтр updated_on.
 
@@ -54,10 +55,10 @@ async def check_user_issues(
 
     from admin.services.bot_decisions import (
         build_first_notification_actions,
+        decide_first_issue_notification,
         decide_info_reminder,
         decide_journal_update,
         decide_overdue,
-        decide_first_issue_notification,
     )
     from bot.sender import send_safe
     from database.state_repo import load_user_issue_state

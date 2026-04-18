@@ -269,8 +269,7 @@ def score_matrix_candidate(redmine_name: str, matrix_user: dict[str, Any]) -> fl
             )
 
             if (
-                lp_part == rn_translit
-                or lp_part == rn_translit_noyo
+                lp_part in (rn_translit, rn_translit_noyo)
                 or lp_part in rn_variants
                 or rn_translit in lp_part
                 or rn_translit_noyo in lp_part

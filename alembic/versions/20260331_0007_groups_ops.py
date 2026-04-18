@@ -28,8 +28,18 @@ def upgrade() -> None:
         sa.Column("room_id", sa.Text(), nullable=False, server_default=""),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("timezone", sa.String(length=64), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("name"),
     )
@@ -53,13 +63,22 @@ def upgrade() -> None:
         sa.Column("action", sa.String(length=64), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column("detail", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_bot_ops_audit_actor_email"), "bot_ops_audit", ["actor_email"], unique=False)
+    op.create_index(
+        op.f("ix_bot_ops_audit_actor_email"), "bot_ops_audit", ["actor_email"], unique=False
+    )
     op.create_index(op.f("ix_bot_ops_audit_action"), "bot_ops_audit", ["action"], unique=False)
     op.create_index(op.f("ix_bot_ops_audit_status"), "bot_ops_audit", ["status"], unique=False)
-    op.create_index(op.f("ix_bot_ops_audit_created_at"), "bot_ops_audit", ["created_at"], unique=False)
+    op.create_index(
+        op.f("ix_bot_ops_audit_created_at"), "bot_ops_audit", ["created_at"], unique=False
+    )
 
     conn = op.get_bind()
 

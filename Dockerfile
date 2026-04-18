@@ -34,6 +34,8 @@ RUN pip install --upgrade pip && \
 # ============ Этап 2: минимальный runtime =====================================
 FROM python:3.11-slim-bookworm AS runtime
 
+# PYTHONPATH=/app/src — импорты `from bot` / `from config` как в коде (аналог CI: PYTHONPATH=src).
+# WORKDIR=/app — пакет `src` находится как import src.* (точка входа CMD, healthcheck compose, CI docker job).
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH" \

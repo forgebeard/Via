@@ -35,7 +35,6 @@ async def catalog_statuses_list(
     session=Depends(get_session),
 ):
     """Список всех статусов из БД (активных и скрытых)."""
-    admin = _admin()
     user = getattr(request.state, "current_user", None)
     if not user or getattr(user, "role", "") != "admin":
         raise HTTPException(403, "Только admin")
@@ -135,11 +134,13 @@ async def catalog_statuses_toggle(
 
     await session.commit()
 
-    return JSONResponse({
-        "ok": True,
-        "is_active": row.is_active,
-        "is_default": row.is_default,
-    })
+    return JSONResponse(
+        {
+            "ok": True,
+            "is_active": row.is_active,
+            "is_default": row.is_default,
+        }
+    )
 
 
 # ── DELETE /api/catalog/statuses/{status_id} ────────────────────────
@@ -152,7 +153,7 @@ async def catalog_statuses_delete(
     session=Depends(get_session),
 ):
     """Удалить статус навсегда.
-    
+
     Каскадно удаляет из BotUser.notify и SupportGroup.notify.
     """
     admin = _admin()
@@ -188,11 +189,13 @@ async def catalog_statuses_delete(
     await session.delete(row)
     await session.commit()
 
-    return JSONResponse({
-        "ok": True,
-        "affected_users": affected_users,
-        "affected_groups": affected_groups,
-    })
+    return JSONResponse(
+        {
+            "ok": True,
+            "affected_users": affected_users,
+            "affected_groups": affected_groups,
+        }
+    )
 
 
 # ── GET /api/catalog/versions ───────────────────────────────────────
@@ -204,7 +207,6 @@ async def catalog_versions_list(
     session=Depends(get_session),
 ):
     """Список всех версий из БД."""
-    admin = _admin()
     user = getattr(request.state, "current_user", None)
     if not user or getattr(user, "role", "") != "admin":
         raise HTTPException(403, "Только admin")
@@ -294,7 +296,6 @@ async def catalog_priorities_list(
     session=Depends(get_session),
 ):
     """Список всех приоритетов из БД."""
-    admin = _admin()
     user = getattr(request.state, "current_user", None)
     if not user or getattr(user, "role", "") != "admin":
         raise HTTPException(403, "Только admin")
@@ -416,9 +417,7 @@ async def catalog_sync_all(
             resp.raise_for_status()
             redmine_statuses = resp.json().get("issue_statuses", [])
 
-            result = await session.execute(
-                select(RedmineStatus).where(RedmineStatus.is_active == True)
-            )
+            result = await session.execute(select(RedmineStatus).where(RedmineStatus.is_active))
             db_statuses = {s.redmine_status_id: s for s in result.scalars().all()}
 
             redmine_ids = set()
@@ -434,7 +433,11 @@ async def catalog_sync_all(
                         row.is_closed = rclosed
                         results["statuses"]["updated"] += 1
                 else:
-                    session.add(RedmineStatus(redmine_status_id=rid, name=rname, is_closed=rclosed, is_active=True))
+                    session.add(
+                        RedmineStatus(
+                            redmine_status_id=rid, name=rname, is_closed=rclosed, is_active=True
+                        )
+                    )
                     results["statuses"]["added"] += 1
 
             for rid, row in list(db_statuses.items()):
@@ -448,19 +451,23 @@ async def catalog_sync_all(
         try:
             # Получаем ID проекта из первой задачи
             proj_id = None
-            resp_issues = await client.get(f"{base_url}/issues.json", headers=headers, params={"limit": 1})
+            resp_issues = await client.get(
+                f"{base_url}/issues.json", headers=headers, params={"limit": 1}
+            )
             resp_issues.raise_for_status()
             issues = resp_issues.json().get("issues", [])
             if issues:
                 proj_id = issues[0].get("project", {}).get("id")
 
             if proj_id:
-                resp_versions = await client.get(f"{base_url}/projects/{proj_id}/versions.json", headers=headers)
+                resp_versions = await client.get(
+                    f"{base_url}/projects/{proj_id}/versions.json", headers=headers
+                )
                 resp_versions.raise_for_status()
                 redmine_versions = resp_versions.json().get("versions", [])
 
                 result = await session.execute(
-                    select(RedmineVersion).where(RedmineVersion.is_active == True)
+                    select(RedmineVersion).where(RedmineVersion.is_active)
                 )
                 db_versions = {v.redmine_version_id: v for v in result.scalars().all()}
 
@@ -475,7 +482,9 @@ async def catalog_sync_all(
                             row.name = vname
                             results["versions"]["updated"] += 1
                     else:
-                        session.add(RedmineVersion(redmine_version_id=vid, name=vname, is_active=True))
+                        session.add(
+                            RedmineVersion(redmine_version_id=vid, name=vname, is_active=True)
+                        )
                         results["versions"]["added"] += 1
 
                 for vid, row in list(db_versions.items()):
@@ -487,13 +496,13 @@ async def catalog_sync_all(
 
         # ── 3. Sync Priorities ───────────────────────────────────────
         try:
-            resp = await client.get(f"{base_url}/enumerations/issue_priorities.json", headers=headers)
+            resp = await client.get(
+                f"{base_url}/enumerations/issue_priorities.json", headers=headers
+            )
             resp.raise_for_status()
             redmine_priorities = resp.json().get("issue_priorities", [])
 
-            result = await session.execute(
-                select(RedminePriority).where(RedminePriority.is_active == True)
-            )
+            result = await session.execute(select(RedminePriority).where(RedminePriority.is_active))
             db_priorities = {p.redmine_priority_id: p for p in result.scalars().all()}
 
             redmine_ids = set()
@@ -507,7 +516,9 @@ async def catalog_sync_all(
                         row.name = pname
                         results["priorities"]["updated"] += 1
                 else:
-                    session.add(RedminePriority(redmine_priority_id=pid, name=pname, is_active=True))
+                    session.add(
+                        RedminePriority(redmine_priority_id=pid, name=pname, is_active=True)
+                    )
                     results["priorities"]["added"] += 1
 
             for pid, row in list(db_priorities.items()):

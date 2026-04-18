@@ -187,11 +187,37 @@ async def group_test_message(
             )
 
         if room_id not in client.rooms:
+            logger.info("group_test_message: room not in cache, trying join %s", room_id)
+            try:
+                await client.join(room_id)
+            except Exception as e:
+                await client.close()
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "error": (
+                            f"Join в комнату не удался ({e!s}). "
+                            "Пригласите бота в Matrix или проверьте ID комнаты."
+                        ),
+                    },
+                    status_code=400,
+                )
+            if not await admin._sync_matrix_client(client):
+                await client.close()
+                return JSONResponse(
+                    {"ok": False, "error": "Не удалось синхронизироваться с Matrix после join"},
+                    status_code=500,
+                )
+
+        if room_id not in client.rooms:
             await client.close()
             return JSONResponse(
                 {
                     "ok": False,
-                    "error": f"Бот не является участником комнаты {room_id}. Пригласите его в Matrix.",
+                    "error": (
+                        f"Бот не в комнате {room_id} после join/sync. "
+                        "Пригласите бота в Matrix или откройте комнату для вступления."
+                    ),
                 },
                 status_code=400,
             )
@@ -262,7 +288,7 @@ async def groups_edit(
     status_keys = {item["key"] for item in statuses_catalog}
     status_default_keys = [item["key"] for item in statuses_catalog if item.get("is_default")]
     notify_selected = [str(x).strip() for x in (row.notify or ["all"]) if str(x).strip()]
-    preset = admin._status_preset(row.notify)
+    preset = admin._status_preset(row.notify, status_default_keys)
     if preset == "default":
         status_selected = status_default_keys
     else:
@@ -271,14 +297,14 @@ async def groups_edit(
     # ── Версии ──
     version_default_keys = [item["key"] for item in versions_catalog if item.get("is_default")]
     version_selected = row.versions or []
-    version_preset = "default" if (not version_selected or version_selected == ["all"]) else "custom"
+    version_preset = admin._dimension_preset(version_selected, version_default_keys)
     if version_preset == "default":
         version_selected = version_default_keys
 
     # ── Приоритеты ──
     priority_default_keys = [item["key"] for item in priorities_catalog if item.get("is_default")]
     priority_selected = row.priorities or []
-    priority_preset = "default" if (not priority_selected or priority_selected == ["all"]) else "custom"
+    priority_preset = admin._dimension_preset(priority_selected, priority_default_keys)
     if priority_preset == "default":
         priority_selected = priority_default_keys
 
@@ -527,7 +553,6 @@ async def groups_update(
         priorities = admin._normalize_versions(selected_priorities, priority_catalog_keys)
     else:
         priorities = admin._parse_json_string_list(priority_json) or ["all"]
-    old_room = (row.room_id or "").strip()
     new_room = (room_id or "").strip()
     row.name = n
     row.room_id = new_room

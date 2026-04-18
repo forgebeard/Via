@@ -6,6 +6,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from bot.catalogs import BotCatalogs
+
 # Пользователи бота (загружаются из БД)
 USERS: list[dict] = []
 
@@ -19,9 +24,4 @@ STATUS_ROOM_MAP: dict[str, str] = {}
 VERSION_ROOM_MAP: dict[str, str] = {}
 
 # Справочники из БД (заполняется при старте)
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from bot.catalogs import BotCatalogs
-
 CATALOGS: BotCatalogs | None = None

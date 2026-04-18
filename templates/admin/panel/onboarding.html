@@ -80,6 +80,16 @@
               </button>
             </div>
           </div>
+          <div class="field">
+            <label for="matrix_device_id">Device ID сессии Matrix</label>
+            <input id="matrix_device_id" name="matrix_device_id" type="text"
+                   value="{{ matrix_device_id }}"
+                   placeholder="redmine_bot"
+                   maxlength="255"
+                   autocomplete="off"
+                   title="Буквы, цифры, точка, дефис, подчёркивание, ~ и @; до 255 символов. Пусто — как в переменной окружения MATRIX_DEVICE_ID."/>
+            <p class="field-hint muted">Хранится в БД (<code>cycle_settings</code>). После смены перезапустите процесс бота. Пустое поле — взять из <code>.env</code> / значение по умолчанию.</p>
+          </div>
         </section>
       </div>
 

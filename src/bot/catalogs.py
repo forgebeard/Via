@@ -25,12 +25,14 @@ logger = logging.getLogger("redmine_bot")
 
 
 # Допустимые значения RedmineStatus.role
-VALID_STATUS_ROLES = frozenset({
-    "trigger_new",
-    "trigger_info_provided",
-    "trigger_reopened",
-    "trigger_transferred",
-})
+VALID_STATUS_ROLES = frozenset(
+    {
+        "trigger_new",
+        "trigger_info_provided",
+        "trigger_reopened",
+        "trigger_transferred",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -76,7 +78,9 @@ class BotCatalogs:
         except (ValueError, TypeError):
             return default
 
-    def is_emergency(self, priority_name: str | None = None, priority_id: int | None = None) -> bool:
+    def is_emergency(
+        self, priority_name: str | None = None, priority_id: int | None = None
+    ) -> bool:
         if priority_name is not None:
             return priority_name in self.emergency_priority_names
         if priority_id is not None:
@@ -92,9 +96,7 @@ async def load_catalogs(session: AsyncSession | None = None) -> BotCatalogs:
             return await load_catalogs(s)
 
     # ── 1. Статусы ───────────────────────────────────────────────────
-    rows = await session.execute(
-        select(RedmineStatus).where(RedmineStatus.is_active.is_(True))
-    )
+    rows = await session.execute(select(RedmineStatus).where(RedmineStatus.is_active.is_(True)))
     statuses = list(rows.scalars().all())
 
     if not statuses:
@@ -121,9 +123,7 @@ async def load_catalogs(session: AsyncSession | None = None) -> BotCatalogs:
     )
 
     # ── 2. Приоритеты ────────────────────────────────────────────────
-    rows = await session.execute(
-        select(RedminePriority).where(RedminePriority.is_active.is_(True))
-    )
+    rows = await session.execute(select(RedminePriority).where(RedminePriority.is_active.is_(True)))
     priorities = list(rows.scalars().all())
 
     if not priorities:
@@ -136,7 +136,8 @@ async def load_catalogs(session: AsyncSession | None = None) -> BotCatalogs:
 
     logger.info(
         "📋 Приоритеты: %d (emergency=%d)",
-        len(priorities), len(emergency_ids),
+        len(priorities),
+        len(emergency_ids),
     )
 
     # ── 3. Типы уведомлений ──────────────────────────────────────────

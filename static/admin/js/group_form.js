@@ -41,7 +41,7 @@
     var nonDefaultChecked = statusCheckboxes.filter(function (cb) { return cb.getAttribute('data-default') !== 'true'; })
       .every(function (cb) { return !cb.checked; });
 
-    if (current.value === 'default' && !defaultChecked) {
+    if (current.value === 'default' && (!defaultChecked || !nonDefaultChecked)) {
       setStatusPreset('custom');
     } else if (current.value === 'custom' && defaultChecked && nonDefaultChecked) {
       setStatusPreset('default');
@@ -85,7 +85,7 @@
     var defaultChecked = versionCheckboxes.filter(function (cb) { return cb.getAttribute('data-default') === 'true'; }).every(function (cb) { return cb.checked; });
     var nonDefaultChecked = versionCheckboxes.filter(function (cb) { return cb.getAttribute('data-default') !== 'true'; }).every(function (cb) { return !cb.checked; });
 
-    if (current.value === 'default' && !defaultChecked) setVersionPreset('custom');
+    if (current.value === 'default' && (!defaultChecked || !nonDefaultChecked)) setVersionPreset('custom');
     else if (current.value === 'custom' && defaultChecked && nonDefaultChecked) setVersionPreset('default');
     refreshSummary();
   }
@@ -122,7 +122,7 @@
     var defaultChecked = priorityCheckboxes.filter(function (cb) { return cb.getAttribute('data-default') === 'true'; }).every(function (cb) { return cb.checked; });
     var nonDefaultChecked = priorityCheckboxes.filter(function (cb) { return cb.getAttribute('data-default') !== 'true'; }).every(function (cb) { return !cb.checked; });
 
-    if (current.value === 'default' && !defaultChecked) setPriorityPreset('custom');
+    if (current.value === 'default' && (!defaultChecked || !nonDefaultChecked)) setPriorityPreset('custom');
     else if (current.value === 'custom' && defaultChecked && nonDefaultChecked) setPriorityPreset('default');
     refreshSummary();
   }

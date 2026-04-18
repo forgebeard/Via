@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
     from redminelib.resources import IssueJournal
 
+    from bot.catalogs import BotCatalogs
+
     class _IssueLike(Protocol):
         id: int
         status: Any  # .name
@@ -57,6 +59,7 @@ NOTIFICATION_TYPES = {
     "overdue": ("⚠️", "Просроченная задача"),
     "issue_updated": ("📝", "Задача обновлена"),
     "status_change": ("🔁", "Смена статуса"),
+    "daily_report": ("📊", "Утренний отчёт"),
 }
 
 FIELD_NAMES: dict[str, str | None] = {
@@ -112,11 +115,19 @@ def get_version_name(issue: _IssueLike) -> str | None:
 def should_notify(user_cfg: dict[str, Any], notification_type: str) -> bool:
     """
     Проверяет, подписан ли пользователь на данный тип уведомлений.
-    "all" — подписан на всё.
+    "all" — подписан на всё. Ключ `notify` отсутствует — как «all».
+    Явный [] или список из одних пустых строк — ни на что (после trim не остаётся токенов).
     """
-    notify_list = user_cfg.get("notify", ["all"])
+    if "notify" not in user_cfg:
+        notify_list: list[Any] = ["all"]
+    else:
+        notify_list = user_cfg["notify"]
+        if notify_list == []:
+            return False
     norm = {str(v).strip().lower() for v in (notify_list or []) if str(v).strip()}
-    if not norm or "all" in norm:
+    if not norm:
+        return False
+    if "all" in norm:
         return True
     known_types = {k.lower() for k in NOTIFICATION_TYPES}
     # Backward-compat: when notify stores status filters (ids/names), do not
@@ -259,7 +270,9 @@ def _cfg_for_room(
     merged = dict(user_cfg)
     merged["notify"] = gd.get("notify") if isinstance(gd.get("notify"), list) else ["all"]
     merged["versions"] = gd.get("versions") if isinstance(gd.get("versions"), list) else ["all"]
-    merged["priorities"] = gd.get("priorities") if isinstance(gd.get("priorities"), list) else ["all"]
+    merged["priorities"] = (
+        gd.get("priorities") if isinstance(gd.get("priorities"), list) else ["all"]
+    )
     wh = gd.get("work_hours")
     if wh:
         merged["work_hours"] = wh
@@ -279,10 +292,7 @@ def _matches_filter(filter_values: Any, candidates: set[str]) -> bool:
     norm = {str(v).strip().lower() for v in values if str(v).strip()}
     if not norm or "all" in norm:
         return True
-    for c in candidates:
-        if c.strip().lower() in norm:
-            return True
-    return False
+    return any(c.strip().lower() in norm for c in candidates)
 
 
 def issue_matches_cfg(issue: _IssueLike, user_cfg: dict[str, Any]) -> bool:
@@ -384,7 +394,9 @@ def resolve_field_value(field_name: str, value: Any, catalogs: BotCatalogs | Non
     return str(value)
 
 
-def describe_journal(journal: IssueJournal, skip_status: bool = False, catalogs: BotCatalogs | None = None) -> str | None:
+def describe_journal(
+    journal: IssueJournal, skip_status: bool = False, catalogs: BotCatalogs | None = None
+) -> str | None:
     """Описывает одну запись журнала в человекочитаемом виде."""
     parts: list[str] = []
 

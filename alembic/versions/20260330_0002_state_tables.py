@@ -41,9 +41,7 @@ def upgrade() -> None:
         sa.Column("sent_notified_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_journal_id", sa.Integer(), nullable=True),
         sa.Column("last_reminder_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column(
-            "last_overdue_notified_at", sa.DateTime(timezone=True), nullable=True
-        ),
+        sa.Column("last_overdue_notified_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "updated_at",
             sa.DateTime(timezone=True),
@@ -78,4 +76,3 @@ def downgrade() -> None:
     op.drop_table("bot_issue_state")
     op.drop_index(op.f("ix_bot_user_leases_lease_until"), table_name="bot_user_leases")
     op.drop_table("bot_user_leases")
-

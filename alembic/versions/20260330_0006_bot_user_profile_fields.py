@@ -29,4 +29,3 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_bot_users_display_name"), table_name="bot_users")
     op.drop_column("bot_users", "department")
     op.drop_column("bot_users", "display_name")
-

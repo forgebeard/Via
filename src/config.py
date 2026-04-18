@@ -83,7 +83,9 @@ MATRIX_DEVICE_ID = (os.getenv("MATRIX_DEVICE_ID") or "").strip() or "redmine_bot
 
 def env_placeholder_hints() -> list[str]:
     """
-    Значения как в .env.example — для предупреждения в логе при старте бота.
+    Значения как в .env.example — для опциональной диагностики.
+
+    При работе с секретами из БД уровень логов для этого — DEBUG (см. bot main).
     Не вызывать до load_dotenv() в точке входа.
     """
     hints: list[str] = []
@@ -203,7 +205,7 @@ __all__ = [
     # validation (re-export from bot.logic)
     "should_notify",
     "validate_users",
-    # users
+    # legacy placeholders (не заполняются из .env; рантайм бота — из Postgres)
     "USERS",
     "STATUS_ROOM_MAP",
     "VERSION_ROOM_MAP",
@@ -214,8 +216,12 @@ __all__ = [
 ]
 
 # ═══════════════════════════════════════════════════════════════
-# ПОЛЬЗОВАТЕЛИ (JSON из .env)
+# Legacy: USERS / маршруты (раньше JSON из .env)
 # ═══════════════════════════════════════════════════════════════
+#
+# Рантайм бота и админка используют только Postgres (database.load_config).
+# Эти имена оставлены в модуле, чтобы не ломать импорты; значения всегда пустые.
+# Переменные окружения USERS / STATUS_ROOM_MAP / VERSION_ROOM_MAP игнорируются.
 
 
 def _parse_json_env(var_name: str, default: str = "{}") -> dict | list:
@@ -228,9 +234,9 @@ def _parse_json_env(var_name: str, default: str = "{}") -> dict | list:
         return json.loads(default)
 
 
-USERS = _parse_json_env("USERS", "[]")
-STATUS_ROOM_MAP = _parse_json_env("STATUS_ROOM_MAP", "{}")
-VERSION_ROOM_MAP = _parse_json_env("VERSION_ROOM_MAP", "{}")
+USERS: list = []
+STATUS_ROOM_MAP: dict[str, str] = {}
+VERSION_ROOM_MAP: dict[str, str] = {}
 
 # ═══════════════════════════════════════════════════════════════
 # РОУТИНГ — ключи для VERSION_ROOM_MAP

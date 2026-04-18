@@ -326,3 +326,25 @@ class TestUpdateEnvFile:
         assert "# Header comment" in content
         assert "# Footer" in content
         assert "POSTGRES_PASSWORD=new" in content
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# _sanitize_matrix_device_id
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestSanitizeMatrixDeviceId:
+    def test_empty(self):
+        assert settings_mod._sanitize_matrix_device_id("") == ""
+
+    def test_strips_disallowed_chars(self):
+        assert settings_mod._sanitize_matrix_device_id("bot 1") == "bot1"
+
+    def test_preserves_allowed(self):
+        assert (
+            settings_mod._sanitize_matrix_device_id("redmine_bot~e2ee.v2") == "redmine_bot~e2ee.v2"
+        )
+
+    def test_truncates(self):
+        long_id = "a" * 300
+        assert len(settings_mod._sanitize_matrix_device_id(long_id)) == 255

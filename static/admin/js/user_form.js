@@ -186,7 +186,8 @@
         .filter(function (cb) { return cb.getAttribute('data-default') !== 'true'; })
         .every(function (cb) { return !cb.checked; });
 
-      if (cur.value === 'default' && !defAll) setPreset('custom');
+      // default: снят любой дефолтный ИЛИ отмечен любой недефолтный → переключить на «Выбрать …»
+      if (cur.value === 'default' && (!defAll || !nonDefNone)) setPreset('custom');
       else if (cur.value === 'custom' && defAll && nonDefNone) setPreset('default');
       refreshSummary();
     }

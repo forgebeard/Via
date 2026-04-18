@@ -108,4 +108,3 @@ def downgrade() -> None:
     op.drop_column("bot_sessions", "session_version")
     op.drop_column("bot_app_users", "session_version")
     op.drop_column("bot_app_users", "password_hash")
-

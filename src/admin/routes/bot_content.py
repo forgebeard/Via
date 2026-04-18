@@ -74,7 +74,6 @@ async def bot_content_get(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ):
-    admin = _admin()
     user = getattr(request.state, "current_user", None)
     if not user or getattr(user, "role", "") != "admin":
         raise HTTPException(403, "Только admin")
@@ -84,7 +83,8 @@ async def bot_content_get(
     return {
         "ok": True,
         "settings": {
-            "daily_report_enabled": by_key.get(_KEYS["daily_report_enabled"], "1") in ("1", "true", "on"),
+            "daily_report_enabled": by_key.get(_KEYS["daily_report_enabled"], "1")
+            in ("1", "true", "on"),
             "daily_report_hour": int(by_key.get(_KEYS["daily_report_hour"], "9") or 9),
             "daily_report_minute": int(by_key.get(_KEYS["daily_report_minute"], "0") or 0),
             "daily_report_html_template": by_key.get(_KEYS["daily_report_html_template"], ""),
@@ -121,7 +121,9 @@ async def bot_content_save(
     await _upsert_cycle_setting(
         session, _KEYS["daily_report_enabled"], _to_bool_str(bool(daily_report_enabled))
     )
-    await _upsert_cycle_setting(session, _KEYS["daily_report_hour"], str(_safe_hour(daily_report_hour)))
+    await _upsert_cycle_setting(
+        session, _KEYS["daily_report_hour"], str(_safe_hour(daily_report_hour))
+    )
     await _upsert_cycle_setting(
         session, _KEYS["daily_report_minute"], str(_safe_minute(daily_report_minute))
     )

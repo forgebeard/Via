@@ -64,7 +64,9 @@ def decide_first_issue_notification(
 
     if issue_status_name == status_reopened:
         return IssueDecision(notification_kind="reopened", sent_status=status_reopened)
-    return IssueDecision(notification_kind="new", sent_status=issue_status_name, set_group_notified=True)
+    return IssueDecision(
+        notification_kind="new", sent_status=issue_status_name, set_group_notified=True
+    )
 
 
 def build_first_notification_actions(
@@ -95,7 +97,10 @@ def build_first_notification_actions(
     for room_id in sorted(extra_rooms):
         _add_room(room_id)
 
-    return [NotificationAction(room_id=rid, notification_kind=notification_kind) for rid in ordered_rooms]
+    return [
+        NotificationAction(room_id=rid, notification_kind=notification_kind)
+        for rid in ordered_rooms
+    ]
 
 
 def decide_info_reminder(

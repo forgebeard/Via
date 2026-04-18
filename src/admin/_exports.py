@@ -112,6 +112,7 @@ from admin.helpers_ext import (
     _room_localpart,
     _runtime_status_from_file,
     _standard_timezone_options,
+    _dimension_preset,
     _status_preset,
     _sync_matrix_client,
     _timezone_labels,
@@ -119,6 +120,7 @@ from admin.helpers_ext import (
     _truncate_ops_detail,
     _upsert_secret_plain,
     _version_preset,
+    effective_bot_timezone_for_admin,
 )
 
 # ── Из middleware.py ─────────────────────────────────────────────────────────
@@ -224,9 +226,11 @@ __all__ = [
     "_normalize_notify",
     "_normalize_notify_catalog",
     "_normalize_service_timezone_name",
+    "effective_bot_timezone_for_admin",
     "_normalize_versions",
     "_normalize_versions_catalog",
     "_normalized_group_filter_key",
+    "_dimension_preset",
     "_status_preset",
     "_ops_flash_message",
     "_parse_json_string_list",

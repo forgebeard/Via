@@ -90,3 +90,40 @@ async def secrets_save(
         enc.key_version,
     )
     return RedirectResponse("/secrets", status_code=303)
+
+
+@router.post("/secrets/delete")
+async def secrets_delete(
+    request: Request,
+    name: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
+    session: AsyncSession = Depends(get_session),
+):
+    """Удалить запись секрета из БД (значение не показывалось; после удаления боту нужны новые значения через UI или env)."""
+    admin = _admin()
+    admin._verify_csrf(request, csrf_token)
+    user = getattr(request.state, "current_user", None)
+    if not user or getattr(user, "role", "") != "admin":
+        raise HTTPException(403, "Только admin")
+    name = (name or "").strip()
+    if not name:
+        raise HTTPException(400, "Имя секрета обязательно")
+    r = await session.execute(select(AppSecret).where(AppSecret.name == name))
+    row = r.scalar_one_or_none()
+    if row is None:
+        return RedirectResponse("/secrets?err=not_found", status_code=303)
+    await session.delete(row)
+    admin._integration_status_cache.clear()
+    admin.logger.info(
+        "secret_deleted name=%s actor=%s",
+        name,
+        mask_identifier(user.login),
+    )
+    await admin._maybe_log_admin_crud(
+        session,
+        user,
+        "app_secret",
+        "delete",
+        {"name": name},
+    )
+    return RedirectResponse("/secrets?deleted=1", status_code=303)

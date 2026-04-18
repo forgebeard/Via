@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import secrets
 from pathlib import Path
 from typing import Annotated
@@ -16,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.env_manager import update_env_file_with_lock
-from database.models import AppSecret
+from database.models import AppSecret, CycleSettings
 from database.session import get_session
 from redmine_cache import check_redmine_access as check_redmine_access_cached
 from security import decrypt_secret, encrypt_secret, load_master_key
@@ -33,6 +34,16 @@ _SECRET_NAMES = [
     "MATRIX_ACCESS_TOKEN",
     "MATRIX_USER_ID",
 ]
+
+_MATRIX_DEVICE_ID_RE = re.compile(r"[^a-zA-Z0-9._~-]+")
+
+
+def _sanitize_matrix_device_id(raw: str) -> str:
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    return _MATRIX_DEVICE_ID_RE.sub("", s)[:255]
+
 
 # Поля которые НЕ нужно маскировать (URL'ы и MXID)
 _UNMASKED_SECRETS = {"REDMINE_URL", "MATRIX_HOMESERVER", "MATRIX_USER_ID"}
@@ -101,7 +112,7 @@ def _mask_secret_value(name: str, value: str) -> str:
     if name in _UNMASKED_SECRETS:
         return value
     if not value:
-        return ""
+        return "••••••••"
     if len(value) <= 8:
         return "••••••••"
     return value[:4] + "•" * (len(value) - 8) + value[-4:]
@@ -265,13 +276,18 @@ async def onboarding_page(request: Request, session: AsyncSession = Depends(get_
     error = request.query_params.get("error", "")
     db_config = _load_db_config_from_env()
 
-    # Таймзоны
+    # Таймзоны (согласовано с ботом: cycle_settings BOT_TIMEZONE → __service_timezone → env)
     tz_all = admin._standard_timezone_options()
     tz_labels = admin._timezone_labels(tz_all)
-    # Текущая таймзона сервиса (из секретов)
-    current_tz = secrets_raw.get("SERVICE_TIMEZONE", "") or os.getenv(
-        "BOT_TIMEZONE", "Europe/Moscow"
+    current_tz = await admin.effective_bot_timezone_for_admin(session)
+
+    r_md = await session.execute(
+        select(CycleSettings.value).where(CycleSettings.key == "MATRIX_DEVICE_ID")
     )
+    md_raw = r_md.scalar_one_or_none()
+    matrix_device_id = (md_raw or "").strip() if isinstance(md_raw, str) else ""
+    if not matrix_device_id:
+        matrix_device_id = (os.getenv("MATRIX_DEVICE_ID") or "").strip() or "redmine_bot"
 
     return admin.templates.TemplateResponse(
         request,
@@ -287,6 +303,7 @@ async def onboarding_page(request: Request, session: AsyncSession = Depends(get_
             "timezone_all_options": tz_all,
             "timezone_labels": tz_labels,
             "service_timezone": current_tz,
+            "matrix_device_id": matrix_device_id,
         },
     )
 
@@ -334,7 +351,32 @@ async def onboarding_save(
         else:
             session.add(AppSecret(name=secret_name, ciphertext=enc.ciphertext, nonce=enc.nonce))
 
+    tz_form = (form.get("service_timezone") or "").strip()
+    if tz_form:
+        norm = admin._normalize_service_timezone_name(tz_form)
+        cyc = (
+            await session.execute(select(CycleSettings).where(CycleSettings.key == "BOT_TIMEZONE"))
+        ).scalar_one_or_none()
+        if cyc:
+            cyc.value = norm
+        else:
+            session.add(CycleSettings(key="BOT_TIMEZONE", value=norm))
+        await admin._upsert_secret_plain(session, admin.SERVICE_TIMEZONE_SECRET, norm)
+
+    safe_md = _sanitize_matrix_device_id((form.get("matrix_device_id") or "").strip())
+    row_md = (
+        await session.execute(select(CycleSettings).where(CycleSettings.key == "MATRIX_DEVICE_ID"))
+    ).scalar_one_or_none()
+    if safe_md:
+        if row_md:
+            row_md.value = safe_md
+        else:
+            session.add(CycleSettings(key="MATRIX_DEVICE_ID", value=safe_md))
+    elif row_md:
+        await session.delete(row_md)
+
     await session.commit()
+    os.environ["BOT_TIMEZONE"] = await admin.effective_bot_timezone_for_admin(session)
     return RedirectResponse("/onboarding", status_code=303)
 
 

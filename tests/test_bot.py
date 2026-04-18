@@ -25,11 +25,30 @@ os.environ["REDMINE_URL"] = "https://redmine.test"
 os.environ.setdefault("REDMINE_API_KEY", "test_api_key")
 os.environ.setdefault("MATRIX_ONBOARDING_ENABLED", "0")
 os.environ.setdefault("BOT_TIMEZONE", "Europe/Moscow")
-os.environ.setdefault("USERS", '[{"redmine_id": 1972, "room": "!test:server", "notify": ["all"]}]')
 
 import matrix_send
 import src.bot.main as bot
 from tests.conftest import MockIssue, MockJournal
+
+# Справочники для resolve_field_value / describe_journal (как фрагмент загрузки из БД).
+@pytest.fixture(scope="module")
+def test_catalogs():
+    from bot.catalogs import BotCatalogs
+
+    return BotCatalogs(
+        status_id_to_name={
+            1: "Новая",
+            2: "В работе",
+            5: "Решена",
+            13: "Информация предоставлена",
+        },
+        priority_id_to_name={
+            2: "Normal",
+            3: "High",
+            4: "1 (Аварийный)",
+        },
+    )
+
 
 # can_notify: круглосуточно и все дни недели — тесты не зависят от времени CI
 USER_CFG_FOR_SEND = {
@@ -126,6 +145,11 @@ class TestShouldNotify:
         cfg = {"notify": []}
         assert bot.should_notify(cfg, "new") is False
 
+    def test_blank_only_strings_block_everything(self):
+        """Явный notify с пустыми элементами (после trim пусто) — как отписка от всех видов."""
+        cfg = {"notify": ["", "   "]}
+        assert bot.should_notify(cfg, "new") is False
+
 
 class TestCfgForRoom:
     """Мерж group_delivery при отправке в комнату группы."""
@@ -203,7 +227,7 @@ class TestGetVersionName:
 # ═══════════════════════════════════════════════════════════════════════════
 # 2. ВАЛИДАЦИЯ КОНФИГУРАЦИИ
 # ═══════════════════════════════════════════════════════════════════════════
-# USERS из .env должен быть валидным до выхода в прод.
+# Список пользователей бота задаётся в панели (Postgres), не через .env.
 
 
 class TestValidateUsers:
@@ -358,38 +382,38 @@ class TestDescribeJournal:
         assert "💬" in result
         assert "Клиент" in result
 
-    def test_status_change(self):
+    def test_status_change(self, test_catalogs):
         j = MockJournal(
             2, notes="", details=[{"name": "status_id", "old_value": "1", "new_value": "2"}]
         )
-        result = bot.describe_journal(j)
+        result = bot.describe_journal(j, catalogs=test_catalogs)
         assert "Статус" in result
         assert "Новая" in result
         assert "В работе" in result
 
-    def test_status_change_skipped(self):
+    def test_status_change_skipped(self, test_catalogs):
         """skip_status=True → смена статуса не показывается."""
         j = MockJournal(
             3, notes="", details=[{"name": "status_id", "old_value": "1", "new_value": "2"}]
         )
-        result = bot.describe_journal(j, skip_status=True)
+        result = bot.describe_journal(j, skip_status=True, catalogs=test_catalogs)
         assert result is None  # Нет ни комментария, ни показанных полей
 
-    def test_priority_change(self):
+    def test_priority_change(self, test_catalogs):
         j = MockJournal(
             4, notes="", details=[{"name": "priority_id", "old_value": "2", "new_value": "3"}]
         )
-        result = bot.describe_journal(j)
+        result = bot.describe_journal(j, catalogs=test_catalogs)
         assert "Приоритет" in result
 
-    def test_comment_plus_status(self):
+    def test_comment_plus_status(self, test_catalogs):
         """Комментарий + смена статуса → оба показываются."""
         j = MockJournal(
             5,
             notes="Исправлено",
             details=[{"name": "status_id", "old_value": "2", "new_value": "5"}],
         )
-        result = bot.describe_journal(j)
+        result = bot.describe_journal(j, catalogs=test_catalogs)
         assert "💬" in result
         assert "Статус" in result
 
@@ -444,16 +468,16 @@ class TestDescribeJournal:
 class TestResolveFieldValue:
     """Тесты перевода ID в человекочитаемые имена."""
 
-    def test_known_status(self):
-        assert bot.resolve_field_value("status_id", "1") == "Новая"
-        assert bot.resolve_field_value("status_id", "2") == "В работе"
-        assert bot.resolve_field_value("status_id", "13") == "Информация предоставлена"
+    def test_known_status(self, test_catalogs):
+        assert bot.resolve_field_value("status_id", "1", test_catalogs) == "Новая"
+        assert bot.resolve_field_value("status_id", "2", test_catalogs) == "В работе"
+        assert bot.resolve_field_value("status_id", "13", test_catalogs) == "Информация предоставлена"
 
-    def test_unknown_status_returns_raw(self):
-        assert bot.resolve_field_value("status_id", "999") == "999"
+    def test_unknown_status_returns_raw(self, test_catalogs):
+        assert bot.resolve_field_value("status_id", "999", test_catalogs) == "999"
 
-    def test_known_priority(self):
-        assert bot.resolve_field_value("priority_id", "4") == "1 (Аварийный)"
+    def test_known_priority(self, test_catalogs):
+        assert bot.resolve_field_value("priority_id", "4", test_catalogs) == "1 (Аварийный)"
 
     def test_none_value(self):
         assert bot.resolve_field_value("status_id", None) == "—"
@@ -682,7 +706,8 @@ class TestSendMatrixMessage:
 
         with patch("matrix_send.asyncio.sleep", new_callable=AsyncMock):
             with pytest.raises(RuntimeError, match="Matrix room_send error"):
-                await bot.send_matrix_message(client, simple_issue, "xroom:server", "new")
+                # room_id с ! — без резолва MXID→DM (иначе AsyncMock ломает sync/rooms в sender)
+                await bot.send_matrix_message(client, simple_issue, "!xroom:server", "new")
 
         assert client.room_send.call_count == matrix_send.MAX_RETRIES
 
@@ -735,6 +760,7 @@ class TestNotificationTypes:
             "status_change",
             "issue_updated",
             "reopened",
+            "daily_report",
         ],
     )
     def test_all_types_have_emoji_and_title(self, ntype):

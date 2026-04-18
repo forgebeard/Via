@@ -34,7 +34,9 @@ def upgrade() -> None:
         sa.Column("redmine_id", sa.BigInteger(), nullable=True),
     )
     op.create_index(op.f("ix_bot_app_users_email"), "bot_app_users", ["email"], unique=True)
-    op.create_index(op.f("ix_bot_app_users_redmine_id"), "bot_app_users", ["redmine_id"], unique=True)
+    op.create_index(
+        op.f("ix_bot_app_users_redmine_id"), "bot_app_users", ["redmine_id"], unique=True
+    )
 
     op.create_table(
         "bot_magic_tokens",
@@ -55,7 +57,9 @@ def upgrade() -> None:
         ),
     )
     op.create_index(op.f("ix_bot_magic_tokens_email"), "bot_magic_tokens", ["email"], unique=False)
-    op.create_unique_constraint("uq_bot_magic_tokens_token_hash", "bot_magic_tokens", ["token_hash"])
+    op.create_unique_constraint(
+        "uq_bot_magic_tokens_token_hash", "bot_magic_tokens", ["token_hash"]
+    )
 
     op.create_table(
         "bot_sessions",
@@ -122,4 +126,3 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_bot_app_users_redmine_id"), table_name="bot_app_users")
     op.drop_index(op.f("ix_bot_app_users_email"), table_name="bot_app_users")
     op.drop_table("bot_app_users")
-

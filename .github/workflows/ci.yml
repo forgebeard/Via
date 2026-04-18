@@ -42,6 +42,7 @@ jobs:
         run: python -m ruff format --check src/
       - name: mypy (type check — core files)
         run: PYTHONPATH=src python -m mypy src/bot/logic.py src/bot/scheduler.py src/bot/processor.py src/matrix_send.py src/config.py src/database/state_repo.py --explicit-package-bases
+      # DATABASE_URL + postgres service — интеграционные тесты (test_admin_routes_integration и др.)
       - name: pytest (unit + API, без Playwright)
         run: |
           alembic upgrade head
@@ -94,6 +95,7 @@ jobs:
       - name: Docker build
         run: docker build -t matrix-bot-ci .
       - name: Import smoke test (bot + admin)
+        # Согласовано с Dockerfile: WORKDIR=/app, PYTHONPATH=/app/src (см. комментарии в Dockerfile).
         run: |
           docker run --rm matrix-bot-ci python -c "import src.bot.main; print('bot ok')"
           docker run --rm matrix-bot-ci python -c "import src.admin.main; print('admin ok')"

@@ -23,7 +23,7 @@ chmod +x deploy.sh && ./deploy.sh
 
 > ⚠️ Сохраните `.env` — в нём credentials для восстановления системы.
 
-Подробности: [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md), [docs/ADMINISTRATOR_GUIDE.md](docs/ADMINISTRATOR_GUIDE.md).
+Подробности: [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md), [docs/ADMINISTRATOR_GUIDE.md](docs/ADMINISTRATOR_GUIDE.md), модель «панель — БД — бот»: [docs/ARCHITECTURE_ADMIN_DB_BOT.md](docs/ARCHITECTURE_ADMIN_DB_BOT.md), расширенный day zero: [docs/DAY_ZERO_EXTENDED.md](docs/DAY_ZERO_EXTENDED.md).
 
 ## Что умеет бот
 
@@ -145,7 +145,19 @@ python -m pytest tests/e2e/ -v --tb=short
 | `MATRIX_RETRY_BASE_DELAY_SEC` | `1.0` | Базовая задержка retry (сек) |
 | `BOT_LEASE_TTL_SECONDS` | `300` | Lease-координация (сек) |
 | `HEARTBEAT_INTERVAL_SEC` | `60` | Heartbeat на админку (сек) |
-| `CONFIG_POLL_INTERVAL_SEC` | `30` | Опрос конфига из БД (сек) |
+| `CONFIG_POLL_INTERVAL_SEC` | `30` | Интервал повторной попытки, пока при старте не готовы секреты в БД (сек) |
+| `BOT_HOT_RELOAD` | `1` | Периодически подгружать конфиг из БД без рестарта (`0` — выкл.) |
+| `BOT_HOT_RELOAD_INTERVAL_SEC` | `45` | Интервал hot reload, секунды (15–3600) |
+
+## Перезапуск бота после изменений в панели
+
+Бот при старте читает из БД секреты, пользователей, группы, маршруты и `cycle_settings`. Включён **hot reload** (`BOT_HOT_RELOAD=1`, по умолчанию): конфигурация из панели подтягивается периодически без рестарта. Если hot reload отключён или менялись только секреты в `.env` / ключевые интеграции, после правок **перезапустите бота**:
+
+```bash
+docker compose restart bot
+```
+
+Для systemd-схемы используйте имя юнита из вашего деплоя. Подробнее: [docs/ADMINISTRATOR_GUIDE.md](docs/ADMINISTRATOR_GUIDE.md) (раздел «Когда нужен перезапуск бота»).
 
 ## Документация
 

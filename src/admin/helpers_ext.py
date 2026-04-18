@@ -35,9 +35,10 @@ from admin.helpers import (
     GROUP_UNASSIGNED_NAME,
     GROUP_USERS_FILTER_ALL_LABEL,
     SERVICE_TIMEZONE_FALLBACK,
+    SERVICE_TIMEZONE_SECRET,
     _now_utc,
 )
-from database.models import AppSecret, BotOpsAudit, BotUser, SupportGroup
+from database.models import AppSecret, BotOpsAudit, BotUser, CycleSettings, SupportGroup
 from events_log_display import admin_events_log_timestamp_now
 from security import SecurityError, decrypt_secret, encrypt_secret, load_master_key
 
@@ -85,9 +86,11 @@ __all__ = [
     "_normalize_notify",
     "_normalize_notify_catalog",
     "_normalize_service_timezone_name",
+    "effective_bot_timezone_for_admin",
     "_normalize_versions",
     "_normalize_versions_catalog",
     "_normalized_group_filter_key",
+    "_dimension_preset",
     "_status_preset",
     "_ops_flash_message",
     "_parse_catalog_payload",
@@ -234,6 +237,25 @@ def _normalize_service_timezone_name(value: str) -> str:
     return SERVICE_TIMEZONE_FALLBACK
 
 
+async def effective_bot_timezone_for_admin(session: AsyncSession) -> str:
+    """
+    Таймзона для UI и os.environ: как у бота после старта.
+
+    Приоритет: cycle_settings BOT_TIMEZONE → секрет __service_timezone → BOT_TIMEZONE в env → fallback.
+    """
+    r = await session.execute(select(CycleSettings).where(CycleSettings.key == "BOT_TIMEZONE"))
+    row = r.scalar_one_or_none()
+    if row and (row.value or "").strip():
+        return _normalize_service_timezone_name(row.value)
+    tz_saved = await _load_secret_plain(session, SERVICE_TIMEZONE_SECRET)
+    if (tz_saved or "").strip():
+        return _normalize_service_timezone_name(tz_saved)
+    env_tz = (os.getenv("BOT_TIMEZONE") or "").strip()
+    if env_tz:
+        return _normalize_service_timezone_name(env_tz)
+    return SERVICE_TIMEZONE_FALLBACK
+
+
 # ── Secret / Catalog loaders ─────────────────────────────────────────────────
 
 
@@ -353,9 +375,7 @@ async def _load_statuses_catalog(session: AsyncSession) -> list[dict[str, str]]:
     from database.models import RedmineStatus
 
     result = await session.execute(
-        select(RedmineStatus)
-        .where(RedmineStatus.is_active == True)
-        .order_by(RedmineStatus.id)
+        select(RedmineStatus).where(RedmineStatus.is_active).order_by(RedmineStatus.id)
     )
     rows = result.scalars().all()
     return [
@@ -376,9 +396,7 @@ async def _load_versions_catalog(session: AsyncSession) -> list[dict[str, str]]:
     from database.models import RedmineVersion
 
     result = await session.execute(
-        select(RedmineVersion)
-        .where(RedmineVersion.is_active == True)
-        .order_by(RedmineVersion.id)
+        select(RedmineVersion).where(RedmineVersion.is_active).order_by(RedmineVersion.id)
     )
     rows = result.scalars().all()
     return [
@@ -399,9 +417,7 @@ async def _load_priorities_catalog(session: AsyncSession) -> list[dict[str, str]
     from database.models import RedminePriority
 
     result = await session.execute(
-        select(RedminePriority)
-        .where(RedminePriority.is_active == True)
-        .order_by(RedminePriority.id)
+        select(RedminePriority).where(RedminePriority.is_active).order_by(RedminePriority.id)
     )
     rows = result.scalars().all()
     return [
@@ -857,9 +873,27 @@ def _normalize_notify(values: list[str] | None, allowed_keys: list[str] | None =
     return allowed or ["all"]
 
 
-def _status_preset(notify: list | None) -> str:
+def _status_preset(notify: list | None, default_keys: list[str] | None = None) -> str:
+    """Пресет статусов: пусто/all → default; если передан default_keys — совпадение множеств → default."""
     values = [str(x).strip() for x in (notify or []) if str(x).strip()]
     if not values or "all" in values:
+        return "default"
+    if default_keys is not None:
+        ds = {str(k).strip() for k in default_keys if str(k).strip()}
+        vs = set(values)
+        if ds == vs:
+            return "default"
+    return "custom"
+
+
+def _dimension_preset(stored: list | None, default_keys: list[str]) -> str:
+    """Версии/приоритеты: пусто или ['all'] → default; набор ключей совпадает с дефолтами каталога → default."""
+    vals = [str(x).strip() for x in (stored or []) if str(x).strip()]
+    if not vals or vals == ["all"]:
+        return "default"
+    ds = {str(k).strip() for k in default_keys if str(k).strip()}
+    vs = set(vals)
+    if ds == vs:
         return "default"
     return "custom"
 

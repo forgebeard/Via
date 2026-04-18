@@ -6,11 +6,13 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
 from tests.conftest import _setup_and_login_admin
 
@@ -254,6 +256,89 @@ class TestUsersCRUD:
 
         r = client.get("/users")
         assert "delete me" not in r.text
+
+    @pytest.mark.asyncio
+    async def test_delete_user_cleans_runtime_dlq_lease_state(self, client: TestClient):
+        """При удалении bot_users уходят строки в bot_issue_state, pending_notifications, bot_user_leases."""
+        token = _get_csrf(client)
+        rid = _unique_redmine_id(21)
+        room = _unique_room("del-runtime")
+
+        resp = client.post(
+            "/users",
+            data={
+                "redmine_id": str(rid),
+                "display_name": "runtime cleanup",
+                "room": room,
+                "notify_preset": "all",
+                "version_preset": "all",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        uid = parse_qs(urlparse(resp.headers["location"]).query)["highlight_user_id"][0]
+
+        from database.models import BotIssueState, BotUserLease, PendingNotification
+        from database.session import get_session_factory
+
+        factory = get_session_factory()
+
+        async with factory() as session:
+            session.add(
+                BotIssueState(
+                    user_redmine_id=rid,
+                    issue_id=880_011,
+                )
+            )
+            session.add(
+                BotUserLease(
+                    user_redmine_id=rid,
+                    lease_owner_id=uuid4(),
+                    lease_until=datetime.now(UTC) + timedelta(minutes=30),
+                )
+            )
+            session.add(
+                PendingNotification(
+                    user_redmine_id=rid,
+                    issue_id=880_022,
+                    room_id="!dlq:server",
+                    notification_type="test",
+                    payload={"k": 1},
+                    next_retry_at=datetime.now(UTC),
+                )
+            )
+            await session.commit()
+
+        client.post(
+            f"/users/{uid}/delete",
+            data={"csrf_token": token},
+            follow_redirects=False,
+        )
+
+        async with factory() as session:
+            n_state = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(BotIssueState)
+                    .where(BotIssueState.user_redmine_id == rid)
+                )
+            ).scalar_one()
+            n_dlq = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(PendingNotification)
+                    .where(PendingNotification.user_redmine_id == rid)
+                )
+            ).scalar_one()
+            n_lease = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(BotUserLease)
+                    .where(BotUserLease.user_redmine_id == rid)
+                )
+            ).scalar_one()
+            assert (n_state, n_dlq, n_lease) == (0, 0, 0)
 
     def test_delete_nonexistent_user(self, client: TestClient):
         """Удаление несуществующего пользователя — 303 или 404."""

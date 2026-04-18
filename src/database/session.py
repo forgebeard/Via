@@ -38,9 +38,21 @@ def make_engine():
     echo = os.getenv("SQL_ECHO", "0") == "1"
     # Pytest: избегаем переиспользования соединений между разными event loop
     # (TestClient / asyncio.run / pytest-asyncio).
+    # asyncpg: timeout — время на установление TCP-соединения (снижает ложные TimeoutError под нагрузкой).
+    connect_args: dict = {"timeout": 60}
     if os.getenv("SQLALCHEMY_NULL_POOL", "").strip() in ("1", "true", "yes", "on"):
-        return create_async_engine(async_url, echo=echo, poolclass=NullPool)
-    return create_async_engine(async_url, echo=echo)
+        return create_async_engine(
+            async_url,
+            echo=echo,
+            poolclass=NullPool,
+            connect_args=connect_args,
+        )
+    return create_async_engine(
+        async_url,
+        echo=echo,
+        pool_pre_ping=True,
+        connect_args=connect_args,
+    )
 
 
 _engine = None

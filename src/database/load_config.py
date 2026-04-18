@@ -91,7 +91,9 @@ def group_orm_to_cfg(row: SupportGroup) -> dict[str, Any]:
     }
 
 
-async def fetch_runtime_config(session: AsyncSession | None = None) -> tuple[list, dict, dict, list]:
+async def fetch_runtime_config(
+    session: AsyncSession | None = None,
+) -> tuple[list, dict, dict, list]:
     """
     Возвращает (USERS, STATUS_ROOM_MAP, VERSION_ROOM_MAP, GROUPS).
     """
