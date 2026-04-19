@@ -281,14 +281,6 @@ async def onboarding_page(request: Request, session: AsyncSession = Depends(get_
     tz_labels = admin._timezone_labels(tz_all)
     current_tz = await admin.effective_bot_timezone_for_admin(session)
 
-    r_md = await session.execute(
-        select(CycleSettings.value).where(CycleSettings.key == "MATRIX_DEVICE_ID")
-    )
-    md_raw = r_md.scalar_one_or_none()
-    matrix_device_id = (md_raw or "").strip() if isinstance(md_raw, str) else ""
-    if not matrix_device_id:
-        matrix_device_id = (os.getenv("MATRIX_DEVICE_ID") or "").strip() or "redmine_bot"
-
     return admin.templates.TemplateResponse(
         request,
         "panel/onboarding.html",
@@ -303,7 +295,6 @@ async def onboarding_page(request: Request, session: AsyncSession = Depends(get_
             "timezone_all_options": tz_all,
             "timezone_labels": tz_labels,
             "service_timezone": current_tz,
-            "matrix_device_id": matrix_device_id,
         },
     )
 
@@ -362,18 +353,6 @@ async def onboarding_save(
         else:
             session.add(CycleSettings(key="BOT_TIMEZONE", value=norm))
         await admin._upsert_secret_plain(session, admin.SERVICE_TIMEZONE_SECRET, norm)
-
-    safe_md = _sanitize_matrix_device_id((form.get("matrix_device_id") or "").strip())
-    row_md = (
-        await session.execute(select(CycleSettings).where(CycleSettings.key == "MATRIX_DEVICE_ID"))
-    ).scalar_one_or_none()
-    if safe_md:
-        if row_md:
-            row_md.value = safe_md
-        else:
-            session.add(CycleSettings(key="MATRIX_DEVICE_ID", value=safe_md))
-    elif row_md:
-        await session.delete(row_md)
 
     await session.commit()
     os.environ["BOT_TIMEZONE"] = await admin.effective_bot_timezone_for_admin(session)

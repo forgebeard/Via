@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from jinja2 import Environment, FileSystemLoader
 
 from bot.logic import NOTIFICATION_TYPES, get_version_name, plural_days
+from bot.time_context import notify_context_for_room
 from matrix_send import room_send_with_retry
 from preferences import can_notify
 from utils import safe_html
@@ -423,6 +424,7 @@ async def send_safe(
     from bot.logic import _cfg_for_room, _issue_priority_name, issue_matches_cfg
 
     cfg = _cfg_for_room(user_cfg, room_id)
+    nctx = notify_context_for_room(user_cfg, room_id)
     if not issue_matches_cfg(issue, cfg):
         logger.debug(
             "Пропуск (атрибуты): user %s, #%s, room=%s",
@@ -431,7 +433,7 @@ async def send_safe(
             room_id[:20],
         )
         return
-    if not can_notify(cfg, priority=_issue_priority_name(issue)):
+    if not can_notify(cfg, priority=_issue_priority_name(issue), context=nctx):
         logger.debug(
             "Пропуск (время/DND): user %s, #%s, %s",
             user_cfg.get("redmine_id"),

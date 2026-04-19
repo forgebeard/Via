@@ -15,6 +15,7 @@ def _make_user(**kwargs):
     u.room = kwargs.get("room", "!room:server")
     u.notify = kwargs.get("notify", ["all"])
     u.group_id = kwargs.get("group_id")
+    u.timezone = kwargs.get("timezone")
     u.work_hours = kwargs.get("work_hours")
     u.work_days = kwargs.get("work_days")
     u.dnd = kwargs.get("dnd", False)
@@ -60,6 +61,13 @@ class TestUserOrmToCfg:
         user = _make_user(group_id=1)
         group = _make_group(id=1, timezone="Europe/Moscow")
         result = lc.user_orm_to_cfg(user, {1: group})
+        assert result["group_timezone"] == "Europe/Moscow"
+
+    def test_user_timezone_independent_of_group(self):
+        user = _make_user(group_id=1, timezone="Indian/Antananarivo")
+        group = _make_group(id=1, timezone="Europe/Moscow")
+        result = lc.user_orm_to_cfg(user, {1: group})
+        assert result["timezone"] == "Indian/Antananarivo"
         assert result["group_timezone"] == "Europe/Moscow"
 
     def test_user_with_group_delivery(self):
@@ -147,3 +155,10 @@ class TestUserOrmToCfg:
         group = _make_group(id=1, notify=None)
         result = lc.user_orm_to_cfg(user, {1: group})
         assert result["group_delivery"]["notify"] == ["all"]
+
+
+class TestGroupOrmToCfg:
+    def test_timezone_included(self):
+        group = _make_group(id=1, timezone="Europe/Moscow")
+        result = lc.group_orm_to_cfg(group)
+        assert result["timezone"] == "Europe/Moscow"

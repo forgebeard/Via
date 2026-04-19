@@ -19,6 +19,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from redminelib import Redmine
 from redminelib.exceptions import AuthError, BaseRedmineError, ForbiddenError
 
@@ -45,7 +46,11 @@ from config import (
     log_file_max_bytes,
     want_log_file,
 )
-from logging_config import get_log_formatter, setup_json_logging
+from logging_config import (
+    apply_service_timezone_to_bot_logger,
+    get_log_formatter,
+    setup_json_logging,
+)
 
 # Re-export для тестов (чистые функции из logic.py)
 __all__ = [
@@ -479,6 +484,8 @@ async def main() -> None:
         MATRIX_DEVICE_ID or "(env default)",
     )
 
+    apply_service_timezone_to_bot_logger(BOT_TIMEZONE)
+
     # ── Инициализация sender template ──
     import bot.sender as _sender_mod
     from bot.sender import init_template
@@ -647,9 +654,11 @@ async def main() -> None:
     if daily_report_enabled:
         scheduler.add_job(
             daily_report,
-            "cron",
-            hour=daily_report_hour,
-            minute=daily_report_minute,
+            CronTrigger(
+                hour=daily_report_hour,
+                minute=daily_report_minute,
+                timezone=BOT_TZ,
+            ),
             args=[client, redmine],
             kwargs=_reload_ctx["daily_kwargs"],
             id=JOB_DAILY_REPORT,
@@ -665,9 +674,7 @@ async def main() -> None:
 
     scheduler.add_job(
         cleanup_state_files,
-        "cron",
-        hour=3,
-        minute=0,
+        CronTrigger(hour=3, minute=0, timezone=BOT_TZ),
         args=[redmine],
         kwargs={
             "now_tz": now_tz,

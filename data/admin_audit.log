@@ -45,3 +45,6 @@
 18.04.2026 18:34:51 [AUDIT] ADMIN_CRUD entity=group action=update actor=admin entity_id=6 details={"id": "6", "name": "тест"}
 18.04.2026 18:36:36 [AUDIT] ADMIN_CRUD entity=bot_user action=create actor=admin entity_id=175 details={"id": "175", "redmine_id": "1972"}
 18.04.2026 18:36:42 [AUDIT] ADMIN_CRUD entity=bot_user action=update actor=admin entity_id=175 details={"id": "175", "redmine_id": "1972"}
+18.04.2026 21:01:24 [AUDIT] ADMIN_CRUD entity=group action=update actor=admin entity_id=6 details={"id": "6", "name": "тест"}
+18.04.2026 21:04:12 [AUDIT] ADMIN_CRUD entity=group action=update actor=admin entity_id=6 details={"id": "6", "name": "тест"}
+18.04.2026 21:11:23 [AUDIT] ADMIN_CRUD entity=bot_user action=update actor=admin entity_id=175 details={"id": "175", "redmine_id": "1972"}

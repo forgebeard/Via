@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC
-from datetime import datetime as _dt
+from datetime import UTC, datetime
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -420,15 +420,6 @@ async def user_test_message(
 
     from src.matrix_send import room_send_with_retry
 
-    ts = _dt.now().strftime("%H:%M:%S")
-    html = (
-        f"<b>Тестовое сообщение</b><br>"
-        f"Это тест от панели управления.<br>"
-        f"Если вы это видите — подключение работает!<br>"
-        f"<small>Отправлено: {ts}</small>"
-    )
-    text_plain = f"Тестовое сообщение\nЭто тест от панели управления.\nОтправлено: {ts}"
-
     final_room_id = room_id
 
     try:
@@ -468,6 +459,40 @@ async def user_test_message(
             return JSONResponse(
                 {"ok": False, "error": "Не удалось определить комнату"}, status_code=500
             )
+
+        logger.info(
+            "[DIAG] test_message: pre_send uid=%s client.user_id=%s final_room_id=%s",
+            uid,
+            getattr(client, "user_id", None),
+            final_room_id,
+        )
+        sync_ok = await admin._sync_matrix_client(client)
+        logger.info(
+            "[DIAG] test_message: matrix sync_ok=%s rooms_cached=%d room_in_cache=%s",
+            sync_ok,
+            len(client.rooms),
+            final_room_id in client.rooms,
+        )
+        if (final_room_id or "").startswith("!") and final_room_id not in client.rooms:
+            try:
+                join_r = await client.join(final_room_id)
+                logger.info("[DIAG] test_message: explicit room join response=%s", join_r)
+            except Exception as join_exc:
+                logger.warning(
+                    "[DIAG] test_message: join failed (may still send): %s", join_exc, exc_info=True
+                )
+
+        tz_eff = await admin.effective_bot_timezone_for_admin(session)
+        ts = datetime.now(ZoneInfo(tz_eff)).strftime("%H:%M:%S")
+        html = (
+            f"<b>Тестовое сообщение</b><br>"
+            f"Это тест от панели управления.<br>"
+            f"Если вы это видите — подключение работает!<br>"
+            f"<small>Отправлено: {ts} ({tz_eff})</small>"
+        )
+        text_plain = (
+            f"Тестовое сообщение\nЭто тест от панели управления.\nОтправлено: {ts} ({tz_eff})"
+        )
 
         logger.info("test_message: sending to %s", final_room_id)
         content = {

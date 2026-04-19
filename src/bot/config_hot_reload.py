@@ -259,8 +259,10 @@ def reschedule_after_reload(
             job_id, trigger=IntervalTrigger(seconds=check_interval, timezone=tz)
         )
         kw = dict(job.kwargs)
-        kw["check_interval"] = check_interval
         kw["bot_lease_ttl"] = snap.bot_lease_ttl_seconds
+        # Только check_all_users принимает check_interval; check_unassigned_new_issues — нет.
+        if job_id == JOB_POLL_ALL:
+            kw["check_interval"] = check_interval
         job.modify(kwargs=kw)
 
     daily_job = scheduler.get_job(JOB_DAILY_REPORT)

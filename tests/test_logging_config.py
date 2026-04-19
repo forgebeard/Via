@@ -6,7 +6,15 @@ import logging
 
 import pytest
 
-from logging_config import _want_json, get_log_formatter, setup_json_logging
+from datetime import datetime, timezone
+
+from logging_config import (
+    ServiceTimezoneFormatter,
+    _want_json,
+    get_log_formatter,
+    resolve_service_tz_name,
+    setup_json_logging,
+)
 
 
 class TestWantJson:
@@ -65,3 +73,30 @@ class TestGetLogFormatter:
             assert isinstance(fmt, jsonlogger.JsonFormatter)
         except ImportError:
             pytest.skip("python-json-logger not installed")
+
+
+class TestServiceTimezoneFormatter:
+    def test_format_time_moscow_from_utc_epoch(self):
+        fmt = ServiceTimezoneFormatter(
+            "%(asctime)s %(message)s",
+            service_tz_name="Europe/Moscow",
+        )
+        record = logging.LogRecord(
+            name="t",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="x",
+            args=(),
+            exc_info=None,
+        )
+        record.created = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc).timestamp()
+        s = fmt.format(record)
+        assert "2024-01-15 15:00:00" in s
+        assert "x" in s
+
+    def test_resolve_service_tz_name(self, monkeypatch):
+        monkeypatch.delenv("BOT_TIMEZONE", raising=False)
+        assert resolve_service_tz_name() == "Europe/Moscow"
+        monkeypatch.setenv("BOT_TIMEZONE", "Indian/Antananarivo")
+        assert resolve_service_tz_name() == "Indian/Antananarivo"

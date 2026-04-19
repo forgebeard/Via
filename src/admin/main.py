@@ -49,6 +49,9 @@ async def _app_lifespan(_app: FastAPI):
         async with factory() as session:
             tz_eff = await effective_bot_timezone_for_admin(session)
         os.environ["BOT_TIMEZONE"] = tz_eff
+        from logging_config import apply_service_timezone_to_admin_loggers
+
+        apply_service_timezone_to_admin_loggers(tz_eff)
     except Exception:
         logger.warning("service_timezone_load_failed", exc_info=True)
     logger.info("✅ Admin panel ready")

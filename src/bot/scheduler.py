@@ -47,7 +47,6 @@ def _render_daily_report_content(
             "<p><strong>Открытых задач:</strong> {total_open}</p>"
             "<p><strong>Информация предоставлена:</strong> {info_count}</p>"
             "{info_items_html}"
-            "<p><strong>Просроченных:</strong> {overdue_count}</p>"
             "{overdue_items_html}"
         )
     if not plain_tpl:
@@ -323,7 +322,7 @@ async def check_unassigned_new_issues(
                 if room in sent_rooms:
                     continue
                 try:
-                    if can_notify(cfg, priority=""):
+                    if can_notify(cfg, priority="", context="group_room"):
                         await send_safe(
                             client,
                             issue,
@@ -384,7 +383,7 @@ async def daily_report(
     for user_cfg in USERS:
         if not should_notify(user_cfg, "all"):
             continue
-        if not can_notify(user_cfg, priority="", dt=now_tz()):
+        if not can_notify(user_cfg, priority="", context="personal"):
             logger.debug(
                 "Утренний отчёт: пропуск (время/DND), user %s",
                 user_cfg.get("redmine_id"),

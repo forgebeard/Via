@@ -12,7 +12,7 @@ from datetime import time
 
 from bot.config_state import CATALOGS
 from bot.logic import PRIORITY_EMERGENCY
-from utils import now_tz
+from bot.time_context import NotifyContext, now_in_notify_context
 
 # ═══════════════════════════════════════════════════════════════
 # ДЕФОЛТЫ
@@ -54,13 +54,18 @@ def get_work_days(user_cfg: dict) -> set[int]:
     return DEFAULT_WORK_DAYS
 
 
-def is_working_time(user_cfg: dict, dt=None) -> bool:
+def is_working_time(
+    user_cfg: dict,
+    dt=None,
+    *,
+    context: NotifyContext = "personal",
+) -> bool:
     """
     Проверяет, попадает ли текущее (или переданное) время
-    в рабочие часы пользователя.
+    в рабочие часы и дни в эффективной таймзоне (личной или групповой комнаты).
     """
     if dt is None:
-        dt = now_tz()
+        dt = now_in_notify_context(user_cfg, context=context)
 
     # Выходной?
     work_days = get_work_days(user_cfg)
@@ -86,7 +91,13 @@ def _priority_is_emergency(priority: str) -> bool:
     return p == PRIORITY_EMERGENCY
 
 
-def can_notify(user_cfg: dict, priority: str = "", dt=None) -> bool:
+def can_notify(
+    user_cfg: dict,
+    priority: str = "",
+    dt=None,
+    *,
+    context: NotifyContext = "personal",
+) -> bool:
     """
     Главная функция: можно ли отправить уведомление.
 
@@ -100,4 +111,4 @@ def can_notify(user_cfg: dict, priority: str = "", dt=None) -> bool:
         return False
 
     # Рабочее время
-    return is_working_time(user_cfg, dt)
+    return is_working_time(user_cfg, dt, context=context)

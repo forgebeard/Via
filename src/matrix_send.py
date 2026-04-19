@@ -16,6 +16,18 @@ from nio import RoomSendError
 logger = logging.getLogger("redmine_bot")
 
 
+def _log_matrix_send_response(resp, room_id: str, *, prefix: str = "Matrix room_send") -> None:
+    """Детальный разбор ответа nio для диагностики M_FORBIDDEN и др."""
+    parts = [f"{prefix} room={room_id!r}"]
+    for key in ("message", "status_code", "body", "transport_response", "event_id"):
+        val = getattr(resp, key, None)
+        if val is not None:
+            parts.append(f"{key}={val!r}")
+    if isinstance(resp, RoomSendError):
+        parts.append(f"type=RoomSendError")
+    logger.warning("; ".join(parts))
+
+
 def _get_retry_settings() -> tuple[int, float]:
     """Читает retry-настройки из config (с fallback)."""
     try:
@@ -49,6 +61,7 @@ async def room_send_with_retry(client, room_id, content):
             if getattr(resp, "event_id", None):
                 return resp
             if isinstance(resp, RoomSendError):
+                _log_matrix_send_response(resp, room_id)
                 last_err = RuntimeError(
                     f"Matrix room_send error: {getattr(resp, 'message', resp)} "
                     f"(status_code={getattr(resp, 'status_code', None)}, room={room_id})"
@@ -56,6 +69,7 @@ async def room_send_with_retry(client, room_id, content):
             elif getattr(resp, "status_code", None) is not None and not getattr(
                 resp, "event_id", None
             ):
+                _log_matrix_send_response(resp, room_id)
                 last_err = RuntimeError(
                     f"Matrix room_send error: {getattr(resp, 'message', resp)} "
                     f"(status_code={resp.status_code}, room={room_id})"
@@ -64,6 +78,14 @@ async def room_send_with_retry(client, room_id, content):
                 return resp
         except Exception as e:
             last_err = e
+            logger.warning(
+                "Matrix send exception (%s/%s) room=%s: %s: %s",
+                attempt,
+                max_retries,
+                room_id,
+                type(e).__name__,
+                e,
+            )
 
         if attempt >= max_retries:
             break

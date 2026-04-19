@@ -57,6 +57,8 @@ def user_orm_to_cfg(
                 "work_days": g.work_days,
                 "dnd": bool(g.dnd),
             }
+    if row.timezone:
+        d["timezone"] = row.timezone
     if row.work_hours:
         d["work_hours"] = row.work_hours
     if row.work_days is not None:
@@ -78,7 +80,7 @@ def user_orm_to_cfg(
 
 
 def group_orm_to_cfg(row: SupportGroup) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "group_id": row.id,
         "group_name": row.name,
         "room": row.room_id,
@@ -89,6 +91,9 @@ def group_orm_to_cfg(row: SupportGroup) -> dict[str, Any]:
         "work_days": row.work_days,
         "dnd": bool(row.dnd),
     }
+    if row.timezone:
+        out["timezone"] = row.timezone
+    return out
 
 
 async def fetch_runtime_config(
