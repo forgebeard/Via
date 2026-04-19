@@ -35,6 +35,7 @@ def user_orm_to_cfg(
     gv_by_group = gv_by_group or {}
     uv_by_user = uv_by_user or {}
     d: dict[str, Any] = {
+        "id": row.id,
         "redmine_id": row.redmine_id,
         "room": row.room,
         "notify": row.notify if isinstance(row.notify, list) else ["all"],
@@ -47,6 +48,7 @@ def user_orm_to_cfg(
         if g is not None:
             d["group_name"] = g.name
             d["group_room"] = g.room_id
+            d["group_notify_on_assignment"] = bool(getattr(g, "notify_on_assignment", True))
             if g.timezone:
                 d["group_timezone"] = g.timezone
             d["group_delivery"] = {
@@ -84,6 +86,7 @@ def group_orm_to_cfg(row: SupportGroup) -> dict[str, Any]:
         "group_id": row.id,
         "group_name": row.name,
         "room": row.room_id,
+        "notify_on_assignment": bool(getattr(row, "notify_on_assignment", True)),
         "notify": row.notify if isinstance(row.notify, list) else ["all"],
         "versions": row.versions if isinstance(row.versions, list) else ["all"],
         "priorities": row.priorities if isinstance(row.priorities, list) else ["all"],
@@ -98,9 +101,12 @@ def group_orm_to_cfg(row: SupportGroup) -> dict[str, Any]:
 
 async def fetch_runtime_config(
     session: AsyncSession | None = None,
-) -> tuple[list, dict, dict, list]:
+) -> tuple[list, dict, dict, list, dict[str, Any]]:
     """
-    Возвращает (USERS, STATUS_ROOM_MAP, VERSION_ROOM_MAP, GROUPS).
+    Возвращает (USERS, STATUS_ROOM_MAP, VERSION_ROOM_MAP, GROUPS, routes_config).
+
+    ``routes_config`` — метаданные маршрутов для ``bot.routing``:
+    ``status_routes``, ``version_routes_global`` (списки словарей).
     """
     if session is None:
         factory = get_session_factory()
@@ -111,15 +117,47 @@ async def fetch_runtime_config(
     groups = list(r_groups.scalars().all())
     groups_by_id = {g.id: g for g in groups}
 
-    gv_by_group: dict[int, list[dict[str, str]]] = defaultdict(list)
-    r_gv = await session.execute(select(GroupVersionRoute))
+    gv_by_group: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    r_gv = await session.execute(
+        select(GroupVersionRoute).order_by(
+            GroupVersionRoute.priority,
+            GroupVersionRoute.sort_order,
+            GroupVersionRoute.id,
+        )
+    )
     for gr in r_gv.scalars().all():
-        gv_by_group[gr.group_id].append({"key": gr.version_key, "room": gr.room_id})
+        gv_by_group[gr.group_id].append(
+            {
+                "key": gr.version_key,
+                "room": gr.room_id,
+                "priority": int(gr.priority),
+                "sort_order": int(gr.sort_order),
+                "notify_on_assignment": bool(gr.notify_on_assignment),
+                "route_source": "group_version_route",
+                "route_id": gr.id,
+            }
+        )
 
-    uv_by_user: dict[int, list[dict[str, str]]] = defaultdict(list)
-    r_uv = await session.execute(select(UserVersionRoute))
+    uv_by_user: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    r_uv = await session.execute(
+        select(UserVersionRoute).order_by(
+            UserVersionRoute.priority,
+            UserVersionRoute.sort_order,
+            UserVersionRoute.id,
+        )
+    )
     for ur in r_uv.scalars().all():
-        uv_by_user[ur.bot_user_id].append({"key": ur.version_key, "room": ur.room_id})
+        uv_by_user[ur.bot_user_id].append(
+            {
+                "key": ur.version_key,
+                "room": ur.room_id,
+                "priority": int(ur.priority),
+                "sort_order": int(ur.sort_order),
+                "notify_on_assignment": bool(ur.notify_on_assignment),
+                "route_source": "user_version_route",
+                "route_id": ur.id,
+            }
+        )
 
     r_users = await session.execute(select(BotUser).order_by(BotUser.redmine_id))
     users = [
@@ -127,13 +165,56 @@ async def fetch_runtime_config(
     ]
     groups_cfg = [group_orm_to_cfg(g) for g in groups]
 
-    r_st = await session.execute(select(StatusRoomRoute))
-    status_map = {row.status_key: row.room_id for row in r_st.scalars().all()}
+    r_st = await session.execute(
+        select(StatusRoomRoute).order_by(
+            StatusRoomRoute.priority,
+            StatusRoomRoute.sort_order,
+            StatusRoomRoute.id,
+        )
+    )
+    status_rows = list(r_st.scalars().all())
+    status_map = {row.status_key: row.room_id for row in status_rows}
+    status_routes = [
+        {
+            "status_key": row.status_key,
+            "room_id": row.room_id,
+            "priority": int(row.priority),
+            "sort_order": int(row.sort_order),
+            "notify_on_assignment": bool(row.notify_on_assignment),
+            "route_source": "status_room_route",
+            "route_id": row.id,
+        }
+        for row in status_rows
+    ]
 
-    r_ver = await session.execute(select(VersionRoomRoute))
-    version_map = {row.version_key: row.room_id for row in r_ver.scalars().all()}
+    r_ver = await session.execute(
+        select(VersionRoomRoute).order_by(
+            VersionRoomRoute.priority,
+            VersionRoomRoute.sort_order,
+            VersionRoomRoute.id,
+        )
+    )
+    version_rows = list(r_ver.scalars().all())
+    version_map = {row.version_key: row.room_id for row in version_rows}
+    version_routes_global = [
+        {
+            "version_key": row.version_key,
+            "room_id": row.room_id,
+            "priority": int(row.priority),
+            "sort_order": int(row.sort_order),
+            "notify_on_assignment": bool(row.notify_on_assignment),
+            "route_source": "version_room_route",
+            "route_id": row.id,
+        }
+        for row in version_rows
+    ]
 
-    return users, status_map, version_map, groups_cfg
+    routes_config: dict[str, Any] = {
+        "status_routes": status_routes,
+        "version_routes_global": version_routes_global,
+    }
+
+    return users, status_map, version_map, groups_cfg, routes_config
 
 
 async def row_counts(session: AsyncSession | None = None) -> tuple[int, int, int]:

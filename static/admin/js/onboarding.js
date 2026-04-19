@@ -284,4 +284,143 @@
 
     loadSettings();
   })();
+
+  /* --- Journal engine Jinja2 templates (notification_templates) --- */
+  (function () {
+    var root = document.getElementById("tpl-v2-fields");
+    var statusEl = document.getElementById("tpl-v2-status");
+    if (!root || !statusEl) return;
+
+    function csrfToken() {
+      var csrfInput = form.querySelector('input[name="csrf_token"]');
+      return csrfInput ? csrfInput.value : "";
+    }
+
+    function loadV2() {
+      statusEl.textContent = "Загрузка шаблонов v2…";
+      fetch("/api/bot/notification-templates", {
+        method: "GET",
+        credentials: "same-origin",
+        headers: { Accept: "application/json" }
+      }).then(function (resp) {
+        if (!resp.ok) throw new Error("load_failed");
+        return resp.json();
+      }).then(function (data) {
+        root.innerHTML = "";
+        (data.templates || []).forEach(function (tpl) {
+          var wrap = document.createElement("div");
+          wrap.className = "field";
+          var title = document.createElement("div");
+          title.className = "card-title";
+          title.style.marginTop = "0.5rem";
+          title.textContent = tpl.name;
+          wrap.appendChild(title);
+          var lab = document.createElement("label");
+          lab.textContent = "Override HTML (пусто = файл по умолчанию)";
+          wrap.appendChild(lab);
+          var ta = document.createElement("textarea");
+          ta.className = "tpl-v2-html";
+          ta.setAttribute("data-name", tpl.name);
+          ta.rows = 6;
+          ta.value = (tpl.override_html != null && tpl.override_html !== "")
+            ? tpl.override_html
+            : (tpl.default_html || "");
+          wrap.appendChild(ta);
+          var bar = document.createElement("div");
+          bar.className = "db-grid";
+          bar.style.marginTop = "0.5rem";
+          ["Сохранить", "Сбросить", "Предпросмотр"].forEach(function (label, idx) {
+            var b = document.createElement("button");
+            b.type = "button";
+            b.textContent = label;
+            b.className = idx === 0 ? "btn btn-primary" : "btn btn-ghost";
+            if (idx === 0) b.classList.add("tpl-v2-save");
+            if (idx === 1) b.classList.add("tpl-v2-reset");
+            if (idx === 2) b.classList.add("tpl-v2-preview");
+            b.setAttribute("data-name", tpl.name);
+            bar.appendChild(b);
+          });
+          wrap.appendChild(bar);
+          var pre = document.createElement("pre");
+          pre.className = "tpl-v2-preview-out muted";
+          pre.setAttribute("data-name", tpl.name);
+          pre.style.whiteSpace = "pre-wrap";
+          pre.style.maxHeight = "12rem";
+          pre.style.overflow = "auto";
+          wrap.appendChild(pre);
+          root.appendChild(wrap);
+        });
+        root.querySelectorAll(".tpl-v2-save").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var name = btn.getAttribute("data-name");
+            var ta = root.querySelector('.tpl-v2-html[data-name="' + name + '"]');
+            var fd = new FormData();
+            fd.append("csrf_token", csrfToken());
+            fd.append("body_html", ta ? ta.value : "");
+            fd.append("body_plain", "");
+            statusEl.textContent = "Сохранение " + name + "…";
+            fetch("/api/bot/notification-templates/" + encodeURIComponent(name), {
+              method: "PUT",
+              body: fd,
+              credentials: "same-origin",
+              headers: { Accept: "application/json" }
+            }).then(function (resp) {
+              if (!resp.ok) throw new Error("save_failed");
+              statusEl.textContent = "Сохранено: " + name;
+              showToast("Шаблон " + name + " сохранён", false);
+            }).catch(function () {
+              statusEl.textContent = "Ошибка сохранения " + name;
+            });
+          });
+        });
+        root.querySelectorAll(".tpl-v2-reset").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var name = btn.getAttribute("data-name");
+            var fd = new FormData();
+            fd.append("csrf_token", csrfToken());
+            fetch("/api/bot/notification-templates/" + encodeURIComponent(name) + "/reset", {
+              method: "POST",
+              body: fd,
+              credentials: "same-origin",
+              headers: { Accept: "application/json" }
+            }).then(function (resp) {
+              if (!resp.ok) throw new Error("reset_failed");
+              loadV2();
+            }).catch(function () {
+              statusEl.textContent = "Ошибка сброса " + name;
+            });
+          });
+        });
+        root.querySelectorAll(".tpl-v2-preview").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var name = btn.getAttribute("data-name");
+            var ta = root.querySelector('.tpl-v2-html[data-name="' + name + '"]');
+            var pre = root.querySelector('.tpl-v2-preview-out[data-name="' + name + '"]');
+            fetch("/api/bot/notification-templates/preview", {
+              method: "POST",
+              credentials: "same-origin",
+              headers: {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": csrfToken(),
+                Accept: "application/json"
+              },
+              body: JSON.stringify({ name: name, body_html: ta ? ta.value : "" })
+            }).then(function (resp) { return resp.json(); }).then(function (d) {
+              if (pre) pre.textContent = (d && d.html) ? String(d.html) : "";
+            }).catch(function () {
+              if (pre) pre.textContent = "Ошибка предпросмотра";
+            });
+          });
+        });
+        statusEl.textContent = "";
+      }).catch(function () {
+        statusEl.textContent = "Не удалось загрузить шаблоны v2.";
+      });
+    }
+
+    window.addEventListener("via-settings-tab", function (ev) {
+      if (ev.detail && ev.detail.tab === "notifications") loadV2();
+    });
+    if (window.location.hash === "#notifications") loadV2();
+  })();
 })();

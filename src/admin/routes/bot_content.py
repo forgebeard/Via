@@ -1,4 +1,9 @@
-"""Bot content and schedule settings managed from admin panel."""
+"""Bot content and schedule settings managed from admin panel.
+
+Шаблоны событий через ``NOTIFY_TEMPLATE_*`` в ``cycle_settings`` — legacy-путь
+для старого процессора. Журнальный движок v2 использует ``notification_templates``
+и Jinja-файлы ``templates/bot/tpl_*.html.j2`` (см. ``/api/bot/notification-templates``).
+"""
 
 from __future__ import annotations
 

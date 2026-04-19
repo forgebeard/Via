@@ -47,6 +47,7 @@ class BotRuntimeSnapshot:
     groups: list[dict[str, Any]]
     status_map: dict[str, str]
     version_map: dict[str, str]
+    routes_config: dict[str, Any]
     catalogs: BotCatalogs
     check_interval: int
     reminder_after: int
@@ -76,6 +77,7 @@ def _snapshot_fingerprint(snap: BotRuntimeSnapshot) -> str:
         "groups": snap.groups,
         "status_map": sorted(snap.status_map.items()),
         "version_map": sorted(snap.version_map.items()),
+        "routes": json.dumps(snap.routes_config, sort_keys=True, ensure_ascii=False, default=str),
         "cycle": sorted(snap.catalogs.cycle_settings.items()),
         "sid": sorted(cats.status_id_to_name.items()),
         "pid": sorted(cats.priority_id_to_name.items()),
@@ -112,7 +114,7 @@ def _safe_minute(value: int) -> int:
 async def build_snapshot(session: AsyncSession, baseline: EnvBaseline) -> BotRuntimeSnapshot:
     from zoneinfo import ZoneInfo
 
-    u, sm, vm, g = await fetch_runtime_config(session)
+    u, sm, vm, g, routes_cfg = await fetch_runtime_config(session)
     catalogs = await load_catalogs(session)
 
     ci = catalogs.cycle_int("CHECK_INTERVAL", baseline.check_interval)
@@ -144,6 +146,7 @@ async def build_snapshot(session: AsyncSession, baseline: EnvBaseline) -> BotRun
         groups=g,
         status_map=sm or {},
         version_map=vm or {},
+        routes_config=routes_cfg or {},
         catalogs=catalogs,
         check_interval=ci,
         reminder_after=ra,
@@ -172,7 +175,7 @@ async def refresh_runtime_lists_from_db(session_factory: async_sessionmaker) -> 
 
     try:
         async with session_factory() as session:
-            u, sm, vm, g = await fetch_runtime_config(session)
+            u, sm, vm, g, routes_cfg = await fetch_runtime_config(session)
     except Exception as e:
         logger.warning("⚠ Список пользователей из БД не обновлён: %s", e)
         return
@@ -181,6 +184,7 @@ async def refresh_runtime_lists_from_db(session_factory: async_sessionmaker) -> 
     main_mod.GROUPS = g
     main_mod.STATUS_ROOM_MAP = sm or {}
     main_mod.VERSION_ROOM_MAP = vm or {}
+    cs_mod.ROUTING = routes_cfg or {}
 
     cs_mod.USERS.clear()
     cs_mod.USERS.extend(u)
@@ -216,6 +220,7 @@ def apply_snapshot_to_runtime(
     main_mod.GROUPS = snap.groups
     main_mod.STATUS_ROOM_MAP = snap.status_map
     main_mod.VERSION_ROOM_MAP = snap.version_map
+    cs_mod.ROUTING = snap.routes_config
 
     _SU.clear()
     _SU.extend(snap.users)

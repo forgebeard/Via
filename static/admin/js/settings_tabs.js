@@ -18,6 +18,9 @@
       c.classList.toggle('active', c.id === 'tab-' + tabId);
     });
     window.location.hash = tabId;
+    try {
+      window.dispatchEvent(new CustomEvent('via-settings-tab', { detail: { tab: tabId } }));
+    } catch (e) { /* ignore */ }
   }
 
   btns.forEach(function (btn) {

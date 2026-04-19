@@ -45,6 +45,8 @@ async def enqueue_notification(
 async def dequeue_due_notifications(
     session: AsyncSession,
     now: datetime | None = None,
+    *,
+    limit: int | None = None,
 ) -> list[PendingNotification]:
     """Возвращает уведомления, готовые к повторной отправке."""
     now = now or datetime.now(UTC)
@@ -57,6 +59,8 @@ async def dequeue_due_notifications(
         )
         .order_by(PendingNotification.created_at)
     )
+    if limit is not None and limit > 0:
+        stmt = stmt.limit(int(limit))
     result = await session.execute(stmt)
     return list(result.scalars().all())
 

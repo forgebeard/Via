@@ -335,28 +335,28 @@ async def resolve_room(client: AsyncClient, room_or_mxid: str) -> str:
     return await _resolve_room_id(client, room_or_mxid)
 
 
-async def send_matrix_message(
-    client: AsyncClient,
+def _ensure_notification_template() -> None:
+    global _notification_template
+    if _notification_template is not None:
+        return
+    from pathlib import Path
+
+    _root = Path(__file__).resolve().parent.parent.parent
+    env = Environment(
+        loader=FileSystemLoader(str(_root / "templates" / "bot")),
+        autoescape=False,
+    )
+    _notification_template = env.get_template("notification.html")
+
+
+async def build_matrix_message_content(
     issue: Issue,
-    room_id: str,
     notification_type: str,
     extra_text: str = "",
-) -> None:
-    """Формирует и отправляет HTML-сообщение в Matrix через Jinja2-шаблон."""
-    global _notification_template
-    if _notification_template is None:
-        # Ленивая инициализация для тестов
-        from pathlib import Path
-
-        _root = Path(__file__).resolve().parent.parent.parent
-        env = Environment(
-            loader=FileSystemLoader(str(_root / "templates" / "bot")),
-            autoescape=False,
-        )
-        _notification_template = env.get_template("notification.html")
-
-    # ── Резолвим MXID → room_id если нужно ──
-    resolved_room = await _resolve_room_id(client, room_id)
+) -> dict:
+    """Собирает тело ``m.room.message`` для DLQ и отправки (без резолва комнаты)."""
+    _ensure_notification_template()
+    assert _notification_template is not None
 
     issue_url = f"{REDMINE_URL}/issues/{issue.id}"
     emoji, title = NOTIFICATION_TYPES.get(notification_type, ("🔔", "Обратите внимание"))
@@ -400,13 +400,24 @@ async def send_matrix_message(
         fallback_plain=plain_body,
     )
 
-    content = {
+    return {
         "msgtype": "m.text",
         "body": plain_body,
         "format": "org.matrix.custom.html",
         "formatted_body": html_body,
     }
 
+
+async def send_matrix_message(
+    client: AsyncClient,
+    issue: Issue,
+    room_id: str,
+    notification_type: str,
+    extra_text: str = "",
+) -> None:
+    """Формирует и отправляет HTML-сообщение в Matrix через Jinja2-шаблон."""
+    resolved_room = await _resolve_room_id(client, room_id)
+    content = await build_matrix_message_content(issue, notification_type, extra_text=extra_text)
     await room_send_with_retry(client, resolved_room, content)
     logger.info("📨 #%s → %s... (%s)", issue.id, resolved_room[:20], notification_type)
 
@@ -450,12 +461,9 @@ async def send_safe(
             try:
                 from database.dlq_repo import enqueue_notification
 
-                payload = {
-                    "issue_id": issue.id,
-                    "room_id": room_id,
-                    "notification_type": notification_type,
-                    "extra_text": extra_text,
-                }
+                payload = await build_matrix_message_content(
+                    issue, notification_type, extra_text=extra_text
+                )
                 await enqueue_notification(
                     db_session,
                     user_redmine_id=user_cfg.get("redmine_id", 0),

@@ -360,12 +360,13 @@ async def main() -> None:
     try:
         from database.load_config import fetch_runtime_config
 
-        u, sm, vm, g = await fetch_runtime_config()
+        u, sm, vm, g, routes_cfg = await fetch_runtime_config()
     except Exception as e:
         logger.error("❌ Не удалось загрузить конфиг из БД: %s", e, exc_info=True)
         return
 
     # Синхронизируем в config_state и main
+    import bot.config_state as _cstate
     from bot.config_state import (
         GROUPS as _SG,
     )
@@ -383,6 +384,7 @@ async def main() -> None:
     GROUPS = g
     STATUS_ROOM_MAP = sm or {}
     VERSION_ROOM_MAP = vm or {}
+    _cstate.ROUTING = routes_cfg or {}
     _SU[:] = USERS
     _SG[:] = GROUPS
     _SR.clear()
@@ -440,13 +442,12 @@ async def main() -> None:
         logger.info("⚙ cycle_settings: таблица пуста, используются значения из .env")
 
     # ── Загрузка справочников (каталогов) из БД ──────────────
-    import bot.config_state as _cs
     from bot.catalogs import load_catalogs
 
     try:
         async with session_factory() as session:
             CATALOGS = await load_catalogs(session)
-        _cs.CATALOGS = CATALOGS
+        _cstate.CATALOGS = CATALOGS
         logger.info(
             "✅ Справочники загружены: %d статусов, %d приоритетов, %d типов уведомлений",
             len(CATALOGS.status_id_to_name),

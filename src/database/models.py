@@ -63,6 +63,9 @@ class StatusRoomRoute(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     status_key: Mapped[str] = mapped_column(String(512), unique=True, nullable=False, index=True)
     room_id: Mapped[str] = mapped_column(Text, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    notify_on_assignment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 class VersionRoomRoute(Base):
@@ -71,6 +74,9 @@ class VersionRoomRoute(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     version_key: Mapped[str] = mapped_column(String(512), unique=True, nullable=False, index=True)
     room_id: Mapped[str] = mapped_column(Text, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    notify_on_assignment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 class GroupVersionRoute(Base):
@@ -90,6 +96,9 @@ class GroupVersionRoute(Base):
     )
     version_key: Mapped[str] = mapped_column(String(512), nullable=False)
     room_id: Mapped[str] = mapped_column(Text, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    notify_on_assignment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 class UserVersionRoute(Base):
@@ -109,6 +118,9 @@ class UserVersionRoute(Base):
     )
     version_key: Mapped[str] = mapped_column(String(512), nullable=False)
     room_id: Mapped[str] = mapped_column(Text, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    notify_on_assignment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 class SupportGroup(Base):
@@ -117,6 +129,7 @@ class SupportGroup(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     room_id: Mapped[str] = mapped_column(Text, nullable=False)
+    notify_on_assignment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     notify: Mapped[list] = mapped_column(JSONB, nullable=False, default=lambda: ["all"])  # Statuses
@@ -203,8 +216,13 @@ class BotIssueState(Base):
     last_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     sent_notified_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # journals: последний journal_id, чтобы определять issue_updated
+    # journals: последний journal_id (legacy; глобальный курсор — bot_issue_journal_cursor)
     last_journal_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    status_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    group_reminder_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    personal_reminder_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reminder_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     # reminders / overdue таймеры
     last_reminder_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -214,6 +232,62 @@ class BotIssueState(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class BotIssueJournalCursor(Base):
+    """Глобальный курсор по журналам задачи (одна строка на issue_id)."""
+
+    __tablename__ = "bot_issue_journal_cursor"
+
+    issue_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    last_journal_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class PendingDigest(Base):
+    __tablename__ = "pending_digests"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("bot_users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    issue_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    issue_subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    journal_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    journal_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    assigned_to: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class BotWatcherCache(Base):
+    __tablename__ = "bot_watcher_cache"
+
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("bot_users.id", ondelete="CASCADE"), primary_key=True
+    )
+    issue_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class NotificationTemplate(Base):
+    __tablename__ = "notification_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
+    body_plain: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    updated_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

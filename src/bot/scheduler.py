@@ -99,7 +99,9 @@ async def check_all_users(
 
     from bot.config_hot_reload import refresh_runtime_lists_from_db
     from bot.config_state import USERS
+    from bot.journal_tick import run_journal_tick
     from bot.sender import reset_dm_failed
+    from database.load_config import fetch_cycle_settings
     from database.session import get_session_factory
     from database.state_repo import try_acquire_user_lease
 
@@ -109,6 +111,35 @@ async def check_all_users(
 
     session_factory = get_session_factory()
     await refresh_runtime_lists_from_db(session_factory)
+
+    journal_on = False
+    try:
+        async with session_factory() as _s_flag:
+            _cy = await fetch_cycle_settings(_s_flag)
+        journal_on = str(_cy.get("JOURNAL_ENGINE_ENABLED", "0")).lower() in ("1", "true", "on")
+    except Exception:
+        journal_on = False
+
+    if journal_on:
+        try:
+            await run_journal_tick(client, redmine, now_tz=now_tz)
+        except Exception as e:
+            logger.error("❌ journal_tick: %s", e, exc_info=True)
+        elapsed = time.monotonic() - start
+        try:
+            runtime_status_file.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "last_cycle_at": now_tz().isoformat(),
+                "last_cycle_duration_s": round(elapsed, 3),
+                "error_count": 0,
+                "journal_engine": True,
+            }
+            runtime_status_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            logger.debug("Не удалось обновить runtime_status.json", exc_info=True)
+        logger.info("✅ Журнальный цикл завершён за %.1fс", elapsed)
+        return
+
     lease_owner_id = bot_instance_id
     lease_ttl = bot_lease_ttl
     error_count = 0
@@ -510,12 +541,20 @@ async def retry_dlq_notifications(
     client: AsyncClient,
     *,
     now_tz: Callable[[], datetime],
+    batch_limit: int | None = None,
 ) -> int:
     """Повторная отправка уведомлений из dead-letter queue.
 
-    Возвращает количество обработанных уведомлений.
+    Записи журнала с ``payload.needs_rerender`` снова рендерятся из шаблона в БД,
+    затем отправляется готовое Matrix-тело. Остальные записи — как раньше
+    (payload уже ``m.room.message``).
+
+    Возвращает количество успешно доставленных уведомлений.
     """
+    from bot.sender import resolve_room
+    from bot.template_loader import render_named_template
     from database.dlq_repo import (
+        MAX_DLQ_RETRIES,
         dequeue_due_notifications,
         mark_failed,
         mark_sent,
@@ -527,7 +566,7 @@ async def retry_dlq_notifications(
     processed = 0
 
     async with session_factory() as session:
-        due = await dequeue_due_notifications(session)
+        due = await dequeue_due_notifications(session, limit=batch_limit)
         if not due:
             return 0
 
@@ -535,7 +574,22 @@ async def retry_dlq_notifications(
 
         for notif in due:
             try:
-                await room_send_with_retry(client, notif.room_id, notif.payload)
+                p = notif.payload if isinstance(notif.payload, dict) else {}
+                if p.get("needs_rerender"):
+                    tpl = str(p.get("template_name") or "tpl_task_change")
+                    ctx = p.get("jinja_context") if isinstance(p.get("jinja_context"), dict) else {}
+                    plain = str(p.get("plain_body") or f"#{notif.issue_id}")
+                    html = await render_named_template(session, tpl, ctx)
+                    content = {
+                        "msgtype": "m.text",
+                        "body": plain,
+                        "format": "org.matrix.custom.html",
+                        "formatted_body": html,
+                    }
+                else:
+                    content = notif.payload
+                resolved = await resolve_room(client, notif.room_id)
+                await room_send_with_retry(client, resolved, content)
                 await mark_sent(session, notif.id)
                 processed += 1
                 logger.info(
@@ -543,14 +597,15 @@ async def retry_dlq_notifications(
                     notif.issue_id,
                     notif.room_id[:20],
                     notif.retry_count,
-                    5,
+                    MAX_DLQ_RETRIES,
                 )
             except Exception as e:
                 await mark_failed(session, notif.id, str(e))
                 logger.warning(
-                    "⚠ DLQ retry #%s failed (попытка %d/5): %s",
+                    "⚠ DLQ retry #%s failed (попытка %d/%d): %s",
                     notif.issue_id,
                     notif.retry_count + 1,
+                    MAX_DLQ_RETRIES,
                     e,
                 )
 

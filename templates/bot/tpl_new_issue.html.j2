@@ -1,0 +1,3 @@
+<p><strong>{{ emoji | default('🆕') }}</strong> Новая задача <a href="{{ issue_url }}">#{{ issue_id }}</a></p>
+<p>{{ subject }}</p>
+<p>Статус: {{ status }} · Приоритет: {{ priority }}{% if version %} · Версия: {{ version }}{% endif %}</p>

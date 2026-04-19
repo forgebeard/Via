@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from bot.catalogs import BotCatalogs
@@ -22,6 +22,9 @@ STATUS_ROOM_MAP: dict[str, str] = {}
 
 # Маршрутизация: версия → Matrix room (глобальный)
 VERSION_ROOM_MAP: dict[str, str] = {}
+
+# Расширенные маршруты для журнального движка (из load_config.fetch_runtime_config)
+ROUTING: dict[str, Any] | None = None
 
 # Справочники из БД (заполняется при старте)
 CATALOGS: BotCatalogs | None = None
