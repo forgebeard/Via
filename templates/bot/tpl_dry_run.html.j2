@@ -1,2 +1,5 @@
-<p><em>Предпросмотр шаблона</em></p>
-<p>Задача <a href="{{ issue_url | default('') }}">#{{ issue_id | default('') }}</a>: {{ subject | default('') }}</p>
+<p><em>Тестовое уведомление (dry-run)</em></p>
+<p><strong>#{{ issue_id | default('') }} — {{ subject | default('') }}</strong></p>
+<p>Проект: {{ project_name | default('—') }} · Статус: {{ status | default('—') }} · Приоритет: {{ priority | default('—') }}</p>
+<p>Исполнитель: {{ assignee_name | default('не назначен') }}</p>
+<p><a href="{{ issue_url | default('') }}">Открыть задачу</a></p>

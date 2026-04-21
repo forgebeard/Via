@@ -61,6 +61,26 @@ def _normalize_detail_prop(d: dict[str, Any]) -> str:
     return str(d.get("name") or d.get("property") or "").strip()
 
 
+def _as_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _is_assignee_detail(d: dict[str, Any]) -> bool:
+    return _normalize_detail_prop(d) in ("assigned_to_id", "assigned_to")
+
+
+def _event_type_from_assignee(d: dict[str, Any]) -> str:
+    old_raw = _as_text(d.get("old_value"))
+    new_raw = _as_text(d.get("new_value"))
+    if old_raw and new_raw:
+        return "reassigned"
+    if old_raw and not new_raw:
+        return "unassigned"
+    return "assigned"
+
+
 def infer_event_type(journal: Any) -> str:
     has_notes = bool(getattr(journal, "notes", None) and str(journal.notes).strip())
     if has_notes:
@@ -68,8 +88,15 @@ def infer_event_type(journal: Any) -> str:
     try:
         for d in journal.details or []:
             prop = _normalize_detail_prop(d)
-            if prop in ("assigned_to_id", "assigned_to"):
-                return "assigned"
+            if _is_assignee_detail(d):
+                return _event_type_from_assignee(d)
+            if "watcher" in prop:
+                old_raw = _as_text(d.get("old_value"))
+                new_raw = _as_text(d.get("new_value"))
+                if old_raw and not new_raw:
+                    return "watcher_removed"
+                if new_raw:
+                    return "watcher_added"
             if prop == "status_id":
                 return "status_change"
     except Exception:
@@ -172,6 +199,73 @@ async def personal_recipient_cfgs(
     return out
 
 
+def _build_structured_changes(journal: Any, catalogs: Any | None) -> tuple[list[dict[str, str]], int, str]:
+    from bot.logic import FIELD_NAMES, resolve_field_value
+
+    changes: list[dict[str, str]] = []
+    status_from = ""
+    for d in list(getattr(journal, "details", None) or []):
+        if not isinstance(d, dict):
+            continue
+        prop = _normalize_detail_prop(d)
+        field_label = FIELD_NAMES.get(prop)
+        if not field_label:
+            continue
+        old = resolve_field_value(prop, d.get("old_value"), catalogs)
+        new = resolve_field_value(prop, d.get("new_value"), catalogs)
+        old_txt = _as_text(old) or "—"
+        new_txt = _as_text(new) or "—"
+        if prop == "status_id":
+            status_from = old_txt
+        changes.append({"field": field_label, "old": old_txt, "new": new_txt})
+
+    max_visible = 8
+    extra_changes = max(0, len(changes) - max_visible)
+    return changes[:max_visible], extra_changes, status_from
+
+
+def build_journal_template_context(
+    *,
+    issue: Any,
+    journal: Any,
+    catalogs: Any | None,
+    users: list[dict[str, Any]],
+    event_type: str,
+    extra_text: str,
+) -> dict[str, Any]:
+    base_ctx = build_issue_context(
+        issue,
+        catalogs,
+        event_type=event_type,
+        extra_text=extra_text,
+        title="Обновление задачи",
+        emoji="",
+    )
+    changes, extra_changes, status_from = _build_structured_changes(journal, catalogs)
+    try:
+        actor_name = str(getattr(getattr(journal, "user", None), "name", "") or "")
+    except Exception:
+        actor_name = ""
+    journal_notes = _as_text(getattr(journal, "notes", None))
+    assigned_from = ""
+    former_rid = former_assignee_redmine_id(journal)
+    if former_rid:
+        former_cfg = user_cfg_by_redmine_id(users, former_rid)
+        if former_cfg:
+            assigned_from = str(former_cfg.get("full_name") or former_cfg.get("name") or "").strip()
+    base_ctx.update(
+        {
+            "actor_name": actor_name,
+            "journal_notes": journal_notes,
+            "changes": changes,
+            "extra_changes": extra_changes,
+            "status_from": status_from,
+            "assigned_from": assigned_from,
+        }
+    )
+    return base_ctx
+
+
 async def journal_render_send_or_dlq(
     client: Any,
     session: AsyncSession,
@@ -266,13 +360,13 @@ async def handle_journal_entry(
     event_type = infer_event_type(journal)
     extra = describe_journal(journal, skip_status=False, catalogs=cats) or ""
 
-    base_ctx = build_issue_context(
-        issue,
-        cats,
+    base_ctx = build_journal_template_context(
+        issue=issue,
+        journal=journal,
+        catalogs=cats,
+        users=users,
         event_type=event_type,
         extra_text=extra,
-        title="Обновление задачи",
-        emoji="📝",
     )
 
     try:

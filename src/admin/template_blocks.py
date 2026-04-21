@@ -18,6 +18,7 @@ class SettingDef:
     type: Literal["emoji_select", "text"]
     default: str
     options: list[str] | None = None
+    label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,17 @@ def _normalize_for_match(s: str) -> str:
     s = re.sub(r"\s+", " ", s)
     s = s.replace('"', "'")
     return s.strip()
+
+
+def prepare_body_html_for_decompose(raw: str) -> str:
+    """Лёгкая нормализация перед разбором: типичные отличия после правки «Код»."""
+    s = (raw or "").strip()
+    if not s:
+        return s
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    s = re.sub(r"\|\s*default", "| default", s)
+    s = re.sub(r'default\s*\(\s*""\s*\)', "default('')", s)
+    return s
 
 
 def _sanitize_setting_value(value: str) -> str:
@@ -100,6 +112,7 @@ def _allowed_block_defs(template_name: str) -> list[BlockDef]:
 
 def jinja_to_blocks(body_html: str, template_name: str) -> list[BlockConfig] | None:
     """Best-effort decompose. None если нераспознанный остаток."""
+    body_html = prepare_body_html_for_decompose(body_html)
     if not body_html or not body_html.strip():
         return None
 
@@ -245,7 +258,11 @@ def _sig_task_change_header() -> str:
 def _sig_reminder_header() -> str:
     _q = r"['\"]"
     return (
-        r"<p>\s*<strong>(?P<reminder_header_emoji>.*?)</strong>\s*Напоминание по\s*"
+        r"<p>\s*<strong>\s*\{\{\s*emoji\s*\|\s*default\s*\(\s*"
+        + _q
+        + r"(?P<reminder_header_emoji>.*?)"
+        + _q
+        + r"\s*\)\s*\}\}\s*</strong>\s*Напоминание по\s*"
         r'<a href="\{\{\s*issue_url\s*\|\s*default\s*\(\s*'
         + _q
         + r"(?:.*?)"
@@ -292,9 +309,89 @@ def _sig_reminder_text_block() -> str:
 
 _BLOCK_LIST: list[BlockDef] = [
     BlockDef(
+        id="new_issue_body",
+        label="Тело новой задачи",
+        description="Полный шаблон уведомления о новой задаче",
+        template=read_default_file("tpl_new_issue") or "",
+        variables=[
+            "emoji",
+            "issue_url",
+            "issue_id",
+            "subject",
+            "project_name",
+            "status",
+            "priority",
+            "assignee_name",
+            "version",
+            "due_date",
+            "description_excerpt",
+        ],
+        settings_schema={},
+        signature_pattern="",
+        default_enabled=True,
+        order=0,
+        decompose_full_body=True,
+    ),
+    BlockDef(
+        id="task_change_body",
+        label="Тело изменения задачи",
+        description="Полный шаблон изменений по задаче",
+        template=read_default_file("tpl_task_change") or "",
+        variables=[
+            "emoji",
+            "title",
+            "issue_url",
+            "issue_id",
+            "subject",
+            "project_name",
+            "status",
+            "priority",
+            "assignee_name",
+            "due_date",
+            "event_type",
+            "actor_name",
+            "status_from",
+            "assigned_from",
+            "changes",
+            "extra_changes",
+            "journal_notes",
+            "extra_text",
+        ],
+        settings_schema={},
+        signature_pattern="",
+        default_enabled=True,
+        order=0,
+        decompose_full_body=True,
+    ),
+    BlockDef(
+        id="reminder_body",
+        label="Тело напоминания",
+        description="Полный шаблон напоминания",
+        template=read_default_file("tpl_reminder") or "",
+        variables=[
+            "emoji",
+            "issue_url",
+            "issue_id",
+            "subject",
+            "status",
+            "priority",
+            "assignee_name",
+            "due_date",
+            "reminder_count",
+            "max_reminders",
+            "elapsed_human",
+            "reminder_text",
+        ],
+        settings_schema={},
+        signature_pattern="",
+        default_enabled=True,
+        order=0,
+        decompose_full_body=True,
+    ),
+    BlockDef(
         id="new_issue_header",
         label="Заголовок (новая задача)",
-        description="Эмодзи и ссылка на задачу",
+        description="Префикс в заголовке и ссылка на задачу",
         template=(
             "<p><strong>{{ emoji | default('__new_issue_header_emoji__') }}</strong> "
             "Новая задача <a href=\"{{ issue_url | default('') }}\">"
@@ -303,9 +400,7 @@ _BLOCK_LIST: list[BlockDef] = [
         variables=["emoji", "issue_url", "issue_id"],
         settings_schema={
             "emoji": SettingDef(
-                type="emoji_select",
-                default="🆕",
-                options=["📋", "📝", "🔔", "⚠️", "✅", "❌", "🚀", "🐛", "💡", "📌", "🔧", "📊", "🆕"],
+                type="text", default="", options=None, label="Префикс в заголовке"
             ),
         },
         signature_pattern=_sig_new_issue_header(),
@@ -315,7 +410,7 @@ _BLOCK_LIST: list[BlockDef] = [
     BlockDef(
         id="task_change_header",
         label="Заголовок (изменение)",
-        description="Эмодзи, заголовок и ссылка",
+        description="Префикс, заголовок и ссылка",
         template=(
             "<p><strong>{{ emoji | default('__task_change_header_emoji__') }}</strong> "
             "{{ title | default('__task_change_header_title__') }} "
@@ -325,11 +420,11 @@ _BLOCK_LIST: list[BlockDef] = [
         variables=["emoji", "title", "issue_url", "issue_id"],
         settings_schema={
             "emoji": SettingDef(
-                type="emoji_select",
-                default="📝",
-                options=["📋", "📝", "🔔", "⚠️", "✅", "❌", "🚀", "🐛", "💡", "📌", "🔧", "📊", "🆕"],
+                type="text", default="", options=None, label="Префикс в заголовке"
             ),
-            "title": SettingDef(type="text", default="Изменение"),
+            "title": SettingDef(
+                type="text", default="Изменение", options=None, label="Подпись события в заголовке"
+            ),
         },
         signature_pattern=_sig_task_change_header(),
         default_enabled=True,
@@ -338,17 +433,15 @@ _BLOCK_LIST: list[BlockDef] = [
     BlockDef(
         id="reminder_header",
         label="Заголовок (напоминание)",
-        description="Эмодзи и ссылка",
+        description="Префикс и ссылка",
         template=(
-            "<p><strong>__reminder_header_emoji__</strong> Напоминание по "
+            "<p><strong>{{ emoji | default('__reminder_header_emoji__') }}</strong> Напоминание по "
             "<a href=\"{{ issue_url | default('') }}\">#{{ issue_id | default('') }}</a></p>"
         ),
-        variables=["issue_url", "issue_id"],
+        variables=["emoji", "issue_url", "issue_id"],
         settings_schema={
             "emoji": SettingDef(
-                type="emoji_select",
-                default="⏰",
-                options=["📋", "📝", "🔔", "⏰", "⚠️", "✅", "❌", "🚀", "🐛", "💡", "📌", "🔧", "📊"],
+                type="text", default="", options=None, label="Префикс в заголовке"
             ),
         },
         signature_pattern=_sig_reminder_header(),
@@ -401,18 +494,39 @@ _BLOCK_LIST: list[BlockDef] = [
         template="<p>{{ reminder_text | default('__reminder_text_block_fallback__') }}</p>",
         variables=["reminder_text"],
         settings_schema={
-            "fallback": SettingDef(type="text", default="Задача без движения"),
+            "fallback": SettingDef(
+                type="text", default="Задача без движения", label="Текст по умолчанию"
+            ),
         },
         signature_pattern=_sig_reminder_text_block(),
         default_enabled=True,
         order=2,
     ),
     BlockDef(
+        id="daily_report_body",
+        label="Тело утреннего отчёта",
+        description="Сводка по открытым задачам пользователя",
+        template=read_default_file("tpl_daily_report") or "",
+        variables=[
+            "report_date",
+            "total_open",
+            "info_count",
+            "overdue_count",
+            "info_items_html",
+            "overdue_items_html",
+        ],
+        settings_schema={},
+        signature_pattern="",
+        default_enabled=True,
+        order=0,
+        decompose_full_body=True,
+    ),
+    BlockDef(
         id="digest_body",
         label="Тело дайджеста",
         description="Список накопленных уведомлений",
         template=read_default_file("tpl_digest") or "",
-        variables=["items"],
+        variables=["items", "digest_items"],
         settings_schema={},
         signature_pattern="",
         default_enabled=True,
@@ -424,7 +538,15 @@ _BLOCK_LIST: list[BlockDef] = [
         label="Предпросмотр шаблона",
         description="Одна задача в контексте предпросмотра",
         template=read_default_file("tpl_dry_run") or "",
-        variables=["issue_url", "issue_id", "subject"],
+        variables=[
+            "issue_url",
+            "issue_id",
+            "subject",
+            "project_name",
+            "status",
+            "priority",
+            "assignee_name",
+        ],
         settings_schema={},
         signature_pattern="",
         default_enabled=True,
@@ -437,22 +559,19 @@ BLOCK_REGISTRY: dict[str, BlockDef] = {b.id: b for b in _BLOCK_LIST}
 
 DEFAULT_BLOCK_CONFIGS: dict[str, list[BlockConfig]] = {
     "tpl_new_issue": [
-        BlockConfig("new_issue_header", True, 0, {"emoji": "🆕"}),
-        BlockConfig("issue_subject", True, 1, {}),
-        BlockConfig("new_issue_status", True, 2, {}),
+        BlockConfig("new_issue_body", True, 0, {}),
     ],
     "tpl_task_change": [
-        BlockConfig("task_change_header", True, 0, {"emoji": "📝", "title": "Изменение"}),
-        BlockConfig("issue_subject", True, 1, {}),
-        BlockConfig("task_change_event", True, 2, {}),
+        BlockConfig("task_change_body", True, 0, {}),
     ],
     "tpl_reminder": [
-        BlockConfig("reminder_header", True, 0, {"emoji": "⏰"}),
-        BlockConfig("issue_subject", True, 1, {}),
-        BlockConfig("reminder_text_block", True, 2, {"fallback": "Задача без движения"}),
+        BlockConfig("reminder_body", True, 0, {}),
     ],
     "tpl_digest": [
         BlockConfig("digest_body", True, 0, {}),
+    ],
+    "tpl_daily_report": [
+        BlockConfig("daily_report_body", True, 0, {}),
     ],
     "tpl_dry_run": [
         BlockConfig("dry_run_body", True, 0, {}),
@@ -473,7 +592,12 @@ def registry_json_objects() -> list[dict[str, Any]]:
                 "description": b.description,
                 "variables": list(b.variables),
                 "settings_schema": {
-                    k: {"type": s.type, "default": s.default, "options": s.options}
+                    k: {
+                        "type": s.type,
+                        "default": s.default,
+                        "options": s.options,
+                        "label": s.label,
+                    }
                     for k, s in b.settings_schema.items()
                 },
                 "default_enabled": b.default_enabled,

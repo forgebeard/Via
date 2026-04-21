@@ -17,6 +17,7 @@ from admin.template_blocks import (
     apply_block_settings,
     compile_blocks_to_jinja,
     jinja_to_blocks,
+    prepare_body_html_for_decompose,
     registry_json_objects,
     verify_no_overlap,
 )
@@ -59,6 +60,8 @@ class TestBlockRegistry:
         reg = registry_json_objects()
         assert len(reg) == len(_BLOCK_LIST)
         assert reg[0]["id"]
+        new_issue = next(b for b in reg if b["id"] == "new_issue_header")
+        assert new_issue["settings_schema"]["emoji"]["label"] == "Префикс в заголовке"
 
 
 class TestNoPatternOverlap:
@@ -93,8 +96,8 @@ class TestApplySettings:
     def test_missing_setting_uses_default(self) -> None:
         bdef = BLOCK_REGISTRY["task_change_header"]
         result = apply_block_settings(bdef, {})
-        assert "📝" in result
         assert "Изменение" in result
+        assert "__task_change_header_emoji__" not in result
 
 
 class TestCompileEtalon:
@@ -125,6 +128,19 @@ class TestCompileErrors:
 
 
 class TestDecompose:
+    def test_decompose_tolerates_pipe_default_without_space(self) -> None:
+        blocks = DEFAULT_BLOCK_CONFIGS["tpl_new_issue"]
+        j = compile_blocks_to_jinja(blocks).replace("| default", "|default")
+        assert jinja_to_blocks(j, "tpl_new_issue") is not None
+
+    def test_decompose_double_quoted_empty_default(self) -> None:
+        blocks = DEFAULT_BLOCK_CONFIGS["tpl_new_issue"]
+        j = compile_blocks_to_jinja(blocks).replace("default('')", 'default("")')
+        assert jinja_to_blocks(j, "tpl_new_issue") is not None
+
+    def test_prepare_body_html_for_decompose_strips_crlf(self) -> None:
+        assert "default('')" in prepare_body_html_for_decompose('{{ emoji|default("") }}')
+
     @pytest.mark.parametrize("tpl_name", list(DEFAULT_BLOCK_CONFIGS.keys()))
     def test_roundtrip(self, tpl_name: str) -> None:
         blocks_orig = DEFAULT_BLOCK_CONFIGS[tpl_name]

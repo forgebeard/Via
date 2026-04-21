@@ -1,13 +1,11 @@
-"""Bot content and schedule settings managed from admin panel.
+"""Расписание утреннего отчёта и прочие настройки цикла из админки.
 
-Шаблоны событий через ``NOTIFY_TEMPLATE_*`` в ``cycle_settings`` — legacy-путь
-для старого процессора. Журнальный движок v2 использует ``notification_templates``
-и Jinja-файлы ``templates/bot/tpl_*.html.j2`` (см. ``/api/bot/notification-templates``).
+Тексты Matrix-уведомлений и утреннего отчёта — только через таблицу
+``notification_templates`` и API ``/api/bot/notification-templates`` (tpl v2).
 """
 
 from __future__ import annotations
 
-import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -24,18 +22,7 @@ _KEYS = {
     "daily_report_enabled": "DAILY_REPORT_ENABLED",
     "daily_report_hour": "DAILY_REPORT_HOUR",
     "daily_report_minute": "DAILY_REPORT_MINUTE",
-    "daily_report_html_template": "DAILY_REPORT_HTML_TEMPLATE",
-    "daily_report_plain_template": "DAILY_REPORT_PLAIN_TEMPLATE",
 }
-_NOTIFICATION_TYPES = [
-    "new",
-    "reopened",
-    "info",
-    "reminder",
-    "overdue",
-    "issue_updated",
-    "status_change",
-]
 
 
 def _admin() -> object:
@@ -54,14 +41,6 @@ def _safe_hour(value: int) -> int:
 
 def _safe_minute(value: int) -> int:
     return max(0, min(59, int(value)))
-
-
-def _tpl_key_html(notification_type: str) -> str:
-    return f"NOTIFY_TEMPLATE_HTML_{notification_type.upper()}"
-
-
-def _tpl_key_plain(notification_type: str) -> str:
-    return f"NOTIFY_TEMPLATE_PLAIN_{notification_type.upper()}"
 
 
 async def _upsert_cycle_setting(session: AsyncSession, key: str, value: str) -> None:
@@ -92,15 +71,6 @@ async def bot_content_get(
             in ("1", "true", "on"),
             "daily_report_hour": int(by_key.get(_KEYS["daily_report_hour"], "9") or 9),
             "daily_report_minute": int(by_key.get(_KEYS["daily_report_minute"], "0") or 0),
-            "daily_report_html_template": by_key.get(_KEYS["daily_report_html_template"], ""),
-            "daily_report_plain_template": by_key.get(_KEYS["daily_report_plain_template"], ""),
-            "notification_templates": {
-                nt: {
-                    "html": by_key.get(_tpl_key_html(nt), ""),
-                    "plain": by_key.get(_tpl_key_plain(nt), ""),
-                }
-                for nt in _NOTIFICATION_TYPES
-            },
         },
     }
 
@@ -108,12 +78,9 @@ async def bot_content_get(
 @router.post("/api/bot/content", response_class=JSONResponse)
 async def bot_content_save(
     request: Request,
-    daily_report_enabled: Annotated[bool, Form()] = True,
+    daily_report_enabled: Annotated[str, Form()] = "1",
     daily_report_hour: Annotated[int, Form()] = 9,
     daily_report_minute: Annotated[int, Form()] = 0,
-    daily_report_html_template: Annotated[str, Form()] = "",
-    daily_report_plain_template: Annotated[str, Form()] = "",
-    notification_templates_json: Annotated[str, Form()] = "{}",
     csrf_token: Annotated[str, Form()] = "",
     session: AsyncSession = Depends(get_session),
 ):
@@ -123,8 +90,9 @@ async def bot_content_save(
     if not user or getattr(user, "role", "") != "admin":
         raise HTTPException(403, "Только admin")
 
+    enabled = str(daily_report_enabled).strip().lower() in ("1", "true", "on", "yes")
     await _upsert_cycle_setting(
-        session, _KEYS["daily_report_enabled"], _to_bool_str(bool(daily_report_enabled))
+        session, _KEYS["daily_report_enabled"], _to_bool_str(enabled)
     )
     await _upsert_cycle_setting(
         session, _KEYS["daily_report_hour"], str(_safe_hour(daily_report_hour))
@@ -132,21 +100,5 @@ async def bot_content_save(
     await _upsert_cycle_setting(
         session, _KEYS["daily_report_minute"], str(_safe_minute(daily_report_minute))
     )
-    await _upsert_cycle_setting(
-        session, _KEYS["daily_report_html_template"], (daily_report_html_template or "").strip()
-    )
-    await _upsert_cycle_setting(
-        session, _KEYS["daily_report_plain_template"], (daily_report_plain_template or "").strip()
-    )
-    try:
-        templates_raw = json.loads(notification_templates_json or "{}")
-    except Exception:
-        templates_raw = {}
-    for nt in _NOTIFICATION_TYPES:
-        item = templates_raw.get(nt, {}) if isinstance(templates_raw, dict) else {}
-        html_tpl = (item.get("html", "") if isinstance(item, dict) else "").strip()
-        plain_tpl = (item.get("plain", "") if isinstance(item, dict) else "").strip()
-        await _upsert_cycle_setting(session, _tpl_key_html(nt), html_tpl)
-        await _upsert_cycle_setting(session, _tpl_key_plain(nt), plain_tpl)
     await session.commit()
     return {"ok": True}

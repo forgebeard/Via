@@ -439,7 +439,7 @@ class NotificationType(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
-    emoji: Mapped[str] = mapped_column(String(16), nullable=False, default="📝")
+    emoji: Mapped[str] = mapped_column(String(16), nullable=False, default="")
     label: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

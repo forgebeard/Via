@@ -100,7 +100,7 @@ Via/
 │   └── matrix_send.py           # Отправка в Matrix с retry/backoff
 ├── templates/
 │   ├── admin/                   # Панель администратора
-│   └── bot/notification.html    # Jinja2 шаблон уведомления
+│   └── bot/tpl_*.html.j2        # Именованные шаблоны Matrix / журнала
 ├── alembic/                     # 18 миграций БД
 ├── tests/                       # 31 файл: pytest + Playwright E2E
 └── docs/                        # ADMINISTRATOR_GUIDE, DEPLOYMENT, etc.

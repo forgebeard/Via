@@ -287,9 +287,40 @@
     <!-- Вкладка: Уведомления -->
     <div class="tab-content" id="tab-notifications">
       <script type="application/json" id="block-editor-bootstrap">{{ block_editor_bootstrap_json | safe }}</script>
-      <p id="notifications-save-status" class="muted form-status" aria-live="polite"></p>
-      <section class="service-bubble" id="journal-template-v2-root">
-        <div class="card-title">Шаблоны уведомлений</div>
+      <p id="notifications-save-status" class="muted form-status notifications-save-status" aria-live="polite"></p>
+      <section class="service-bubble" id="daily-report-schedule-root">
+        <div class="daily-report__head">
+          <div class="card-title">Утренний отчёт</div>
+          <label class="switch daily-report__head-switch" for="daily_report_enabled">
+            <input type="checkbox" id="daily_report_enabled" aria-label="Включить утренний отчёт"/>
+            <span class="switch-ui" aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="daily-report__layout">
+          <div class="daily-report__section daily-report__section--template">
+            <div class="card-title daily-report__subhead daily-report__subhead--template">Шаблон сообщения</div>
+            <p id="daily-report-template-missing" class="muted daily-report__template-missing is-hidden" role="status">
+              Шаблон «Утренний отчёт» недоступен в API (обновите сервис до версии с tpl_daily_report).
+            </p>
+            <div id="daily-report-template-root" class="daily-report__template-slot"></div>
+          </div>
+          <div class="daily-report__section daily-report__section--schedule">
+            <div class="card-title daily-report__subhead">Расписание</div>
+            <p class="muted daily-report__submuted">По часовому поясу бота.</p>
+            <div class="daily-report__time-row">
+              <label class="daily-report__time-label" for="daily_report_time">Во сколько
+                <input type="text" id="daily_report_time" pattern="[0-9]{2}:[0-9]{2}" placeholder="09:00" maxlength="5" value="09:00" class="form-control daily-report__time-input"/>
+              </label>
+              <button type="button" class="btn btn-primary" id="daily_report_schedule_save">Сохранить расписание</button>
+            </div>
+            <p id="daily_report_schedule_status" class="muted form-status" aria-live="polite"></p>
+          </div>
+        </div>
+      </section>
+      <section id="journal-template-v2-root">
+        <div class="section-header">
+          <h2>Шаблоны по задачам</h2>
+        </div>
         <p id="tpl-v2-status" class="muted form-status" aria-live="polite"></p>
         <div id="tpl-v2-fields"></div>
       </section>

@@ -16,10 +16,24 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    url = os.environ.get("DATABASE_URL", "")
-    if not url:
-        return config.get_main_option("sqlalchemy.url", "")
-    return sync_database_url_for_alembic(url)
+    """URL для миграций: приоритет ``DATABASE_URL``, иначе ``sqlalchemy.url`` из alembic.ini."""
+    raw = (os.environ.get("DATABASE_URL") or "").strip()
+    if not raw:
+        raw = (config.get_main_option("sqlalchemy.url") or "").strip()
+    if not raw or raw.startswith("driver://"):
+        raise RuntimeError(
+            "Не задан рабочий URL Postgres для Alembic.\n"
+            "  export DATABASE_URL=postgresql://USER:PASS@127.0.0.1:5432/DBNAME\n"
+            "Затем из корня проекта: alembic upgrade head\n"
+            "\n"
+            "(Значение driver:// в alembic.ini — только заглушка и не является драйвером БД.)"
+        )
+    if not raw.startswith(("postgresql://", "postgresql+")):
+        raise RuntimeError(
+            "DATABASE_URL / sqlalchemy.url должен начинаться с postgresql:// "
+            f"или postgresql+… (сейчас: {raw[:80]!r}…)"
+        )
+    return sync_database_url_for_alembic(raw)
 
 
 def run_migrations_offline() -> None:

@@ -125,7 +125,7 @@ flowchart TD
 
 ## 9. Контент цикла бота: API `/api/bot/content`
 
-GET/POST из панели настроек контента (шаблоны, daily report, интервалы, где вынесено в UI) — ключи в **`cycle_settings`**. Бот читает их в **`main`** / hot reload.
+GET/POST — только **расписание утреннего отчёта** (`DAILY_REPORT_ENABLED`, `DAILY_REPORT_HOUR`, `DAILY_REPORT_MINUTE`) в **`cycle_settings`**. Тексты Matrix и утреннего отчёта — через **`/api/bot/notification-templates`** и таблицу **`notification_templates`** (`tpl_*`). Бот читает `cycle_settings` в **`main`** / hot reload.
 
 ---
 

@@ -166,52 +166,41 @@
     });
   })();
 
-  /* --- Notifications settings (Phase 2) --- */
+  /* --- Daily report schedule (cycle_settings via /api/bot/content) --- */
   (function () {
-    var saveBtn = document.getElementById("notifications-save-btn");
-    var status = document.getElementById("notifications-save-status");
     var enabled = document.getElementById("daily_report_enabled");
-    var hour = document.getElementById("daily_report_hour");
-    var minute = document.getElementById("daily_report_minute");
-    var htmlTpl = document.getElementById("daily_report_html_template");
-    var plainTpl = document.getElementById("daily_report_plain_template");
-    if (!saveBtn || !status || !enabled || !hour || !minute || !htmlTpl || !plainTpl) return;
-    var notificationTypes = [
-      "new",
-      "reopened",
-      "info",
-      "reminder",
-      "overdue",
-      "issue_updated",
-      "status_change"
-    ];
+    var timeInput = document.getElementById("daily_report_time");
+    var saveBtn = document.getElementById("daily_report_schedule_save");
+    var status = document.getElementById("daily_report_schedule_status");
+    if (!enabled || !timeInput || !saveBtn || !status) return;
 
-    function getEventTemplateInputs(kind) {
-      return {
-        html: document.getElementById("nt_html_" + kind),
-        plain: document.getElementById("nt_plain_" + kind)
-      };
-    }
-
-    function csrfToken() {
+    function csrfTok() {
       var csrfInput = form.querySelector('input[name="csrf_token"]');
       return csrfInput ? csrfInput.value : "";
     }
 
-    function setBusy(isBusy) {
-      saveBtn.disabled = !!isBusy;
+    function pad2(n) {
+      return n < 10 ? "0" + n : String(n);
     }
 
-    function normalizeInt(raw, min, max, fallback) {
-      var n = parseInt(raw, 10);
-      if (!isFinite(n)) return fallback;
-      if (n < min) return min;
-      if (n > max) return max;
-      return n;
+    function parseTime(value) {
+      var raw = String(value || "").trim();
+      var m = raw.match(/^([0-1]\d|2[0-3]):([0-5]\d)$/);
+      if (!m) return null;
+      return { hour: parseInt(m[1], 10), minute: parseInt(m[2], 10) };
     }
 
-    function loadSettings() {
-      status.textContent = "Загрузка настроек...";
+    function normalizeTime(value, fallbackHour, fallbackMinute) {
+      var parsed = parseTime(value);
+      if (parsed) return parsed;
+      return {
+        hour: Math.max(0, Math.min(23, parseInt(fallbackHour, 10) || 9)),
+        minute: Math.max(0, Math.min(59, parseInt(fallbackMinute, 10) || 0))
+      };
+    }
+
+    function loadSchedule() {
+      status.textContent = "Загрузка расписания…";
       fetch("/api/bot/content", {
         method: "GET",
         credentials: "same-origin",
@@ -222,44 +211,27 @@
       }).then(function (data) {
         var s = (data && data.settings) || {};
         enabled.checked = !!s.daily_report_enabled;
-        hour.value = normalizeInt(s.daily_report_hour, 0, 23, 9);
-        minute.value = normalizeInt(s.daily_report_minute, 0, 59, 0);
-        htmlTpl.value = s.daily_report_html_template || "";
-        plainTpl.value = s.daily_report_plain_template || "";
-        var templates = s.notification_templates || {};
-        notificationTypes.forEach(function (kind) {
-          var pair = getEventTemplateInputs(kind);
-          var tpl = templates[kind] || {};
-          if (pair.html) pair.html.value = tpl.html || "";
-          if (pair.plain) pair.plain.value = tpl.plain || "";
-        });
+        var parsed = normalizeTime("", s.daily_report_hour, s.daily_report_minute);
+        timeInput.value = pad2(parsed.hour) + ":" + pad2(parsed.minute);
         status.textContent = "";
       }).catch(function () {
-        status.textContent = "Не удалось загрузить настройки уведомлений.";
+        status.textContent = "Не удалось загрузить расписание.";
       });
     }
 
     saveBtn.addEventListener("click", function () {
-      setBusy(true);
-      status.textContent = "Сохранение...";
-
+      var parsed = parseTime(timeInput.value);
+      if (!parsed) {
+        status.textContent = "Введите время в формате ЧЧ:ММ.";
+        return;
+      }
+      timeInput.value = pad2(parsed.hour) + ":" + pad2(parsed.minute);
+      status.textContent = "Сохранение…";
       var fd = new FormData();
-      fd.append("csrf_token", csrfToken());
+      fd.append("csrf_token", csrfTok());
       fd.append("daily_report_enabled", enabled.checked ? "true" : "false");
-      fd.append("daily_report_hour", String(normalizeInt(hour.value, 0, 23, 9)));
-      fd.append("daily_report_minute", String(normalizeInt(minute.value, 0, 59, 0)));
-      fd.append("daily_report_html_template", htmlTpl.value || "");
-      fd.append("daily_report_plain_template", plainTpl.value || "");
-      var templatesPayload = {};
-      notificationTypes.forEach(function (kind) {
-        var pair = getEventTemplateInputs(kind);
-        templatesPayload[kind] = {
-          html: pair.html ? (pair.html.value || "") : "",
-          plain: pair.plain ? (pair.plain.value || "") : ""
-        };
-      });
-      fd.append("notification_templates_json", JSON.stringify(templatesPayload));
-
+      fd.append("daily_report_hour", String(parsed.hour));
+      fd.append("daily_report_minute", String(parsed.minute));
       fetch("/api/bot/content", {
         method: "POST",
         body: fd,
@@ -268,21 +240,22 @@
       }).then(function (resp) {
         if (!resp.ok) throw new Error("save_failed");
         return resp.json();
-      }).then(function (data) {
-        if (data && data.ok) {
-          status.textContent = "Настройки уведомлений сохранены.";
-          showToast("Настройки уведомлений сохранены", false);
+      }).then(function (d) {
+        if (d && d.ok) {
+          status.textContent = "Расписание сохранено.";
+          showToast("Расписание утреннего отчёта сохранено", false);
         } else {
           status.textContent = "Ошибка сохранения.";
         }
       }).catch(function () {
         status.textContent = "Ошибка сети при сохранении.";
-      }).finally(function () {
-        setBusy(false);
       });
     });
 
-    loadSettings();
+    window.addEventListener("via-settings-tab", function (ev) {
+      if (ev.detail && ev.detail.tab === "notifications") loadSchedule();
+    });
+    if (window.location.hash === "#notifications") loadSchedule();
   })();
 
   /* --- Journal engine Jinja2 templates (notification_templates) --- */
@@ -290,6 +263,9 @@
     var root = document.getElementById("tpl-v2-fields");
     var statusEl = document.getElementById("tpl-v2-status");
     if (!root || !statusEl) return;
+    var tplScope = document.getElementById("tab-notifications") || document;
+    void document.getElementById("daily-report-template-root");
+    void document.getElementById("daily-report-template-missing");
 
     function csrfToken() {
       var csrfInput = form.querySelector('input[name="csrf_token"]');
@@ -308,6 +284,8 @@
           });
         } catch (ignore) {}
       }
+      var dailyRoot = document.getElementById("daily-report-template-root");
+      var dailyMissing = document.getElementById("daily-report-template-missing");
       fetch("/api/bot/notification-templates", {
         method: "GET",
         credentials: "same-origin",
@@ -316,23 +294,49 @@
         if (!resp.ok) throw new Error("load_failed");
         return resp.json();
       }).then(function (data) {
-        root.querySelectorAll(".block-editor-root").forEach(function (el) {
+        tplScope.querySelectorAll(".block-editor-root").forEach(function (el) {
           if (el._blockEditor && typeof el._blockEditor.destroy === "function") {
             el._blockEditor.destroy();
           }
           el._blockEditor = null;
         });
         root.innerHTML = "";
+        if (dailyRoot) dailyRoot.innerHTML = "";
+        var hadDailyTpl = false;
         (data.templates || []).forEach(function (tpl) {
           var displayLabel = tpl.display_name || tpl.name;
+          var isDailyTemplate = tpl.name === "tpl_daily_report";
+          var isEditorTemplate = !!editorNames[tpl.name];
           var wrap = document.createElement("div");
-          wrap.className = "field";
-          var title = document.createElement("div");
-          title.className = "card-title";
-          title.style.marginTop = "0.5rem";
-          title.textContent = displayLabel;
-          wrap.appendChild(title);
-          if (editorNames[tpl.name]) {
+          wrap.className = isDailyTemplate ? "daily-report__editor-wrap" : "service-bubble tpl-v2-template-card";
+          if (!isDailyTemplate && !isEditorTemplate) {
+            var title = document.createElement("div");
+            title.className = "card-title tpl-v2-card__title";
+            title.textContent = displayLabel;
+            wrap.appendChild(title);
+          }
+          if (isEditorTemplate) {
+            if (!isDailyTemplate) {
+              var head = document.createElement("div");
+              head.className = "daily-report__head";
+              var headTitle = document.createElement("div");
+              headTitle.className = "card-title";
+              headTitle.textContent = displayLabel;
+              head.appendChild(headTitle);
+              var switchLabel = document.createElement("label");
+              switchLabel.className = "switch daily-report__head-switch";
+              var switchId = "tpl_v2_enabled_" + tpl.name.replace(/[^a-zA-Z0-9_-]/g, "_");
+              switchLabel.setAttribute("for", switchId);
+              switchLabel.innerHTML =
+                '<input type="checkbox" id="' +
+                switchId +
+                '" class="tpl-v2-template-switch" data-template-name="' +
+                tpl.name +
+                '" aria-label="Переключить шаблон"/>' +
+                '<span class="switch-ui" aria-hidden="true"></span>';
+              head.appendChild(switchLabel);
+              wrap.appendChild(head);
+            }
             var bed = document.createElement("div");
             bed.className = "block-editor-root";
             bed.setAttribute("data-template-name", tpl.name);
@@ -343,6 +347,15 @@
               editor.init().catch(function (err) {
                 console.error("BlockEditor init failed", err);
                 bed.innerHTML = "<p class=\"error\">Не удалось загрузить конструктор</p>";
+              }).finally(function () {
+                var tplSwitch = wrap.querySelector('.tpl-v2-template-switch[data-template-name="' + tpl.name + '"]');
+                if (!tplSwitch || !bed._blockEditor) return;
+                tplSwitch.checked = !!bed._blockEditor.templateEnabled;
+                tplSwitch.addEventListener("change", function () {
+                  if (bed._blockEditor && typeof bed._blockEditor.onTemplateToggle === "function") {
+                    bed._blockEditor.onTemplateToggle(!!tplSwitch.checked);
+                  }
+                });
               });
             } else {
               bed.innerHTML = "<p class=\"error\">Конструктор блоков не загружен</p>";
@@ -359,8 +372,7 @@
               : (tpl.default_html || "");
             wrap.appendChild(ta);
             var footer = document.createElement("div");
-            footer.className = "block-editor__footer";
-            footer.style.marginTop = "0.5rem";
+            footer.className = "block-editor__footer tpl-v2-card__footer";
             var st = document.createElement("span");
             st.className = "block-editor__status";
             footer.appendChild(st);
@@ -387,20 +399,29 @@
             footer.appendChild(actions);
             wrap.appendChild(footer);
             var pre = document.createElement("pre");
-            pre.className = "tpl-v2-preview-out muted";
+            pre.className = "tpl-v2-preview-out muted tpl-v2-preview-pre";
             pre.setAttribute("data-name", tpl.name);
-            pre.style.whiteSpace = "pre-wrap";
-            pre.style.maxHeight = "12rem";
-            pre.style.overflow = "auto";
             wrap.appendChild(pre);
           }
-          root.appendChild(wrap);
+          var mount = root;
+          if (isDailyTemplate && dailyRoot) {
+            mount = dailyRoot;
+            hadDailyTpl = true;
+          }
+          mount.appendChild(wrap);
         });
-        root.querySelectorAll(".tpl-v2-save").forEach(function (btn) {
+        if (dailyMissing) {
+          if (hadDailyTpl || !dailyRoot) {
+            dailyMissing.classList.add("is-hidden");
+          } else {
+            dailyMissing.classList.remove("is-hidden");
+          }
+        }
+        tplScope.querySelectorAll(".tpl-v2-save").forEach(function (btn) {
           btn.addEventListener("click", function () {
             var name = btn.getAttribute("data-name");
             var label = btn.getAttribute("data-display-label") || name;
-            var ta = root.querySelector('.tpl-v2-html[data-name="' + name + '"]');
+            var ta = tplScope.querySelector('.tpl-v2-html[data-name="' + name + '"]');
             var fd = new FormData();
             fd.append("csrf_token", csrfToken());
             fd.append("body_html", ta ? ta.value : "");
@@ -420,7 +441,7 @@
             });
           });
         });
-        root.querySelectorAll(".tpl-v2-reset").forEach(function (btn) {
+        tplScope.querySelectorAll(".tpl-v2-reset").forEach(function (btn) {
           btn.addEventListener("click", function () {
             var name = btn.getAttribute("data-name");
             var label = btn.getAttribute("data-display-label") || name;
@@ -439,11 +460,11 @@
             });
           });
         });
-        root.querySelectorAll(".tpl-v2-preview").forEach(function (btn) {
+        tplScope.querySelectorAll(".tpl-v2-preview").forEach(function (btn) {
           btn.addEventListener("click", function () {
             var name = btn.getAttribute("data-name");
-            var ta = root.querySelector('.tpl-v2-html[data-name="' + name + '"]');
-            var pre = root.querySelector('.tpl-v2-preview-out[data-name="' + name + '"]');
+            var ta = tplScope.querySelector('.tpl-v2-html[data-name="' + name + '"]');
+            var pre = tplScope.querySelector('.tpl-v2-preview-out[data-name="' + name + '"]');
             fetch("/api/bot/notification-templates/preview", {
               method: "POST",
               credentials: "same-origin",

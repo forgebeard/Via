@@ -27,7 +27,7 @@ def _safe_html_or_empty(value: str) -> str:
     return safe_html(value or "")
 
 
-def _render_daily_report_content(
+def build_daily_report_template_context(
     *,
     report_date: str,
     total_open: int,
@@ -35,49 +35,19 @@ def _render_daily_report_content(
     overdue_count: int,
     info_items_html: str,
     overdue_items_html: str,
-) -> tuple[str, str]:
-    from bot.config_state import CATALOGS
+) -> dict[str, Any]:
+    """Контекст Jinja для ``tpl_daily_report`` (Matrix утренний отчёт).
 
-    html_tpl = (CATALOGS.cycle_settings.get("DAILY_REPORT_HTML_TEMPLATE") or "").strip()
-    plain_tpl = (CATALOGS.cycle_settings.get("DAILY_REPORT_PLAIN_TEMPLATE") or "").strip()
-
-    if not html_tpl:
-        html_tpl = (
-            "<h3>📅 Отчёт на {date}</h3>"
-            "<p><strong>Открытых задач:</strong> {total_open}</p>"
-            "<p><strong>Информация предоставлена:</strong> {info_count}</p>"
-            "{info_items_html}"
-            "{overdue_items_html}"
-        )
-    if not plain_tpl:
-        plain_tpl = "Отчёт {date}: {total_open} задач, {overdue_count} просрочено"
-
-    kwargs = {
-        "date": report_date,
+    Поля совпадают с переменными в ``templates/bot/tpl_daily_report.html.j2``.
+    """
+    return {
+        "report_date": report_date,
         "total_open": total_open,
         "info_count": info_count,
         "overdue_count": overdue_count,
         "info_items_html": info_items_html,
         "overdue_items_html": overdue_items_html,
     }
-    try:
-        html = html_tpl.format(**kwargs)
-    except Exception:
-        logger.warning("daily_report_html_template_invalid_format; fallback to default")
-        html = (
-            "<h3>📅 Отчёт на {date}</h3>"
-            "<p><strong>Открытых задач:</strong> {total_open}</p>"
-            "<p><strong>Информация предоставлена:</strong> {info_count}</p>"
-            "{info_items_html}"
-            "<p><strong>Просроченных:</strong> {overdue_count}</p>"
-            "{overdue_items_html}"
-        ).format(**kwargs)
-    try:
-        plain = plain_tpl.format(**kwargs)
-    except Exception:
-        logger.warning("daily_report_plain_template_invalid_format; fallback to default")
-        plain = "Отчёт {date}: {total_open} задач, {overdue_count} просрочено".format(**kwargs)
-    return html, plain
 
 
 async def check_all_users(
@@ -402,99 +372,112 @@ async def daily_report(
     from bot.config_hot_reload import refresh_runtime_lists_from_db
     from bot.config_state import USERS
     from bot.logic import STATUS_INFO_PROVIDED, plural_days, should_notify
-    from bot.sender import resolve_room
+    from bot.sender import _strip_html_to_plain, resolve_room
+    from bot.template_loader import render_named_template
     from database.session import get_session_factory
     from matrix_send import room_send_with_retry
     from preferences import can_notify
 
-    await refresh_runtime_lists_from_db(get_session_factory())
+    session_factory = get_session_factory()
+    await refresh_runtime_lists_from_db(session_factory)
 
     logger.info("📊 Утренний отчёт...")
 
-    for user_cfg in USERS:
-        if not should_notify(user_cfg, "all"):
-            continue
-        if not can_notify(user_cfg, priority="", context="personal"):
-            logger.debug(
-                "Утренний отчёт: пропуск (время/DND), user %s",
-                user_cfg.get("redmine_id"),
-            )
-            continue
-
-        uid = user_cfg["redmine_id"]
-        room_raw = user_cfg["room"]
-        rm_user = redmine_client_for_user(redmine, user_cfg)
-
-        # Резолвим MXID → room_id через кеш (чтобы не создавать дубликат DM)
-        try:
-            room = await resolve_room(client, room_raw)
-        except Exception as e:
-            logger.error(
-                "❌ Не удалось резолвить комнату для user %s (%s): %s",
-                uid,
-                room_raw,
-                e,
-            )
-            continue
-
-        try:
-            issues = list(rm_user.issue.filter(assigned_to_id=uid, status_id="open"))
-        except Exception as e:
-            logger.error("❌ Redmine (%s, user %s): %s", "утренний отчёт", uid, e, exc_info=True)
-            continue
-
-        today = today_tz()
-        info_provided = [i for i in issues if i.status.name == STATUS_INFO_PROVIDED]
-        overdue = sorted(
-            [i for i in issues if i.due_date and i.due_date < today], key=lambda i: i.due_date
-        )
-
-        info_items_html = ""
-        if info_provided:
-            info_items_html = "<ul>"
-            for i in info_provided[:10]:
-                info_items_html += (
-                    f'<li><a href="{redmine_url}/issues/{i.id}">#{i.id}</a> '
-                    f"— {_safe_html_or_empty(i.subject)}</li>"
+    async with session_factory() as db_session:
+        for user_cfg in USERS:
+            if not should_notify(user_cfg, "all"):
+                continue
+            if not can_notify(user_cfg, priority="", context="personal"):
+                logger.debug(
+                    "Утренний отчёт: пропуск (время/DND), user %s",
+                    user_cfg.get("redmine_id"),
                 )
-            info_items_html += "</ul>"
-            if len(info_provided) > 10:
-                info_items_html += f"<p><em>...и ещё {len(info_provided) - 10}</em></p>"
+                continue
 
-        overdue_items_html = ""
-        if overdue:
-            overdue_items_html = "<ul>"
-            for i in overdue[:10]:
-                days = (today - i.due_date).days
-                overdue_items_html += (
-                    f'<li><a href="{redmine_url}/issues/{i.id}">#{i.id}</a> '
-                    f"— {_safe_html_or_empty(i.subject)} ({plural_days(days)})</li>"
+            uid = user_cfg["redmine_id"]
+            room_raw = user_cfg["room"]
+            rm_user = redmine_client_for_user(redmine, user_cfg)
+
+            # Резолвим MXID → room_id через кеш (чтобы не создавать дубликат DM)
+            try:
+                room = await resolve_room(client, room_raw)
+            except Exception as e:
+                logger.error(
+                    "❌ Не удалось резолвить комнату для user %s (%s): %s",
+                    uid,
+                    room_raw,
+                    e,
                 )
-            overdue_items_html += "</ul>"
+                continue
 
-        html, plain = _render_daily_report_content(
-            report_date=today.strftime("%d.%m.%Y"),
-            total_open=len(issues),
-            info_count=len(info_provided),
-            overdue_count=len(overdue),
-            info_items_html=info_items_html,
-            overdue_items_html=overdue_items_html,
-        )
+            try:
+                issues = list(rm_user.issue.filter(assigned_to_id=uid, status_id="open"))
+            except Exception as e:
+                logger.error("❌ Redmine (%s, user %s): %s", "утренний отчёт", uid, e, exc_info=True)
+                continue
 
-        try:
-            await room_send_with_retry(
-                client,
-                room,
-                {
-                    "msgtype": "m.text",
-                    "body": plain,
-                    "format": "org.matrix.custom.html",
-                    "formatted_body": html,
-                },
+            today = today_tz()
+            info_provided = [i for i in issues if i.status.name == STATUS_INFO_PROVIDED]
+            overdue = sorted(
+                [i for i in issues if i.due_date and i.due_date < today], key=lambda i: i.due_date
             )
-            logger.info("📊 Отчёт user %s: %d задач", uid, len(issues))
-        except Exception as e:
-            logger.error("❌ Отправка отчёта user %s: %s", uid, e)
+
+            info_items_html = ""
+            if info_provided:
+                info_items_html = "<ul>"
+                for i in info_provided[:10]:
+                    info_items_html += (
+                        f'<li><a href="{redmine_url}/issues/{i.id}">#{i.id}</a> '
+                        f"— {_safe_html_or_empty(i.subject)}</li>"
+                    )
+                info_items_html += "</ul>"
+                if len(info_provided) > 10:
+                    info_items_html += f"<p><em>...и ещё {len(info_provided) - 10}</em></p>"
+
+            overdue_items_html = ""
+            if overdue:
+                overdue_items_html = "<ul>"
+                for i in overdue[:10]:
+                    days = (today - i.due_date).days
+                    overdue_items_html += (
+                        f'<li><a href="{redmine_url}/issues/{i.id}">#{i.id}</a> '
+                        f"— {_safe_html_or_empty(i.subject)} ({plural_days(days)})</li>"
+                    )
+                overdue_items_html += "</ul>"
+
+            ctx = build_daily_report_template_context(
+                report_date=today.strftime("%d.%m.%Y"),
+                total_open=len(issues),
+                info_count=len(info_provided),
+                overdue_count=len(overdue),
+                info_items_html=info_items_html,
+                overdue_items_html=overdue_items_html,
+            )
+            try:
+                html, plain_opt = await render_named_template(
+                    db_session, "tpl_daily_report", ctx
+                )
+            except Exception as e:
+                logger.error(
+                    "❌ Рендер tpl_daily_report для user %s: %s", uid, e, exc_info=True
+                )
+                continue
+            plain = (plain_opt or "").strip() or _strip_html_to_plain(html)
+
+            try:
+                await room_send_with_retry(
+                    client,
+                    room,
+                    {
+                        "msgtype": "m.text",
+                        "body": plain,
+                        "format": "org.matrix.custom.html",
+                        "formatted_body": html,
+                    },
+                )
+                logger.info("📊 Отчёт user %s: %d задач", uid, len(issues))
+            except Exception as e:
+                logger.error("❌ Отправка отчёта user %s: %s", uid, e)
 
 
 async def cleanup_state_files(

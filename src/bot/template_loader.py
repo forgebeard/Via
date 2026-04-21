@@ -15,7 +15,14 @@ from database.notification_template_repo import get_template_row
 logger = logging.getLogger("redmine_bot")
 
 _TEMPLATE_NAMES = frozenset(
-    ("tpl_new_issue", "tpl_task_change", "tpl_reminder", "tpl_digest", "tpl_dry_run")
+    (
+        "tpl_new_issue",
+        "tpl_task_change",
+        "tpl_reminder",
+        "tpl_digest",
+        "tpl_dry_run",
+        "tpl_daily_report",
+    )
 )
 
 

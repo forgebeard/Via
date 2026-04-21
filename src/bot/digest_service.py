@@ -8,6 +8,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot.sender import REDMINE_URL
 from bot.sender import resolve_room
 
 # tpl_digest — отдельная модель контекста (только ``items``), не ``build_issue_context``.
@@ -30,6 +31,69 @@ def _plain_from_html(html: str) -> str:
     return " ".join(t.split()).strip() or "Дайджест"
 
 
+def _event_label(event_type: str) -> str:
+    mapping = {
+        "comment": "Комментарий",
+        "status_change": "Смена статуса",
+        "assigned": "Назначение",
+        "reassigned": "Переназначение",
+        "unassigned": "Снятие исполнителя",
+        "watcher_added": "Добавлен наблюдатель",
+        "watcher_removed": "Удалён наблюдатель",
+        "reminder": "Напоминание",
+        "issue_updated": "Обновление",
+    }
+    return mapping.get(str(event_type or ""), str(event_type or "Обновление"))
+
+
+def _issue_url(issue_id: int) -> str:
+    base = (REDMINE_URL or "").rstrip("/")
+    if not base:
+        return ""
+    return f"{base}/issues/{issue_id}"
+
+
+def _aggregate_digest_items(rows: list[Any]) -> list[dict[str, Any]]:
+    # Spike decision (phase 3): strategy A.
+    # Используем только поля pending_digests без миграции схемы и без N+1 к Redmine.
+    by_issue: dict[int, dict[str, Any]] = {}
+    for r in rows:
+        iid = int(r.issue_id)
+        item = by_issue.get(iid)
+        if item is None:
+            item = {
+                "issue_id": iid,
+                "subject": str(r.issue_subject or ""),
+                "events": [],
+                "changes": [],
+                "comments": [],
+                "reminders_count": 0,
+                "status_name": "",
+                "assigned_to": "",
+                "url": _issue_url(iid),
+            }
+            by_issue[iid] = item
+        event_type = str(r.event_type or "")
+        if event_type:
+            item["events"].append(event_type)
+            item["changes"].append({"field": "Событие", "old": "—", "new": _event_label(event_type)})
+        if event_type == "reminder":
+            item["reminders_count"] = int(item["reminders_count"]) + 1
+        notes = str(r.journal_notes or "").strip()
+        if notes:
+            item["comments"].append(notes)
+        status_name = str(r.status_name or "").strip()
+        if status_name:
+            item["status_name"] = status_name
+        assigned_to = str(r.assigned_to or "").strip()
+        if assigned_to:
+            item["assigned_to"] = assigned_to
+    for item in by_issue.values():
+        item["extra_changes"] = max(0, len(item["changes"]) - 6)
+        item["changes"] = item["changes"][:6]
+    return list(by_issue.values())
+
+
 async def drain_pending_digests(
     client: Any,
     session: AsyncSession,
@@ -50,23 +114,20 @@ async def drain_pending_digests(
         rows = await list_digest_rows_for_users(session, [bot_uid])
         if not rows:
             continue
-        items: list[dict[str, Any]] = []
         row_ids: list[int] = []
-        by_issue: dict[int, dict[str, Any]] = {}
         for r in rows:
             row_ids.append(int(r.id))
-            iid = int(r.issue_id)
-            if iid not in by_issue:
-                by_issue[iid] = {
-                    "issue_id": iid,
-                    "subject": r.issue_subject,
-                    "events": [],
-                }
-            by_issue[iid]["events"].append(str(r.event_type))
-        items = list(by_issue.values())
+        items = _aggregate_digest_items(rows)
         content: dict[str, Any] = {}
         try:
-            html, plain_tpl = await render_named_template(session, "tpl_digest", {"items": items})
+            html, plain_tpl = await render_named_template(
+                session,
+                "tpl_digest",
+                {
+                    "items": items,
+                    "digest_items": items,
+                },
+            )
             plain = plain_tpl if plain_tpl is not None else _plain_from_html(html)
             content = {
                 "msgtype": "m.text",

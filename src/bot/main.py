@@ -487,12 +487,10 @@ async def main() -> None:
 
     apply_service_timezone_to_bot_logger(BOT_TIMEZONE)
 
-    # ── Инициализация sender template ──
+    # ── Инициализация sender (REDMINE_URL для ссылок в шаблонах) ──
     import bot.sender as _sender_mod
-    from bot.sender import init_template
 
     _sender_mod.REDMINE_URL = REDMINE_URL
-    init_template(_ROOT)
 
     # ── Инициализация processor config ──
     import bot.processor as _proc_mod

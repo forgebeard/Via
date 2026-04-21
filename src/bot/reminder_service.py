@@ -28,6 +28,21 @@ def _utc(dt: datetime) -> datetime:
     return dt.astimezone(UTC)
 
 
+def _elapsed_human(issue: Any, now_u: datetime) -> str:
+    last_activity = getattr(issue, "updated_on", None) or getattr(issue, "created_on", None)
+    if not isinstance(last_activity, datetime):
+        return ""
+    delta = now_u - _utc(last_activity)
+    seconds = max(0, int(delta.total_seconds()))
+    if seconds < 60:
+        return "меньше минуты"
+    hours, rem = divmod(seconds, 3600)
+    minutes = rem // 60
+    if hours:
+        return f"{hours} ч {minutes} мин"
+    return f"{minutes} мин"
+
+
 async def update_reminder_timers(
     session: AsyncSession,
     issue: Any,
@@ -174,12 +189,16 @@ async def process_reminders(
             continue
 
         # tpl_reminder: полный issue-контекст + поля напоминания (не путать с tpl_digest — отдельная модель).
+        reminder_idx = int(st.reminder_count or 0) + 1
         base_ctx = build_issue_context(
             issue,
             catalogs,
             reminder_text="Задача без движения",
             title="Напоминание",
-            emoji="⏰",
+            emoji="",
+            reminder_count=reminder_idx,
+            max_reminders=max_rem,
+            elapsed_human=_elapsed_human(issue, now_u),
         )
         plain = f"#{issue.id} {base_ctx['subject']}: напоминание"
 

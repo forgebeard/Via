@@ -52,14 +52,14 @@ STATUS_NAMES = {
 PRIORITY_NAMES: dict[str, str] = {}
 PRIORITY_EMERGENCY = "Аварийный"
 NOTIFICATION_TYPES = {
-    "new": ("🆕", "Новая задача"),
-    "reopened": ("♻️", "Задача открыта повторно"),
-    "info": ("ℹ️", "Информация предоставлена"),
-    "reminder": ("⏰", "Напоминание"),
-    "overdue": ("⚠️", "Просроченная задача"),
-    "issue_updated": ("📝", "Задача обновлена"),
-    "status_change": ("🔁", "Смена статуса"),
-    "daily_report": ("📊", "Утренний отчёт"),
+    "new": ("", "Новая задача"),
+    "reopened": ("", "Задача открыта повторно"),
+    "info": ("", "Информация предоставлена"),
+    "reminder": ("", "Напоминание"),
+    "overdue": ("", "Просроченная задача"),
+    "issue_updated": ("", "Задача обновлена"),
+    "status_change": ("", "Смена статуса"),
+    "daily_report": ("", "Утренний отчёт"),
 }
 
 FIELD_NAMES: dict[str, str | None] = {

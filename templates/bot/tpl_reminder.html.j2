@@ -1,3 +1,8 @@
-<p><strong>⏰</strong> Напоминание по <a href="{{ issue_url | default('') }}">#{{ issue_id | default('') }}</a></p>
-<p>{{ subject | default('') }}</p>
-<p>{{ reminder_text | default('Задача без движения') }}</p>
+<p><strong>{{ emoji | default('') }}</strong> Напоминание{% if reminder_count | default(0) > 0 and max_reminders | default(0) > 0 %} ({{ reminder_count }}/{{ max_reminders }}){% endif %} по <a href="{{ issue_url | default('') }}">#{{ issue_id | default('') }}</a></p>
+<p><strong>{{ subject | default('') }}</strong></p>
+<p>Статус «{{ status | default('—') }}»{% if elapsed_human | default('') %} уже {{ elapsed_human }}{% endif %}</p>
+<p>Приоритет: {{ priority | default('—') }}</p>
+{% if not assignee_name | default('') %}<p>Никто не назначен исполнителем.</p>{% endif %}
+{% if due_date | default('') %}<p>Дедлайн: {{ due_date }}</p>{% endif %}
+{% if reminder_text | default('') %}<p>{{ reminder_text }}</p>{% endif %}
+<p><a href="{{ issue_url | default('') }}">Открыть задачу</a></p>

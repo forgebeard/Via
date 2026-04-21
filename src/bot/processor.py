@@ -155,7 +155,13 @@ async def check_user_issues(
                         f"→ <strong>{_safe_html(issue.status.name)}</strong>"
                     )
                     await send_safe(
-                        client, issue, user_cfg, room, "status_change", extra_text=extra
+                        client,
+                        issue,
+                        user_cfg,
+                        room,
+                        "status_change",
+                        extra_text=extra,
+                        db_session=db_session,
                     )
                 sent[iid]["status"] = issue.status.name
                 changed_sent.add(iid)
@@ -199,6 +205,7 @@ async def check_user_issues(
                             user_cfg,
                             action.room_id,
                             action.notification_kind,
+                            db_session=db_session,
                         )
                 sent[iid] = {
                     "notified_at": now.isoformat(),
@@ -224,7 +231,9 @@ async def check_user_issues(
                     if elapsed_group >= GROUP_REPEAT_SECONDS:
                         for gr in group_rooms:
                             if should_notify(_cfg_for_room(user_cfg, gr), "new"):
-                                await send_safe(client, issue, user_cfg, gr, "new")
+                                await send_safe(
+                                    client, issue, user_cfg, gr, "new", db_session=db_session
+                                )
                         sent[iid]["group_last_notified_at"] = now.isoformat()
                         changed_sent.add(iid)
 
@@ -241,7 +250,14 @@ async def check_user_issues(
                     sent_notified_at_iso=sent.get(iid, {}).get("notified_at"),
                 )
                 if info_decision and info_decision.notify_kind:
-                    await send_safe(client, issue, user_cfg, room, info_decision.notify_kind)
+                    await send_safe(
+                        client,
+                        issue,
+                        user_cfg,
+                        room,
+                        info_decision.notify_kind,
+                        db_session=db_session,
+                    )
                 if info_decision and info_decision.create_sent_state:
                     sent[iid] = {
                         "notified_at": now.isoformat(),
@@ -268,7 +284,9 @@ async def check_user_issues(
                 last_notified_iso=overdue_n.get(iid, {}).get("last_notified"),
             )
             if overdue_decision.should_send:
-                await send_safe(client, issue, user_cfg, room, "overdue")
+                await send_safe(
+                    client, issue, user_cfg, room, "overdue", db_session=db_session
+                )
             if overdue_decision.should_update_state:
                 overdue_n[iid] = {"last_notified": now.isoformat()}
                 changed_overdue.add(iid)
@@ -294,7 +312,15 @@ async def check_user_issues(
                 combined = "<br/>".join(_safe_html(d) for d in tail)
                 if len(descs) > 5:
                     combined = f"<em>...и ещё {len(descs) - 5}</em><br/>" + combined
-                await send_safe(client, issue, user_cfg, room, "issue_updated", extra_text=combined)
+                await send_safe(
+                    client,
+                    issue,
+                    user_cfg,
+                    room,
+                    "issue_updated",
+                    extra_text=combined,
+                    db_session=db_session,
+                )
             if journal_decision.should_update_last_seen:
                 journals[iid] = {"last_journal_id": max_id}
                 changed_journals.add(iid)

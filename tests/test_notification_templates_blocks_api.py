@@ -131,13 +131,11 @@ def test_decompose_body_roundtrip(client: TestClient, _admin_db: None) -> None:
             "template_name": "tpl_task_change",
             "blocks": [
                 {
-                    "block_id": "task_change_header",
+                    "block_id": "task_change_body",
                     "enabled": True,
                     "order": 0,
-                    "settings": {"emoji": "📝", "title": "Изменение"},
-                },
-                {"block_id": "issue_subject", "enabled": True, "order": 1, "settings": {}},
-                {"block_id": "task_change_event", "enabled": True, "order": 2, "settings": {}},
+                    "settings": {},
+                }
             ],
         },
         headers=_json_headers(client),

@@ -1,27 +1,53 @@
 """Отправка сообщений в Matrix.
 
-Формирование HTML из Jinja2-шаблона, отправка с retry.
+Формирование тела сообщения через именованные tpl-шаблоны, отправка с retry.
 """
 
 from __future__ import annotations
 
 import asyncio
+import html as html_module
 import logging
+import re
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from jinja2 import Environment, FileSystemLoader
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.logic import NOTIFICATION_TYPES, get_version_name, plural_days
+from bot.logic import NOTIFICATION_TYPES, plural_days
+from bot.notification_template_routing import EVENT_TO_TEMPLATE
 from bot.time_context import notify_context_for_room
 from matrix_send import room_send_with_retry
 from preferences import can_notify
-from utils import safe_html
 
 if TYPE_CHECKING:
     from nio import AsyncClient
     from redminelib.resources import Issue
 
 logger = logging.getLogger("redmine_bot")
+
+
+def _strip_html_to_plain(html: str) -> str:
+    """Грубое снятие тегов для Matrix body при отсутствии body_plain в БД."""
+    t = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", html)
+    t = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", t)
+    t = re.sub(r"<[^>]+>", " ", t)
+    return html_module.unescape(re.sub(r"\s+", " ", t)).strip()
+
+
+def _elapsed_human_since(dt: datetime | None) -> str:
+    if not isinstance(dt, datetime):
+        return ""
+    src = dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+    now_u = datetime.now(UTC)
+    seconds = max(0, int((now_u - src.astimezone(UTC)).total_seconds()))
+    if seconds < 60:
+        return "меньше минуты"
+    hours, rem = divmod(seconds, 3600)
+    minutes = rem // 60
+    if hours:
+        return f"{hours} ч {minutes} мин"
+    return f"{minutes} мин"
 
 # ── Config (заполняется из main.py при старте) ──────────────────────────────
 
@@ -35,10 +61,6 @@ DM_CREATE_TIMEOUT: int = 60
 
 DM_CREATE_DELAY: float = 5.0
 
-# ── Template ─────────────────────────────────────────────────────────────────
-
-_notification_template = None
-
 # ── Кеш MXID → room_id (чтобы не искать/создавать DM каждый раз) ────────────
 
 _mxid_to_room_cache: dict[str, str] = {}
@@ -46,66 +68,6 @@ _mxid_to_room_cache: dict[str, str] = {}
 # ── Множество MXID, для которых создание DM провалилось в текущем цикле ─────
 
 _dm_failed: set[str] = set()
-
-
-def init_template(root) -> None:
-    """Инициализация Jinja2-шаблона (вызывается один раз при старте)."""
-    global _notification_template
-    env = Environment(
-        loader=FileSystemLoader(str(root / "templates" / "bot")),
-        autoescape=False,
-    )
-    _notification_template = env.get_template("notification.html")
-
-
-def _render_notification_templates(
-    *,
-    notification_type: str,
-    issue,
-    issue_url: str,
-    version: str | None,
-    due_date: str | None,
-    overdue_text: str,
-    title: str,
-    emoji: str,
-    extra_text: str,
-    fallback_html: str,
-    fallback_plain: str,
-) -> tuple[str, str]:
-    from bot.config_state import CATALOGS
-
-    settings = CATALOGS.cycle_settings if CATALOGS is not None else {}
-    key_suffix = notification_type.upper()
-    html_tpl = (settings.get(f"NOTIFY_TEMPLATE_HTML_{key_suffix}") or "").strip()
-    plain_tpl = (settings.get(f"NOTIFY_TEMPLATE_PLAIN_{key_suffix}") or "").strip()
-
-    ctx = {
-        "issue_id": issue.id,
-        "issue_url": issue_url,
-        "subject": issue.subject,
-        "status": issue.status.name,
-        "priority": issue.priority.name,
-        "version": version or "",
-        "due_date": due_date or "",
-        "notification_type": notification_type,
-        "title": title,
-        "emoji": emoji,
-        "extra_text": extra_text or "",
-        "overdue_text": overdue_text or "",
-    }
-    html_body = fallback_html
-    plain_body = fallback_plain
-    if html_tpl:
-        try:
-            html_body = html_tpl.format(**ctx)
-        except Exception:
-            logger.warning("invalid_html_template_for_%s; fallback_default", notification_type)
-    if plain_tpl:
-        try:
-            plain_body = plain_tpl.format(**ctx)
-        except Exception:
-            logger.warning("invalid_plain_template_for_%s; fallback_default", notification_type)
-    return html_body, plain_body
 
 
 def reset_dm_failed() -> None:
@@ -335,77 +297,79 @@ async def resolve_room(client: AsyncClient, room_or_mxid: str) -> str:
     return await _resolve_room_id(client, room_or_mxid)
 
 
-def _ensure_notification_template() -> None:
-    global _notification_template
-    if _notification_template is not None:
-        return
-    from pathlib import Path
+async def _tpl_build_matrix_message_content(
+    session: AsyncSession,
+    issue: Issue,
+    notification_type: str,
+    extra_text: str,
+) -> dict:
+    from bot.config_state import CATALOGS
+    from bot.template_context import build_issue_context
+    from bot.template_loader import render_named_template
 
-    _root = Path(__file__).resolve().parent.parent.parent
-    env = Environment(
-        loader=FileSystemLoader(str(_root / "templates" / "bot")),
-        autoescape=False,
-    )
-    _notification_template = env.get_template("notification.html")
+    tpl_name = EVENT_TO_TEMPLATE[notification_type]
+    emoji, title = NOTIFICATION_TYPES.get(notification_type, ("", "Обратите внимание"))
+    catalogs = CATALOGS
+
+    extra_merged = (extra_text or "").strip()
+    if notification_type == "overdue" and issue.due_date:
+        from bot.main import today_tz
+
+        days = (today_tz() - issue.due_date).days
+        ov_line = f"просрочено на {plural_days(days)}"
+        if ov_line not in extra_merged:
+            extra_merged = ov_line + (f"<br/>{extra_merged}" if extra_merged else "")
+
+    event_label = NOTIFICATION_TYPES[notification_type][1]
+
+    if tpl_name == "tpl_reminder":
+        ctx = build_issue_context(
+            issue,
+            catalogs,
+            reminder_text="Задача без движения",
+            title="Напоминание",
+            emoji="",
+            reminder_count=1,
+            max_reminders=max(1, int(catalogs.cycle_int("MAX_REMINDERS", 3))) if catalogs else 1,
+            elapsed_human=_elapsed_human_since(getattr(issue, "updated_on", None)),
+        )
+    else:
+        ctx = build_issue_context(
+            issue,
+            catalogs,
+            emoji=emoji,
+            title=title,
+            event_type=event_label,
+            extra_text=extra_merged,
+        )
+
+    html_out, plain_opt = await render_named_template(session, tpl_name, ctx)
+    plain_body = (plain_opt or "").strip() or _strip_html_to_plain(html_out)
+    return {
+        "msgtype": "m.text",
+        "body": plain_body,
+        "format": "org.matrix.custom.html",
+        "formatted_body": html_out,
+    }
 
 
 async def build_matrix_message_content(
     issue: Issue,
     notification_type: str,
     extra_text: str = "",
+    *,
+    session: AsyncSession | None = None,
 ) -> dict:
-    """Собирает тело ``m.room.message`` для DLQ и отправки (без резолва комнаты)."""
-    _ensure_notification_template()
-    assert _notification_template is not None
+    """Собирает тело ``m.room.message`` для DLQ и отправки (без резолва комнаты).
 
-    issue_url = f"{REDMINE_URL}/issues/{issue.id}"
-    emoji, title = NOTIFICATION_TYPES.get(notification_type, ("🔔", "Обратите внимание"))
-
-    overdue_text = ""
-    if notification_type == "overdue" and issue.due_date:
-        from bot.main import today_tz
-
-        days = (today_tz() - issue.due_date).days
-        overdue_text = f" (просрочено на {plural_days(days)})"
-
-    version = get_version_name(issue)
-    due_date = str(issue.due_date) if issue.due_date else None
-
-    html_body = _notification_template.render(
-        emoji=emoji,
-        title=title,
-        issue_url=issue_url,
-        issue_id=issue.id,
-        subject=safe_html(issue.subject),
-        status=safe_html(issue.status.name),
-        priority=safe_html(issue.priority.name),
-        version=safe_html(version) if version else None,
-        due_date=due_date,
-        overdue_text=overdue_text,
-        extra_text=extra_text if extra_text else None,
-    )
-
-    plain_body = f"{emoji} {title} #{issue.id}: {issue.subject} | Статус: {issue.status.name}"
-    html_body, plain_body = _render_notification_templates(
-        notification_type=notification_type,
-        issue=issue,
-        issue_url=issue_url,
-        version=version,
-        due_date=due_date,
-        overdue_text=overdue_text,
-        title=title,
-        emoji=emoji,
-        extra_text=extra_text,
-        fallback_html=html_body,
-        fallback_plain=plain_body,
-    )
-
-    return {
-        "msgtype": "m.text",
-        "body": plain_body,
-        "format": "org.matrix.custom.html",
-        "formatted_body": html_body,
-    }
+    Нужен ``session`` для чтения override из ``notification_templates``.
+    """
+    if session is None:
+        raise RuntimeError(
+            "build_matrix_message_content: AsyncSession required "
+            f"(issue #{getattr(issue, 'id', '?')}, type={notification_type})"
+        )
+    return await _tpl_build_matrix_message_content(session, issue, notification_type, extra_text)
 
 
 async def send_matrix_message(
@@ -414,10 +378,14 @@ async def send_matrix_message(
     room_id: str,
     notification_type: str,
     extra_text: str = "",
+    *,
+    session: AsyncSession | None = None,
 ) -> None:
-    """Формирует и отправляет HTML-сообщение в Matrix через Jinja2-шаблон."""
+    """Формирует и отправляет HTML-сообщение в Matrix через tpl-шаблоны."""
     resolved_room = await _resolve_room_id(client, room_id)
-    content = await build_matrix_message_content(issue, notification_type, extra_text=extra_text)
+    content = await build_matrix_message_content(
+        issue, notification_type, extra_text=extra_text, session=session
+    )
     await room_send_with_retry(client, resolved_room, content)
     logger.info("📨 #%s → %s... (%s)", issue.id, resolved_room[:20], notification_type)
 
@@ -429,7 +397,7 @@ async def send_safe(
     room_id: str,
     notification_type: str,
     extra_text: str = "",
-    db_session=None,
+    db_session: AsyncSession | None = None,
 ) -> None:
     """Обёртка: проверка DND/рабочих часов → отправка с перехватом ошибок."""
     from bot.logic import _cfg_for_room, _issue_priority_name, issue_matches_cfg
@@ -453,7 +421,14 @@ async def send_safe(
         )
         return
     try:
-        await send_matrix_message(client, issue, room_id, notification_type, extra_text)
+        await send_matrix_message(
+            client,
+            issue,
+            room_id,
+            notification_type,
+            extra_text,
+            session=db_session,
+        )
     except Exception as e:
         logger.error("❌ Ошибка отправки #%s → %s: %s", issue.id, room_id[:20], e)
         # Сохраняем в DLQ для повторной отправки
@@ -462,7 +437,7 @@ async def send_safe(
                 from database.dlq_repo import enqueue_notification
 
                 payload = await build_matrix_message_content(
-                    issue, notification_type, extra_text=extra_text
+                    issue, notification_type, extra_text=extra_text, session=db_session
                 )
                 await enqueue_notification(
                     db_session,

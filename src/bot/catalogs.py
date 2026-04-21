@@ -70,7 +70,7 @@ class BotCatalogs:
         return self.priority_id_to_name.get(redmine_id, default)
 
     def notification_emoji_label(self, key: str) -> tuple[str, str]:
-        return self.notification_types.get(key, ("🔔", key))
+        return self.notification_types.get(key, ("", key))
 
     def cycle_int(self, key: str, default: int = 0) -> int:
         try:

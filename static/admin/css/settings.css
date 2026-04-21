@@ -2,6 +2,12 @@
    settings.css — system settings, service bubbles, catalogs, my-settings page
    =========================== */
 
+:root {
+  --service-bubble-surface: rgba(255, 255, 255, 0.02);
+  --service-bubble-border: rgba(255, 255, 255, 0.06);
+  --service-bubble-radius: 12px;
+}
+
 /* ---------- Page settings (my settings) ---------- */
 .page-settings {
   max-width: var(--content-form-max);
@@ -327,9 +333,9 @@ fieldset.settings-fieldset > legend {
 }
 
 .service-bubble {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 12px;
+  background: var(--service-bubble-surface);
+  border: 1px solid var(--service-bubble-border);
+  border-radius: var(--service-bubble-radius);
   padding: 1.25rem;
   display: flex;
   flex-direction: column;
@@ -580,4 +586,129 @@ fieldset.settings-fieldset > legend {
 
 .form-status--db {
   margin: 0.75rem 0 0;
+}
+
+/* ---------- Уведомления (onboarding #tab-notifications) ---------- */
+.is-hidden {
+  display: none !important;
+}
+
+.notifications-save-status {
+  margin-bottom: 0.75rem;
+}
+
+.daily-report__subhead {
+  font-size: 1rem;
+  margin-top: 0;
+}
+
+.daily-report__subhead--template {
+  margin-top: 0;
+}
+
+.daily-report__submuted {
+  margin-top: 0.25rem;
+}
+
+.daily-report__layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+.daily-report__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.daily-report__section {
+  border: 1px solid var(--service-bubble-border, rgba(255, 255, 255, 0.06));
+  border-radius: var(--service-bubble-radius, 12px);
+  padding: 0.85rem;
+  background: var(--service-bubble-surface, rgba(255, 255, 255, 0.02));
+}
+
+.daily-report__head-switch {
+  margin-top: 0;
+}
+
+.daily-report__time-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-end;
+  margin-top: 0.5rem;
+}
+
+.daily-report__time-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: #8b92a5;
+}
+
+.daily-report__time-input {
+  width: 8rem;
+  max-width: 100%;
+}
+
+.daily-report__template-missing {
+  margin-top: 0.25rem;
+}
+
+.daily-report__template-slot {
+  margin-top: 0.5rem;
+}
+
+.daily-report__editor-wrap {
+  margin-top: 0;
+}
+
+.daily-report__section--template .block-editor__header {
+  margin-bottom: 0.5rem;
+}
+
+/* Динамические карточки шаблонов (onboarding.js) */
+#journal-template-v2-root {
+  margin-top: 1rem;
+}
+
+#tab-notifications #tpl-v2-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.tpl-v2-template-card {
+  min-height: 0;
+}
+
+.tpl-v2-card__title {
+  margin-top: 0;
+}
+
+#tab-notifications #tpl-v2-fields > .tpl-v2-template-card > .daily-report__head {
+  margin: 0 0 0.25rem;
+}
+
+#tab-notifications #tpl-v2-fields > .tpl-v2-template-card > .daily-report__head .card-title {
+  margin-bottom: 0;
+}
+
+#tab-notifications #tpl-v2-fields > .tpl-v2-template-card .block-editor__header {
+  margin-bottom: 0.5rem;
+}
+
+.tpl-v2-card__footer {
+  margin-top: 0.5rem;
+}
+
+.tpl-v2-preview-pre {
+  white-space: pre-wrap;
+  max-height: 12rem;
+  overflow: auto;
 }

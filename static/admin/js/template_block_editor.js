@@ -42,6 +42,8 @@
     this.blockListEl = null;
     this._previewTimer = null;
     this._statusClearTimer = null;
+    this.templateEnabled = true;
+    this._savedEnabledState = null;
     this._beforeUnload = this._beforeUnload.bind(this);
   }
 
@@ -57,12 +59,14 @@
     this.isCustomJinja = !!data.is_custom_jinja;
     this.bodyHtml = data.body_html || "";
     this.mode = this.isCustomJinja ? "code" : "blocks";
+    this.syncTemplateEnabledFromBlocks();
 
     var draft = this.loadDraft();
     if (draft && window.confirm("Найден несохранённый черновик. Восстановить?")) {
       this.blocks = draft.blocks || this.blocks;
       this.bodyHtml = draft.bodyHtml || this.bodyHtml;
       this.mode = draft.mode || this.mode;
+      this.syncTemplateEnabledFromBlocks();
     }
 
     this.render();
@@ -101,7 +105,6 @@
     var header = document.createElement("div");
     header.className = "block-editor__header";
     this.renderTabs(header);
-    this.renderVariablesList(header);
     this.container.appendChild(header);
 
     var body = document.createElement("div");
@@ -145,23 +148,15 @@
     parent.appendChild(tabs);
   };
 
-  BlockEditor.prototype.renderVariablesList = function (parent) {
-    var blockIds = {};
-    this.blocks.forEach(function (bc) {
-      blockIds[bc.block_id] = true;
+  BlockEditor.prototype.syncTemplateEnabledFromBlocks = function () {
+    var anyEnabled = this.blocks.some(function (b) {
+      return !!b.enabled;
     });
-    var all = {};
-    this.registry.forEach(function (b) {
-      if (!blockIds[b.id]) return;
-      (b.variables || []).forEach(function (v) {
-        all[v] = true;
-      });
+    this.templateEnabled = anyEnabled;
+    // В режиме "один switch на шаблон" не храним частично выключенные блоки.
+    this.blocks.forEach(function (b) {
+      b.enabled = anyEnabled;
     });
-    var p = document.createElement("p");
-    p.className = "block-editor__variables";
-    var keys = Object.keys(all);
-    p.textContent = keys.length ? "Переменные: " + keys.join(" · ") : "Переменные: —";
-    parent.appendChild(p);
   };
 
   BlockEditor.prototype.renderBlockList = function (parent) {
@@ -181,26 +176,17 @@
       el.className = "block-editor__block" + (bc.enabled ? "" : " disabled");
       el.dataset.blockId = bc.block_id;
       el.innerHTML =
+        '<div class="block-editor__block-row">' +
         '<span class="block-editor__handle" title="Перетащить">☰</span>' +
-        '<label class="block-editor__toggle">' +
-        '<input type="checkbox" ' +
-        (bc.enabled ? "checked" : "") +
-        ' data-block="' +
-        bc.block_id +
-        '">' +
-        "<strong>" +
-        def.label +
-        "</strong></label>" +
+        '<div class="block-editor__block-title"><strong>' +
+        self.escapeHtml(def.label) +
+        "</strong></div></div>" +
         '<span class="block-editor__desc">' +
-        def.description +
+        self.escapeHtml(def.description) +
         "</span>" +
-        '<div class="block-editor__settings" style="' +
-        (bc.enabled ? "" : "display:none") +
+        '<div class="block-editor__settings' +
+        (bc.enabled ? "" : " is-hidden") +
         '"></div>';
-      var cb = el.querySelector('input[type="checkbox"]');
-      cb.addEventListener("change", function (e) {
-        self.onBlockToggle(bc.block_id, e.target.checked);
-      });
       if (bc.enabled && def.settings_schema && Object.keys(def.settings_schema).length) {
         self.renderBlockSettings(el.querySelector(".block-editor__settings"), bc, def);
       }
@@ -232,6 +218,7 @@
     var self = this;
     Object.keys(blockDef.settings_schema || {}).forEach(function (key) {
       var schema = blockDef.settings_schema[key];
+      var labelText = (schema.label && String(schema.label)) || key;
       var currentValue =
         blockConfig.settings && blockConfig.settings[key] != null
           ? String(blockConfig.settings[key])
@@ -243,7 +230,7 @@
         var isCustom = opts.indexOf(currentValue) === -1;
         var selHtml =
           "<label>" +
-          key +
+          self.escapeHtml(labelText) +
           ":</label><select data-block=\"" +
           blockConfig.block_id +
           '" data-key="' +
@@ -256,27 +243,27 @@
             '"' +
             (o === currentValue ? " selected" : "") +
             ">" +
-            o +
+            self.escapeHtml(o) +
             "</option>";
         });
         selHtml +=
           '<option value="__custom__"' +
           (isCustom ? " selected" : "") +
           ">Свой…</option></select>" +
-          '<input type="text" class="emoji-custom" maxlength="8" value="' +
+          '<input type="text" class="emoji-custom' +
+          (isCustom ? "" : " is-hidden") +
+          '" maxlength="8" value="' +
           self.escapeAttr(isCustom ? currentValue : "") +
-          '" placeholder="🎯" style="' +
-          (isCustom ? "" : "display:none") +
-          '">';
+          '" placeholder="🎯"/>';
         wrapper.innerHTML = selHtml;
         var select = wrapper.querySelector("select");
         var customInput = wrapper.querySelector(".emoji-custom");
         select.addEventListener("change", function () {
           if (select.value === "__custom__") {
-            customInput.style.display = "";
+            customInput.classList.remove("is-hidden");
             customInput.focus();
           } else {
-            customInput.style.display = "none";
+            customInput.classList.add("is-hidden");
             self.onSettingChange(blockConfig.block_id, key, select.value);
           }
         });
@@ -287,7 +274,7 @@
       } else {
         wrapper.innerHTML =
           "<label>" +
-          key +
+          self.escapeHtml(labelText) +
           ':</label><input type="text" value="' +
           self.escapeAttr(currentValue) +
           '" data-block="' +
@@ -343,10 +330,13 @@
     preview.appendChild(title);
     var content = document.createElement("div");
     content.className = "block-editor__preview-content";
-    content.innerHTML = '<p class="muted">Загрузка предпросмотра…</p>';
+    var bubble = document.createElement("div");
+    bubble.className = "block-editor__matrix-bubble";
+    bubble.innerHTML = '<p class="muted">Загрузка предпросмотра…</p>';
+    content.appendChild(bubble);
     preview.appendChild(content);
     this.previewEl = preview;
-    this.previewContentEl = content;
+    this.previewContentEl = bubble;
     parent.appendChild(preview);
   };
 
@@ -400,6 +390,36 @@
       return b.block_id === blockId;
     });
     if (block) block.enabled = enabled;
+    this.syncTemplateEnabledFromBlocks();
+    if (this.templateEnabled) this._savedEnabledState = null;
+    this.markDirty();
+    this.render();
+    if (this.mode === "blocks") this.refreshPreview();
+  };
+
+  BlockEditor.prototype.onTemplateToggle = function (enabled) {
+    this.templateEnabled = !!enabled;
+    if (!this.blocks.length) return;
+    if (!enabled) {
+      this._savedEnabledState = {};
+      this.blocks.forEach(function (b) {
+        this._savedEnabledState[b.block_id] = !!b.enabled;
+        b.enabled = false;
+      }, this);
+    } else {
+      var restore = this._savedEnabledState || {};
+      this.blocks.forEach(function (b) {
+        if (Object.prototype.hasOwnProperty.call(restore, b.block_id)) {
+          b.enabled = !!restore[b.block_id];
+        } else {
+          b.enabled = true;
+        }
+      });
+      if (!this.blocks.some(function (b) { return !!b.enabled; })) {
+        this.blocks[0].enabled = true;
+      }
+      this._savedEnabledState = null;
+    }
     this.markDirty();
     this.render();
     if (this.mode === "blocks") this.refreshPreview();
@@ -455,16 +475,23 @@
       if (!resp.ok) throw new Error(data.error || "decompose_failed");
       if (data.blocks) {
         this.blocks = data.blocks;
+        this.syncTemplateEnabledFromBlocks();
         this.mode = "blocks";
         this.render();
         this.refreshPreview();
       } else {
+        this.showStatus(
+          "Не удалось разложить код на блоки (остался неизвестный фрагмент или отличие от эталона). " +
+            "Можно загрузить блоки по умолчанию или вернуться в «Код».",
+          true
+        );
         var useDefaults = window.confirm(
           "Шаблон содержит ручные изменения, которые конструктор не может распознать.\n\n" +
             "Загрузить блоки по умолчанию?"
         );
         if (useDefaults) {
           this.blocks = JSON.parse(JSON.stringify(data.default_blocks || this.defaultBlocks));
+          this.syncTemplateEnabledFromBlocks();
           this.mode = "blocks";
           this.render();
           this.refreshPreview();

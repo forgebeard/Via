@@ -130,7 +130,7 @@
     
     summaryDiv.innerHTML =
       '<span class="found">✅ Найдено: ' + data.found + '</span>' +
-      '<span class="existing">ℹ️ Уже в системе: ' + data.existing + '</span>' +
+      '<span class="existing">Уже в системе: ' + data.existing + '</span>' +
       '<span class="not-found">❌ Не найдено: ' + data.not_found + '</span>';
 
     gridNew.innerHTML = '';

@@ -43,6 +43,31 @@ def _version_display(issue: Any) -> str:
     return str(v).strip() if v else ""
 
 
+def _project_display(issue: Any) -> str:
+    return str(getattr(getattr(issue, "project", None), "name", "") or "")
+
+
+def _assignee_display(issue: Any) -> str:
+    return str(getattr(getattr(issue, "assigned_to", None), "name", "") or "")
+
+
+def _description_excerpt(issue: Any, limit: int = 300) -> str:
+    raw = str(getattr(issue, "description", "") or "").strip()
+    if not raw:
+        return ""
+    normalized = " ".join(raw.split())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _due_date_display(issue: Any) -> str:
+    due = getattr(issue, "due_date", None)
+    if due is None:
+        return ""
+    return str(due)
+
+
 def build_issue_context(
     issue: Any,
     catalogs: Any | None,
@@ -59,9 +84,13 @@ def build_issue_context(
         "issue_id": iid,
         "issue_url": issue_url,
         "subject": str(getattr(issue, "subject", "") or ""),
+        "project_name": _project_display(issue),
         "status": _status_display(issue, catalogs),
         "priority": _priority_display(issue, catalogs),
         "version": _version_display(issue),
+        "assignee_name": _assignee_display(issue),
+        "description_excerpt": _description_excerpt(issue),
+        "due_date": _due_date_display(issue),
         "emoji": "",
         "title": "",
         "event_type": "",
@@ -81,8 +110,15 @@ def preview_issue_context_demo(**overrides: Any) -> dict[str, Any]:
     class _FakeIssue:
         id = 101
         subject = "Пример темы"
+        project = type("PRJ", (), {"name": "Внутренний проект"})()
         status = type("S", (), {"id": 1, "name": "В работе"})()
         priority = type("P", (), {"id": 2, "name": "Нормальный"})()
+        assigned_to = type("A", (), {"id": 10, "name": "Иван Петров"})()
+        description = (
+            "Краткое описание задачи для предпросмотра шаблонов в админке. "
+            "Должно показывать, как выглядит усечение длинного текста."
+        )
+        due_date = "2026-04-30"
         fixed_version = type("V", (), {"name": "РЕД ОС 8"})()
 
     class _FakeCats:
@@ -95,7 +131,7 @@ def preview_issue_context_demo(**overrides: Any) -> dict[str, Any]:
     ctx = build_issue_context(_FakeIssue(), _FakeCats())
     ctx.update(
         {
-            "emoji": "📝",
+            "emoji": "",
             "title": "Предпросмотр",
             "event_type": "comment",
             "extra_text": "Тестовое описание журнала",

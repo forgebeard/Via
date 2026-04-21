@@ -43,20 +43,53 @@ def _mock_context_for_preview(name: str) -> dict[str, Any]:
     # Sync keys with bot.template_context.preview_issue_context_demo / build_issue_context.
     # tpl_digest / tpl_dry_run — отдельные контракты, не issue-«полный контекст».
     if name == "tpl_digest":
-        return {
-            "items": [
-                {"issue_id": 1, "subject": "Задача A", "events": ["comment"]},
-                {"issue_id": 2, "subject": "Задача B", "events": ["status_change"]},
+        digest_items = [
+                {
+                    "issue_id": 1,
+                    "subject": "Задача A",
+                    "events": ["comment", "status_change"],
+                    "status_name": "В работе",
+                    "assigned_to": "Иван Петров",
+                    "changes": [{"field": "Статус", "old": "Новая", "new": "В работе"}],
+                    "comments": ["Уточнил требования"],
+                    "reminders_count": 0,
+                    "url": "https://redmine.example/issues/1",
+                },
+                {
+                    "issue_id": 2,
+                    "subject": "Задача B",
+                    "events": ["reminder"],
+                    "status_name": "Информация предоставлена",
+                    "assigned_to": "Мария Иванова",
+                    "changes": [],
+                    "comments": [],
+                    "reminders_count": 2,
+                    "url": "https://redmine.example/issues/2",
+                },
             ]
+        return {
+            "items": digest_items,
+            "digest_items": digest_items,
+        }
+    if name == "tpl_daily_report":
+        return {
+            "report_date": "20.04.2026",
+            "total_open": 12,
+            "info_count": 2,
+            "overdue_count": 1,
+            "info_items_html": "<ul><li><a href=\"#\">#101</a> — Пример «инфо»</li></ul>",
+            "overdue_items_html": "<ul><li><a href=\"#\">#202</a> — Просроченная (3 дня)</li></ul>",
         }
     if name == "tpl_dry_run":
-        return {
-            "issue_id": 101,
-            "issue_url": "https://redmine.example/issues/101",
-            "subject": "Пример темы",
-        }
+        return preview_issue_context_demo()
     if name == "tpl_reminder":
-        return preview_issue_context_demo(emoji="⏰", title="Напоминание")
+        return preview_issue_context_demo(
+            emoji="",
+            title="Напоминание",
+            reminder_count=2,
+            max_reminders=3,
+            elapsed_human="4 ч 15 мин",
+        )
     return preview_issue_context_demo()
 
 

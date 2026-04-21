@@ -10,6 +10,7 @@
 """
 
 import os
+import re
 from datetime import date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
@@ -58,6 +59,49 @@ USER_CFG_FOR_SEND = {
     "work_hours": "00:00-23:59",
     "work_days": [0, 1, 2, 3, 4, 5, 6],
 }
+
+
+def _matrix_test_body_from_context(ctx: dict) -> str:
+    """Упрощённый HTML по контексту tpl (достаточен для assert-ов TestSendMatrixMessage)."""
+    import html as html_module
+
+    iid = ctx.get("issue_id", 0)
+    subj = html_module.escape(str(ctx.get("subject", "") or ""))
+    url = str(ctx.get("issue_url", "") or "")
+    status = html_module.escape(str(ctx.get("status", "") or ""))
+    extra = ctx.get("extra_text") or ""
+    ver = str(ctx.get("version", "") or "").strip()
+    ver_e = html_module.escape(ver) if ver else ""
+    parts = [f"#{iid}", subj, status, url]
+    if extra:
+        parts.append(str(extra))
+    if ver_e:
+        parts.append(ver_e)
+    return "<p>" + " ".join(parts) + "</p>"
+
+
+@pytest.fixture
+def matrix_message_session():
+    """AsyncSession-мок + подмена render_named_template для тестов Matrix без БД."""
+    from bot.catalogs import BotCatalogs
+
+    import bot.config_state as config_state
+
+    config_state.CATALOGS = BotCatalogs(
+        status_id_to_name={1: "Новая", 2: "В работе"},
+        priority_id_to_name={2: "Normal", 3: "High"},
+    )
+    session = AsyncMock()
+
+    async def _fake_render(sess, name, context, *, root=None):
+        assert sess is session
+        html = _matrix_test_body_from_context(context)
+        plain = re.sub(r"<[^>]+>", " ", html).strip()
+        return html, plain
+
+    with patch("bot.template_loader.render_named_template", new=_fake_render):
+        yield session
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 1. УТИЛИТЫ
@@ -613,15 +657,27 @@ class TestSendMatrixMessage:
     """Тесты отправки сообщений в Matrix."""
 
     @pytest.mark.asyncio
-    async def test_successful_send(self, mock_matrix_client, simple_issue):
+    async def test_successful_send(self, mock_matrix_client, simple_issue, matrix_message_session):
         """Успешная отправка — без исключений."""
-        await bot.send_matrix_message(mock_matrix_client, simple_issue, "!room:server", "new")
+        await bot.send_matrix_message(
+            mock_matrix_client,
+            simple_issue,
+            "!room:server",
+            "new",
+            session=matrix_message_session,
+        )
         mock_matrix_client.room_send.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_html_contains_issue_id(self, mock_matrix_client, simple_issue):
+    async def test_html_contains_issue_id(self, mock_matrix_client, simple_issue, matrix_message_session):
         """HTML содержит ID задачи и ссылку."""
-        await bot.send_matrix_message(mock_matrix_client, simple_issue, "!room:server", "new")
+        await bot.send_matrix_message(
+            mock_matrix_client,
+            simple_issue,
+            "!room:server",
+            "new",
+            session=matrix_message_session,
+        )
         call_args = mock_matrix_client.room_send.call_args
         content = (
             call_args[1]["content"] if "content" in call_args[1] else call_args.kwargs["content"]
@@ -632,9 +688,15 @@ class TestSendMatrixMessage:
         assert "/issues/7777" in html
 
     @pytest.mark.asyncio
-    async def test_html_contains_status(self, mock_matrix_client, simple_issue):
+    async def test_html_contains_status(self, mock_matrix_client, simple_issue, matrix_message_session):
         """HTML содержит текущий статус."""
-        await bot.send_matrix_message(mock_matrix_client, simple_issue, "!room:server", "new")
+        await bot.send_matrix_message(
+            mock_matrix_client,
+            simple_issue,
+            "!room:server",
+            "new",
+            session=matrix_message_session,
+        )
         call_args = mock_matrix_client.room_send.call_args
         content = (
             call_args[1]["content"] if "content" in call_args[1] else call_args.kwargs["content"]
@@ -642,9 +704,15 @@ class TestSendMatrixMessage:
         assert "Новая" in content["formatted_body"]
 
     @pytest.mark.asyncio
-    async def test_overdue_shows_days(self, mock_matrix_client, overdue_issue):
+    async def test_overdue_shows_days(self, mock_matrix_client, overdue_issue, matrix_message_session):
         """Для просроченных — показывает количество дней."""
-        await bot.send_matrix_message(mock_matrix_client, overdue_issue, "!room:server", "overdue")
+        await bot.send_matrix_message(
+            mock_matrix_client,
+            overdue_issue,
+            "!room:server",
+            "overdue",
+            session=matrix_message_session,
+        )
         call_args = mock_matrix_client.room_send.call_args
         content = (
             call_args[1]["content"] if "content" in call_args[1] else call_args.kwargs["content"]
@@ -652,7 +720,7 @@ class TestSendMatrixMessage:
         assert "просрочено" in content["formatted_body"]
 
     @pytest.mark.asyncio
-    async def test_extra_text_included(self, mock_matrix_client, simple_issue):
+    async def test_extra_text_included(self, mock_matrix_client, simple_issue, matrix_message_session):
         """Дополнительный текст попадает в HTML."""
         await bot.send_matrix_message(
             mock_matrix_client,
@@ -660,6 +728,7 @@ class TestSendMatrixMessage:
             "!room:server",
             "status_change",
             extra_text="Статус: <strong>Новая</strong> → <strong>В работе</strong>",
+            session=matrix_message_session,
         )
         call_args = mock_matrix_client.room_send.call_args
         content = (
@@ -668,10 +737,16 @@ class TestSendMatrixMessage:
         assert "В работе" in content["formatted_body"]
 
     @pytest.mark.asyncio
-    async def test_subject_special_chars_escaped(self, mock_matrix_client):
+    async def test_subject_special_chars_escaped(self, mock_matrix_client, matrix_message_session):
         """Тема с <>& — экранируется в HTML."""
         issue = MockIssue(issue_id=4242, subject='Сервер <prod> & "тест"')
-        await bot.send_matrix_message(mock_matrix_client, issue, "!room:server", "new")
+        await bot.send_matrix_message(
+            mock_matrix_client,
+            issue,
+            "!room:server",
+            "new",
+            session=matrix_message_session,
+        )
         call_args = mock_matrix_client.room_send.call_args
         content = (
             call_args[1]["content"] if "content" in call_args[1] else call_args.kwargs["content"]
@@ -682,9 +757,15 @@ class TestSendMatrixMessage:
         assert "&amp;" in body
 
     @pytest.mark.asyncio
-    async def test_version_shown_when_present(self, mock_matrix_client, issue_with_version):
+    async def test_version_shown_when_present(self, mock_matrix_client, issue_with_version, matrix_message_session):
         """Версия отображается в сообщении, если есть."""
-        await bot.send_matrix_message(mock_matrix_client, issue_with_version, "!room:server", "new")
+        await bot.send_matrix_message(
+            mock_matrix_client,
+            issue_with_version,
+            "!room:server",
+            "new",
+            session=matrix_message_session,
+        )
         call_args = mock_matrix_client.room_send.call_args
         content = (
             call_args[1]["content"] if "content" in call_args[1] else call_args.kwargs["content"]
@@ -692,7 +773,7 @@ class TestSendMatrixMessage:
         assert "РЕД Виртуализация 1.0" in content["formatted_body"]
 
     @pytest.mark.asyncio
-    async def test_room_send_error_raises(self, simple_issue):
+    async def test_room_send_error_raises(self, simple_issue, matrix_message_session):
         """После исчерпания повторов RoomSendError → RuntimeError."""
         from nio.responses import RoomSendError
 
@@ -707,7 +788,13 @@ class TestSendMatrixMessage:
         with patch("matrix_send.asyncio.sleep", new_callable=AsyncMock):
             with pytest.raises(RuntimeError, match="Matrix room_send error"):
                 # room_id с ! — без резолва MXID→DM (иначе AsyncMock ломает sync/rooms в sender)
-                await bot.send_matrix_message(client, simple_issue, "!xroom:server", "new")
+                await bot.send_matrix_message(
+                    client,
+                    simple_issue,
+                    "!xroom:server",
+                    "new",
+                    session=matrix_message_session,
+                )
 
         assert client.room_send.call_count == matrix_send.MAX_RETRIES
 
@@ -716,20 +803,32 @@ class TestSendSafe:
     """Тесты обёртки send_safe — не падает при ошибках."""
 
     @pytest.mark.asyncio
-    async def test_send_safe_catches_exception(self, simple_issue):
+    async def test_send_safe_catches_exception(self, simple_issue, matrix_message_session):
         """send_safe НЕ пробрасывает исключения — логирует."""
         client = AsyncMock()
         client.room_send = AsyncMock(side_effect=Exception("Network error"))
         with patch("matrix_send.asyncio.sleep", new_callable=AsyncMock):
             # Не должен кинуть исключение (несколько попыток room_send)
-            await bot.send_safe(client, simple_issue, USER_CFG_FOR_SEND, "!room:server", "new")
+            await bot.send_safe(
+                client,
+                simple_issue,
+                USER_CFG_FOR_SEND,
+                "!room:server",
+                "new",
+                db_session=matrix_message_session,
+            )
         assert client.room_send.call_count == matrix_send.MAX_RETRIES
 
     @pytest.mark.asyncio
-    async def test_send_safe_success(self, mock_matrix_client, simple_issue):
+    async def test_send_safe_success(self, mock_matrix_client, simple_issue, matrix_message_session):
         """send_safe при успехе — просто работает."""
         await bot.send_safe(
-            mock_matrix_client, simple_issue, USER_CFG_FOR_SEND, "!room:server", "new"
+            mock_matrix_client,
+            simple_issue,
+            USER_CFG_FOR_SEND,
+            "!room:server",
+            "new",
+            db_session=matrix_message_session,
         )
         mock_matrix_client.room_send.assert_called_once()
 
@@ -742,7 +841,7 @@ class TestSendSafe:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 9. NOTIFICATION_TYPES — все типы имеют эмодзи и заголовок
+# 9. NOTIFICATION_TYPES — все типы имеют подпись (эмодзи опциональны, по умолчанию пустые)
 # ═══════════════════════════════════════════════════════════════════════════
 # Регрессия: новый тип уведомления не забыт в словаре.
 
@@ -766,7 +865,7 @@ class TestNotificationTypes:
     def test_all_types_have_emoji_and_title(self, ntype):
         assert ntype in bot.NOTIFICATION_TYPES
         emoji, title = bot.NOTIFICATION_TYPES[ntype]
-        assert len(emoji) > 0
+        assert isinstance(emoji, str)
         assert len(title) > 0
 
 
