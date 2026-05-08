@@ -11,10 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config_state import CATALOGS
 from bot.logic import _cfg_for_room, describe_journal, issue_matches_cfg, should_notify
-from bot.routing import get_matching_route
+from bot.routing import get_matching_route, resolve_policy_target_rooms
 from bot.sender import resolve_room
 from bot.template_context import build_issue_context
 from bot.template_loader import render_named_template
+from config import ROUTING_ENGINE
 from database.digest_repo import insert_digest
 from database.dlq_repo import enqueue_notification
 from matrix_send import room_send_with_retry
@@ -225,6 +226,37 @@ async def personal_recipient_cfgs(
     return out
 
 
+def journal_action_kind_for_routing(issue: Any) -> str:
+    """Одна запись журнала у полной задачи — трактуем как создание (policy created / new)."""
+    try:
+        journals = list(getattr(issue, "journals", None) or [])
+        if len(journals) == 1:
+            return "created"
+    except Exception:
+        pass
+    return "updated"
+
+
+async def watcher_cfgs_for_routing(
+    session: AsyncSession,
+    issue: Any,
+    users: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    from database.watcher_cache_repo import list_bot_user_ids_for_issue
+
+    by_bot_id = {int(u["id"]): u for u in users if u.get("id") is not None}
+    out: list[dict[str, Any]] = []
+    try:
+        iid = int(issue.id)
+    except Exception:
+        return []
+    for bot_uid in await list_bot_user_ids_for_issue(session, iid):
+        wcfg = by_bot_id.get(int(bot_uid))
+        if wcfg:
+            out.append(wcfg)
+    return out
+
+
 def _build_structured_changes(
     journal: Any, catalogs: Any | None
 ) -> tuple[list[dict[str, str]], int, str]:
@@ -428,73 +460,118 @@ async def handle_journal_entry(
         extra_text=extra,
     )
 
-    try:
-        tpl_name = (
-            "tpl_new_issue"
-            if len(list(getattr(issue, "journals", None) or [])) == 1
-            else "tpl_task_change"
-        )
-    except Exception:
-        tpl_name = "tpl_task_change"
+    action_kind_route = journal_action_kind_for_routing(issue)
+    tpl_name = "tpl_new_issue" if action_kind_route == "created" else "tpl_task_change"
 
-    matched = get_matching_route(issue, routes_cfg, assignee_cfg, groups=groups)
-    if matched and matched.room_id.strip():
-        skip_group = event_type == "assigned" and not matched.notify_on_assignment
-        if not skip_group:
-            gcfg = _cfg_for_room(assignee_cfg, matched.room_id)
-            if issue_matches_cfg(issue, gcfg) and should_notify(gcfg, "issue_updated"):
-                plain = f"#{issue.id} {base_ctx['subject']}: {event_type}"
-                dedup_key = _build_dedup_key(issue, journal, event_type, base_ctx.get("changes"))
-                if can_notify(gcfg, priority=str(getattr(issue.priority, "name", "") or "")):
+    watcher_cfgs_r = await watcher_cfgs_for_routing(session, issue, users)
+    policy_rooms = resolve_policy_target_rooms(
+        issue,
+        routes_cfg,
+        action_kind=action_kind_route,
+        users=users,
+        groups=groups,
+        actor_redmine_id=int(getattr(getattr(journal, "user", None), "id", 0) or 0),
+        log_prefix="journal_routing_policy",
+        assignee_cfg=assignee_cfg,
+        watcher_cfgs=watcher_cfgs_r,
+    )
+    if ROUTING_ENGINE == "legacy":
+        matched = get_matching_route(issue, routes_cfg, assignee_cfg, groups=groups)
+        legacy_rooms = [matched.room_id] if matched and matched.room_id.strip() else []
+        if sorted(set(legacy_rooms)) != sorted(policy_rooms.room_ids):
+            nt0 = policy_rooms.deliveries[0][1] if policy_rooms.deliveries else "issue_updated"
+            logger.info(
+                json.dumps(
+                    {
+                        "event": "routing_shadow_diff",
+                        "notification_type": nt0,
+                        "issue_id": int(issue.id),
+                        "legacy_rooms": sorted(set(legacy_rooms)),
+                        "policy_v4_rooms": sorted(policy_rooms.room_ids),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        if matched and matched.room_id.strip():
+            skip_group = event_type == "assigned" and not matched.notify_on_assignment
+            if not skip_group:
+                gcfg = _cfg_for_room(assignee_cfg, matched.room_id)
+                if issue_matches_cfg(issue, gcfg) and should_notify(gcfg, "issue_updated"):
+                    plain = f"#{issue.id} {base_ctx['subject']}: {event_type}"
+                    dedup_key = _build_dedup_key(
+                        issue, journal, event_type, base_ctx.get("changes")
+                    )
+                    if can_notify(gcfg, priority=str(getattr(issue.priority, "name", "") or "")):
+                        await journal_render_send_or_dlq(
+                            client,
+                            session,
+                            room_id=matched.room_id,
+                            template_name=tpl_name,
+                            jinja_context=base_ctx,
+                            plain_body=plain,
+                            user_redmine_id=int(assignee_cfg.get("redmine_id") or 0),
+                            issue_id=int(issue.id),
+                            notification_type="issue_updated",
+                            dedup_key=dedup_key,
+                        )
+    else:
+        if not policy_rooms.deliveries:
+            return
+        plain = f"#{issue.id} {base_ctx['subject']}: {event_type}"
+        dedup_key = _build_dedup_key(issue, journal, event_type, base_ctx.get("changes"))
+        for room_id, ntype in policy_rooms.deliveries:
+            await journal_render_send_or_dlq(
+                client,
+                session,
+                room_id=room_id,
+                template_name=tpl_name,
+                jinja_context=base_ctx,
+                plain_body=plain,
+                user_redmine_id=int(assignee_cfg.get("redmine_id") or 0),
+                issue_id=int(issue.id),
+                notification_type=ntype,
+                dedup_key=f"{dedup_key}:{room_id}:{ntype}",
+            )
+
+    if ROUTING_ENGINE == "legacy":
+        recipients = await personal_recipient_cfgs(session, issue, journal, assignee_cfg, users)
+        for rcfg in recipients:
+            room = (rcfg.get("room") or "").strip()
+            if not room or not issue_matches_cfg(issue, rcfg):
+                continue
+            pctx = dict(base_ctx)
+            plain_p = f"#{issue.id} {pctx['subject']}: {event_type}"
+            dedup_key = _build_dedup_key(issue, journal, event_type, pctx.get("changes"))
+            try:
+                if should_notify(rcfg, "issue_updated") and can_notify(
+                    rcfg,
+                    priority=str(getattr(issue.priority, "name", "") or ""),
+                ):
                     await journal_render_send_or_dlq(
                         client,
                         session,
-                        room_id=matched.room_id,
+                        room_id=room,
                         template_name=tpl_name,
-                        jinja_context=base_ctx,
-                        plain_body=plain,
-                        user_redmine_id=int(assignee_cfg.get("redmine_id") or 0),
+                        jinja_context=pctx,
+                        plain_body=plain_p,
+                        user_redmine_id=int(rcfg.get("redmine_id") or 0),
                         issue_id=int(issue.id),
                         notification_type="issue_updated",
                         dedup_key=dedup_key,
                     )
-
-    recipients = await personal_recipient_cfgs(session, issue, journal, assignee_cfg, users)
-    for rcfg in recipients:
-        room = (rcfg.get("room") or "").strip()
-        if not room or not issue_matches_cfg(issue, rcfg):
-            continue
-        pctx = dict(base_ctx)
-        plain_p = f"#{issue.id} {pctx['subject']}: {event_type}"
-        dedup_key = _build_dedup_key(issue, journal, event_type, pctx.get("changes"))
-        try:
-            if should_notify(rcfg, "issue_updated") and can_notify(
-                rcfg,
-                priority=str(getattr(issue.priority, "name", "") or ""),
-            ):
-                await journal_render_send_or_dlq(
-                    client,
-                    session,
-                    room_id=room,
-                    template_name=tpl_name,
-                    jinja_context=pctx,
-                    plain_body=plain_p,
-                    user_redmine_id=int(rcfg.get("redmine_id") or 0),
-                    issue_id=int(issue.id),
-                    notification_type="issue_updated",
-                    dedup_key=dedup_key,
-                )
-            else:
-                await insert_digest(
-                    session,
-                    user_id=int(rcfg["id"]),
-                    issue_id=int(issue.id),
-                    issue_subject=str(issue.subject or "")[:255],
-                    event_type=event_type,
-                    journal_id=int(journal.id),
-                    journal_notes=getattr(journal, "notes", None),
-                    status_name=str(getattr(issue.status, "name", None) or ""),
-                    assigned_to=str(getattr(getattr(issue, "assigned_to", None), "name", "") or ""),
-                )
-        except Exception:
-            logger.debug("journal_personal_digest_failed", exc_info=True)
+                else:
+                    await insert_digest(
+                        session,
+                        user_id=int(rcfg["id"]),
+                        issue_id=int(issue.id),
+                        issue_subject=str(issue.subject or "")[:255],
+                        event_type=event_type,
+                        journal_id=int(journal.id),
+                        journal_notes=getattr(journal, "notes", None),
+                        status_name=str(getattr(issue.status, "name", None) or ""),
+                        assigned_to=str(
+                            getattr(getattr(issue, "assigned_to", None), "name", "") or ""
+                        ),
+                    )
+            except Exception:
+                logger.debug("journal_personal_digest_failed", exc_info=True)

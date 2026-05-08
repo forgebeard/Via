@@ -106,6 +106,7 @@ from admin.routes.notification_templates import (  # noqa: E402
 from admin.routes.ops import router as ops_router  # noqa: E402
 from admin.routes.redmine import router as redmine_router  # noqa: E402
 from admin.routes.routes_mgmt import router as routes_mgmt_router  # noqa: E402
+from admin.routes.routing_rules import router as routing_rules_router  # noqa: E402
 from admin.routes.secrets import router as secrets_router  # noqa: E402
 from admin.routes.settings import router as settings_router  # noqa: E402
 from admin.routes.user_import import router as user_import_router  # noqa: E402
@@ -122,6 +123,7 @@ app.include_router(events_router)
 app.include_router(settings_router)
 app.include_router(me_router)
 app.include_router(redmine_router)
+app.include_router(routing_rules_router)
 app.include_router(secrets_router)
 app.include_router(app_users_router)
 app.include_router(routes_mgmt_router)

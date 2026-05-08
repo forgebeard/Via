@@ -182,6 +182,10 @@ Block-editor endpoints удалены из runtime API. Контракт уда�
 `/api/bot/notification-templates/compile-blocks`, `/{name}/decompose`,
 `/{name}/decompose-body`, `/block-registry`.
 
+Rules-only routing v1: legacy route endpoints удалены (`410 Gone`):
+`/routes/status`, `/routes/version`, `/settings/routes/version`.
+Настройка маршрутизации выполняется через `onboarding#rules`.
+
 ## Перезапуск бота после изменений в панели
 
 Бот при старте читает из БД секреты, пользователей, группы, маршруты и `cycle_settings`. Включён **hot reload** (`BOT_HOT_RELOAD=1`, по умолчанию): конфигурация из панели подтягивается периодически без рестарта. Если hot reload отключён или менялись только секреты в `.env` / ключевые интеграции, после правок **перезапустите бота**:
@@ -205,6 +209,7 @@ docker compose restart bot
 | [docs/secrets-storage.md](docs/secrets-storage.md)                                                   | Хранение секретов и шифрование                      |
 | [docs/rollback-runbook.md](docs/rollback-runbook.md)                                                 | Аварийный откат                                     |
 | [docs/ui-smoke-checklist.md](docs/ui-smoke-checklist.md)                                             | Smoke-чеклист UI                                    |
+| [docs/RULES_ONLY_ROUTING_RUNBOOK.md](docs/RULES_ONLY_ROUTING_RUNBOOK.md)                             | Cutover rules-only маршрутизации                    |
 
 
 Конфигурация через `.env` — см. [.env.example](.env.example).

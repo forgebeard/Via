@@ -1,6 +1,6 @@
 /**
  * Управление вкладками на странице Настройки.
- * Сохраняет активную вкладку в URL (#general / #dictionary / #notifications).
+ * Сохраняет активную вкладку в URL (#general / #dictionary / #notifications / #rules).
  */
 (function () {
   var tabsContainer = document.getElementById('settings-tabs');
@@ -31,7 +31,7 @@
 
   // Restore from URL
   var hash = window.location.hash.replace('#', '');
-  var allowedTabs = ['general', 'dictionary', 'notifications'];
+  var allowedTabs = ['general', 'dictionary', 'notifications', 'rules'];
   if (allowedTabs.indexOf(hash) >= 0) {
     showTab(hash);
   }

@@ -18,6 +18,12 @@ from .models import (
     BotUser,
     CycleSettings,
     GroupVersionRoute,
+    NotificationRoutingRule,
+    NotificationType,
+    RoutingPolicy,
+    RoutingPolicyPriority,
+    RoutingPolicyStatus,
+    RoutingPolicyVersion,
     StatusRoomRoute,
     SupportGroup,
     UserVersionRoute,
@@ -229,7 +235,93 @@ async def fetch_runtime_config(
     routes_config: dict[str, Any] = {
         "status_routes": status_routes,
         "version_routes_global": version_routes_global,
+        "routing_rules": [],
+        "routing_policies": [],
     }
+
+    r_rules = await session.execute(
+        select(NotificationRoutingRule)
+        .where(NotificationRoutingRule.enabled.is_(True))
+        .order_by(
+            NotificationRoutingRule.priority,
+            NotificationRoutingRule.sort_order,
+            NotificationRoutingRule.id,
+        )
+    )
+    rules_rows = list(r_rules.scalars().all())
+    routes_config["routing_rules"] = [
+        {
+            "id": int(row.id),
+            "enabled": bool(row.enabled),
+            "priority": int(row.priority),
+            "sort_order": int(row.sort_order),
+            "target_room_id": str(row.target_room_id),
+            "status_id": int(row.status_id) if row.status_id is not None else None,
+            "version_id": int(row.version_id) if row.version_id is not None else None,
+            "priority_id": int(row.priority_id) if row.priority_id is not None else None,
+            "source_table": "notification_routing_rules",
+        }
+        for row in rules_rows
+    ]
+
+    policies = list(
+        (
+            await session.execute(
+                select(RoutingPolicy)
+                .where(RoutingPolicy.enabled.is_(True))
+                .order_by(RoutingPolicy.id)
+            )
+        ).scalars()
+    )
+    policy_ids = [int(p.id) for p in policies]
+    nt_ids = {int(p.notification_type_id) for p in policies}
+    id_to_nt_key: dict[int, str] = {}
+    if nt_ids:
+        r_nt = await session.execute(select(NotificationType).where(NotificationType.id.in_(nt_ids)))
+        for nt in r_nt.scalars().all():
+            id_to_nt_key[int(nt.id)] = str(nt.key or "")
+    status_map_by_policy: dict[int, list[int]] = defaultdict(list)
+    priority_map_by_policy: dict[int, list[int]] = defaultdict(list)
+    version_map_by_policy: dict[int, list[int]] = defaultdict(list)
+    if policy_ids:
+        for status_row in (
+            await session.execute(
+                select(RoutingPolicyStatus).where(RoutingPolicyStatus.policy_id.in_(policy_ids))
+            )
+        ).scalars():
+            status_map_by_policy[int(status_row.policy_id)].append(int(status_row.status_id))
+        for priority_row in (
+            await session.execute(
+                select(RoutingPolicyPriority).where(RoutingPolicyPriority.policy_id.in_(policy_ids))
+            )
+        ).scalars():
+            priority_map_by_policy[int(priority_row.policy_id)].append(
+                int(priority_row.priority_id)
+            )
+        for version_row in (
+            await session.execute(
+                select(RoutingPolicyVersion).where(RoutingPolicyVersion.policy_id.in_(policy_ids))
+            )
+        ).scalars():
+            version_map_by_policy[int(version_row.policy_id)].append(int(version_row.version_id))
+    routes_config["routing_policies"] = [
+        {
+            "id": int(p.id),
+            "name": str(p.name or ""),
+            "enabled": bool(p.enabled),
+            "action_kind": str(getattr(p, "action_kind", "") or "updated"),
+            "notification_type_key": id_to_nt_key.get(
+                int(p.notification_type_id), "issue_updated"
+            ),
+            "recipient_modes": list(p.recipient_modes)
+            if isinstance(getattr(p, "recipient_modes", None), list)
+            else ["match_rooms"],
+            "status_ids": sorted(status_map_by_policy.get(int(p.id), [])),
+            "priority_ids": sorted(priority_map_by_policy.get(int(p.id), [])),
+            "version_ids": sorted(version_map_by_policy.get(int(p.id), [])),
+        }
+        for p in policies
+    ]
 
     return users, status_map, version_map, groups_cfg, routes_config
 

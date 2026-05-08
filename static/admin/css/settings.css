@@ -755,3 +755,295 @@ fieldset.settings-fieldset > legend {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- Routing rules (onboarding #tab-rules) ---------- */
+/* .stack-sm — вспомогательный контейнер вертикального стека, используется
+   шаблоном правил и потенциально другими формами; не привязан к #tab-rules. */
+.stack-sm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+#tab-rules .routing-rules__rules-list .demo-card h2 {
+  margin-bottom: 0.75rem;
+}
+
+#tab-rules .routing-rules__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+#tab-rules .routing-rules__rule-card {
+  margin: 0;
+}
+
+#tab-rules .routing-rules__name-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+
+#tab-rules .routing-rules__name-field input {
+  width: 100%;
+  max-width: 36rem;
+}
+
+#tab-rules .routing-rules__sentence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  line-height: 1.45;
+  font-size: 0.95rem;
+}
+
+#tab-rules .routing-rules__sentence-part,
+#tab-rules .routing-rules__axis-word {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+#tab-rules .routing-rules__sentence-sep {
+  color: var(--muted);
+  font-weight: 400;
+  margin: 0 0.1rem;
+}
+
+#tab-rules .routing-rules__clause-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+}
+
+#tab-rules .routing-rules__slots {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+#tab-rules .routing-rules__slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+#tab-rules .routing-rules__axis-select {
+  min-width: 8rem;
+  max-width: min(22rem, 100%);
+  padding: 0.35rem 0.5rem;
+  font-size: 0.875rem;
+  border: 1px solid var(--service-bubble-border, rgba(255, 255, 255, 0.06));
+  border-radius: var(--service-bubble-radius, 10px);
+  background: var(--service-bubble-surface, rgba(255, 255, 255, 0.02));
+  color: inherit;
+}
+
+#tab-rules .routing-rules__axis-select--wide {
+  max-width: min(26rem, 100%);
+}
+
+#tab-rules .routing-rules__axis-select--recipient {
+  min-width: 12rem;
+  max-width: min(24rem, 100%);
+}
+
+#tab-rules .routing-rules__notify-select {
+  min-width: 11rem;
+  max-width: min(22rem, 100%);
+  padding: 0.35rem 0.5rem;
+  font-size: 0.875rem;
+  border: 1px solid var(--service-bubble-border, rgba(255, 255, 255, 0.06));
+  border-radius: var(--service-bubble-radius, 10px);
+  background: var(--service-bubble-surface, rgba(255, 255, 255, 0.02));
+  color: inherit;
+}
+
+#tab-rules .routing-rules__axis-select:focus,
+#tab-rules .routing-rules__notify-select:focus {
+  outline: 2px solid var(--cyan, #22d3ee);
+  outline-offset: 1px;
+}
+
+#tab-rules .routing-rules__add-slot,
+#tab-rules .routing-rules__rm {
+  flex-shrink: 0;
+  padding: 0.25rem 0.45rem;
+  min-height: auto;
+  line-height: 1.2;
+}
+
+#tab-rules .routing-rules__card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.25rem;
+}
+
+#tab-rules .routing-rules__card-actions form {
+  display: inline-flex;
+}
+
+#tab-rules .routing-rules__card-actions .inline-delete-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+#tab-rules .routing-rules__dd {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+}
+
+#tab-rules .routing-rules__dd select.routing-rules__axis-select,
+#tab-rules .routing-rules__dd select.routing-rules__notify-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  max-width: none;
+}
+
+#tab-rules .routing-rules__dd-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 6.5rem;
+  max-width: min(26rem, 100%);
+  padding: 0.35rem 0.6rem;
+  font: inherit;
+  font-size: 0.875rem;
+  line-height: 1.25;
+  color: inherit;
+  background: var(--service-bubble-surface, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--service-bubble-border, rgba(255, 255, 255, 0.1));
+  border-radius: var(--service-bubble-radius, 10px);
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+#tab-rules .routing-rules__dd-trigger:hover {
+  border-color: var(--cyan, #22d3ee);
+}
+
+#tab-rules .routing-rules__dd.is-open .routing-rules__dd-trigger {
+  border-color: var(--cyan, #22d3ee);
+  outline: 2px solid color-mix(in srgb, var(--cyan, #22d3ee) 35%, transparent);
+  outline-offset: 1px;
+}
+
+#tab-rules .routing-rules__dd-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#tab-rules .routing-rules__dd-chevron {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  transition: transform 0.15s ease;
+}
+
+#tab-rules .routing-rules__dd.is-open .routing-rules__dd-chevron {
+  transform: rotate(180deg);
+}
+
+#tab-rules .routing-rules__dd-panel {
+  display: none;
+}
+
+.routing-rules__dd-panel--floating {
+  position: fixed;
+  z-index: 1200;
+  min-width: 12rem;
+  max-width: min(28rem, calc(100vw - 16px));
+  max-height: 18rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 0.25rem;
+  background: var(--bg-elev-2, #111827);
+  border: 1px solid var(--service-bubble-border, rgba(255, 255, 255, 0.12));
+  border-radius: var(--service-bubble-radius, 10px);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  scrollbar-color: rgba(156, 163, 175, 0.8) rgba(31, 41, 55, 0.9);
+  scrollbar-gutter: stable both-edges;
+}
+
+#tab-rules .routing-rules__dd-item,
+.routing-rules__dd-panel--floating .routing-rules__dd-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.875rem;
+  line-height: 1.3;
+  cursor: pointer;
+  white-space: normal;
+}
+
+#tab-rules .routing-rules__dd-item:hover,
+#tab-rules .routing-rules__dd-item:focus-visible,
+.routing-rules__dd-panel--floating .routing-rules__dd-item:hover,
+.routing-rules__dd-panel--floating .routing-rules__dd-item:focus-visible {
+  background: var(--service-bubble-surface-strong, rgba(255, 255, 255, 0.08));
+  outline: none;
+}
+
+#tab-rules .routing-rules__dd-item.is-selected,
+.routing-rules__dd-panel--floating .routing-rules__dd-item.is-selected {
+  background: color-mix(in srgb, var(--cyan, #22d3ee) 18%, transparent);
+  color: inherit;
+}
+
+.routing-rules__dd-panel--floating::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.routing-rules__dd-panel--floating::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.65);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.routing-rules__dd-panel--floating::-webkit-scrollbar-track {
+  background: rgba(31, 41, 55, 0.9);
+  border-radius: 999px;
+}
+
+.routing-rules__dd-panel--floating::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+#tab-rules .routing-rules__axis-select,
+#tab-rules .routing-rules__notify-select {
+  min-width: 0;
+}

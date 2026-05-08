@@ -21,6 +21,7 @@
 | [ARCHITECTURE_ADMIN_DB_BOT.md](ARCHITECTURE_ADMIN_DB_BOT.md) | Архитектурный обзор admin/bot/db |
 | [JOURNAL_ENGINE_AND_SENDER.md](JOURNAL_ENGINE_AND_SENDER.md) | Технические детали журналов и sender |
 | [RUNTIME_ROUTING_CONFIG.md](RUNTIME_ROUTING_CONFIG.md) | Источники правды: маршруты комнат в runtime (БД → maps vs routes_config) |
+| [RULES_ONLY_ROUTING_RUNBOOK.md](RULES_ONLY_ROUTING_RUNBOOK.md) | Cutover/runbook rules-only маршрутизации + pre-deploy gate |
 | [CYCLE_SETTINGS_KEYS.md](CYCLE_SETTINGS_KEYS.md) | Поддерживаемые и deprecated ключи `cycle_settings` |
 | [TZ_BOT_V2_IMPLEMENTATION.md](TZ_BOT_V2_IMPLEMENTATION.md) | Реализационные заметки по журналному движку (исторический контекст и текущие ключи) |
 | [NOTIFY_TEMPLATE_MIGRATION.md](NOTIFY_TEMPLATE_MIGRATION.md) | История миграции старых NOTIFY_TEMPLATE ключей на tpl-контур |

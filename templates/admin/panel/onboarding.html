@@ -11,6 +11,7 @@
     <button type="button" class="tab-btn active" data-tab="general">Общие настройки</button>
     <button type="button" class="tab-btn" data-tab="dictionary">Справочник</button>
     <button type="button" class="tab-btn" data-tab="notifications">Уведомления</button>
+    <button type="button" class="tab-btn" data-tab="rules">Правила</button>
   </div>
 
   <form class="form form--settings" method="post" action="/onboarding/save" id="settings-form">
@@ -326,6 +327,17 @@
     </div>
 
   </form>
+
+  <div class="tab-content" id="tab-rules">
+    <header class="page-head">
+      <div class="page-head-row">
+        <div class="page-head-text">
+          <h2>Правила маршрутизации</h2>
+        </div>
+      </div>
+    </header>
+    {% include "panel/partials/routing_rules_content.html" %}
+  </div>
 </div>
 
 <script src="/static/admin/js/toast.js?v={{ asset_version() }}"></script>
@@ -335,4 +347,6 @@
 <script src="/static/admin/js/user_parse.js?v={{ asset_version() }}"></script>
 <script src="/static/admin/js/catalog_statuses.js?v={{ asset_version() }}"></script>
 <script src="/static/admin/js/settings_tabs.js?v={{ asset_version() }}"></script>
+<script src="/static/admin/js/inline_delete.js?v={{ asset_version() }}"></script>
+<script src="/static/admin/js/routing_rules.js?v={{ asset_version() }}"></script>
 {% endblock %}

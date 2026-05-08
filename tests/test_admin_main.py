@@ -38,37 +38,61 @@ def test_events_page_echoes_date_from_query(client: TestClient):
     assert 'name="date_from" value="2024-01-02"' in r.text
 
 
-def test_routes_status_legacy_get_redirects_for_admin(client: TestClient):
+def test_routes_status_legacy_get_returns_410_for_admin(client: TestClient):
     db_url = os.getenv("DATABASE_URL", "")
     if not str(db_url).startswith("postgresql://"):
         pytest.skip("Тест требует Postgres (DATABASE_URL)")
     _setup_and_login_admin(client)
     r = client.get("/routes/status", follow_redirects=False)
-    assert r.status_code == 303
-    loc = r.headers.get("location") or ""
-    assert loc.endswith("/groups")
+    assert r.status_code == 410
 
 
-def test_routes_version_legacy_get_redirects_301_for_admin(client: TestClient):
+def test_routes_version_legacy_get_returns_410_for_admin(client: TestClient):
     db_url = os.getenv("DATABASE_URL", "")
     if not str(db_url).startswith("postgresql://"):
         pytest.skip("Тест требует Postgres (DATABASE_URL)")
     _setup_and_login_admin(client)
     r = client.get("/routes/version", follow_redirects=False)
-    assert r.status_code == 301
-    loc = r.headers.get("location") or ""
-    assert loc.endswith("/settings/routes/version")
+    assert r.status_code == 410
 
 
-def test_settings_routes_version_page_for_admin(client: TestClient):
+def test_routing_rules_page_for_admin(client: TestClient):
     db_url = os.getenv("DATABASE_URL", "")
     if not str(db_url).startswith("postgresql://"):
         pytest.skip("Тест требует Postgres (DATABASE_URL)")
     _setup_and_login_admin(client)
-    r = client.get("/settings/routes/version")
+    r = client.get("/settings/routing-rules", follow_redirects=False)
+    assert r.status_code == 307
+    assert r.headers.get("location", "").endswith("/onboarding#rules")
+
+
+def test_onboarding_has_rules_tab_after_notifications(client: TestClient):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not str(db_url).startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+    _setup_and_login_admin(client)
+    r = client.get("/onboarding")
     if r.status_code != 200:
-        pytest.skip("Нет доступа к /settings/routes/version")
-    assert "Версии по комнатам" in r.text
+        pytest.skip("Нет доступа к /onboarding")
+    assert 'data-tab="rules"' in r.text
+    notifications_idx = r.text.find('data-tab="notifications"')
+    rules_idx = r.text.find('data-tab="rules"')
+    assert notifications_idx != -1
+    assert rules_idx != -1
+    assert notifications_idx < rules_idx
+
+
+def test_dashboard_has_no_routing_rules_ui_blocks(client: TestClient):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not str(db_url).startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+    _setup_and_login_admin(client)
+    r = client.get("/dashboard")
+    if r.status_code != 200:
+        pytest.skip("Нет доступа к /dashboard")
+    assert "Routing no-match" not in r.text
+    assert "Правила маршрутизации" not in r.text
+    assert "Последние routing_no_match" not in r.text
 
 
 def test_routes_version_legacy_post_returns_410(client: TestClient):
@@ -83,6 +107,100 @@ def test_routes_version_legacy_post_returns_410(client: TestClient):
         follow_redirects=False,
     )
     assert r.status_code == 410
+
+
+def test_routing_rules_create_rejects_inactive_fk(client: TestClient):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not str(db_url).startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+    _setup_and_login_admin(client)
+    token = client.cookies.get("admin_csrf", "")
+    r = client.post(
+        "/onboarding/rules",
+        data={
+            "name": "pytest-invalid-fk",
+            "action_kind": "updated",
+            "status_ids": ["999999"],
+            "csrf_token": token,
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 400
+    assert "status_id" in r.text
+
+
+def test_routing_rules_overlap_warning_on_create(client: TestClient):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not str(db_url).startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+    from database.models import RedminePriority, RedmineStatus, RedmineVersion
+    from database.session import get_session_factory
+
+    async def _ensure_catalog_rows() -> tuple[int, int, int]:
+        factory = get_session_factory()
+        async with factory() as session:
+            base = 700000 + (abs(hash(uuid4().hex)) % 90000)
+            status = RedmineStatus(
+                redmine_status_id=base + 1, name=f"pytest-status-{base}", is_active=True
+            )
+            version = RedmineVersion(
+                redmine_version_id=base + 2, name=f"pytest-version-{base}", is_active=True
+            )
+            priority = RedminePriority(
+                redmine_priority_id=base + 3, name=f"pytest-priority-{base}", is_active=True
+            )
+            session.add_all([status, version, priority])
+            await session.flush()
+            await session.commit()
+            return status.id, version.id, priority.id
+
+    sid, vid, pid = asyncio.run(_ensure_catalog_rows())
+    _setup_and_login_admin(client)
+    token = client.cookies.get("admin_csrf", "")
+    first = client.post(
+        "/onboarding/rules",
+        data={
+            "name": "pytest-overlap-1",
+            "action_kind": "updated",
+            "recipient_modes": ["match_rooms"],
+            "status_ids": [str(sid)],
+            "version_ids": [str(vid)],
+            "priority_ids": [str(pid)],
+            "csrf_token": token,
+        },
+        follow_redirects=False,
+    )
+    assert first.status_code == 303
+    second = client.post(
+        "/onboarding/rules",
+        data={
+            "name": "pytest-overlap-2",
+            "action_kind": "updated",
+            "recipient_modes": ["match_rooms"],
+            "status_ids": [str(sid)],
+            "version_ids": [str(vid)],
+            "priority_ids": [str(pid)],
+            "csrf_token": token,
+        },
+        follow_redirects=False,
+    )
+    assert second.status_code == 303
+    loc = second.headers.get("location", "")
+    assert "warn=" in loc
+
+
+def test_routing_rules_preview_endpoint_removed(client: TestClient):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not str(db_url).startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+    _setup_and_login_admin(client)
+    token = client.cookies.get("admin_csrf", "")
+    r = client.post(
+        "/settings/routing-rules/preview",
+        headers={"x-csrf-token": token},
+        json={"action_kind": "updated"},
+    )
+    assert r.status_code == 404
 
 
 def test_health_ok(client: TestClient):

@@ -278,12 +278,16 @@ async def onboarding_page(request: Request, session: AsyncSession = Depends(get_
     statuses_catalog = await admin._load_statuses_catalog(session)
     csrf_token, _ = admin._ensure_csrf(request)
     error = request.query_params.get("error", "")
+    rules_warn = request.query_params.get("warn", "")
     db_config = _load_db_config_from_env()
 
     # Таймзоны (согласовано с ботом: cycle_settings BOT_TIMEZONE → __service_timezone → env)
     tz_all = admin._standard_timezone_options()
     tz_labels = admin._timezone_labels(tz_all)
     current_tz = await admin.effective_bot_timezone_for_admin(session)
+    from admin.routes.routing_rules import build_routing_rules_context
+
+    routing_ctx = await build_routing_rules_context(session, warn=rules_warn)
 
     return admin.templates.TemplateResponse(
         request,
@@ -299,6 +303,7 @@ async def onboarding_page(request: Request, session: AsyncSession = Depends(get_
             "timezone_all_options": tz_all,
             "timezone_labels": tz_labels,
             "service_timezone": current_tz,
+            **routing_ctx,
         },
     )
 

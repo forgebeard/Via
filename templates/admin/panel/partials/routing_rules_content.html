@@ -1,0 +1,276 @@
+{% if warn %}
+<div class="warning" role="status">{{ warn }}</div>
+{% endif %}
+
+<article class="card demo-card card--mb">
+  <h2>Новое правило</h2>
+  <form id="routing-rules-create" method="post" action="/onboarding/rules" class="routing-rules__policy-form stack-sm" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
+
+    <label class="routing-rules__name-field">Название
+      <input type="text" name="name" placeholder="Например: Обновления для РВ1/РВ2"/>
+    </label>
+
+    <div class="routing-rules__sentence" aria-label="Условие правила">
+      <span class="routing-rules__sentence-part">Если у задачи</span>
+
+      <div class="routing-rules__clause-group" data-axis="status" data-for-form="">
+        <span class="routing-rules__axis-word">статус</span>
+        <div class="routing-rules__slots" data-slots="status">
+          <div class="routing-rules__slot" data-slot>
+            <select name="status_ids" class="routing-rules__axis-select routing-rules__axis-select--wide" aria-label="Статус">
+              <option value="">— любой —</option>
+              {% for it in statuses %}<option value="{{ it.id }}">{{ it.name }}</option>{% endfor %}
+            </select>
+            <button type="button" class="btn btn-ghost routing-rules__rm" aria-label="Убрать значение">×</button>
+          </div>
+        </div>
+        <button type="button" class="btn btn-ghost routing-rules__add-slot" data-axis="status" aria-label="Добавить статус">+</button>
+      </div>
+
+      <span class="routing-rules__sentence-sep">,</span>
+
+      <div class="routing-rules__clause-group" data-axis="version" data-for-form="">
+        <span class="routing-rules__axis-word">версия</span>
+        <div class="routing-rules__slots" data-slots="version">
+          <div class="routing-rules__slot" data-slot>
+            <select name="version_ids" class="routing-rules__axis-select routing-rules__axis-select--wide" aria-label="Версия">
+              <option value="">— любая —</option>
+              {% for it in versions %}<option value="{{ it.id }}">{{ it.name }}</option>{% endfor %}
+            </select>
+            <button type="button" class="btn btn-ghost routing-rules__rm" aria-label="Убрать значение">×</button>
+          </div>
+        </div>
+        <button type="button" class="btn btn-ghost routing-rules__add-slot" data-axis="version" aria-label="Добавить версию">+</button>
+      </div>
+
+      <span class="routing-rules__sentence-sep">,</span>
+
+      <div class="routing-rules__clause-group" data-axis="priority" data-for-form="">
+        <span class="routing-rules__axis-word">приоритет</span>
+        <div class="routing-rules__slots" data-slots="priority">
+          <div class="routing-rules__slot" data-slot>
+            <select name="priority_ids" class="routing-rules__axis-select routing-rules__axis-select--wide" aria-label="Приоритет">
+              <option value="">— любой —</option>
+              {% for it in priorities %}<option value="{{ it.id }}">{{ it.name }}</option>{% endfor %}
+            </select>
+            <button type="button" class="btn btn-ghost routing-rules__rm" aria-label="Убрать значение">×</button>
+          </div>
+        </div>
+        <button type="button" class="btn btn-ghost routing-rules__add-slot" data-axis="priority" aria-label="Добавить приоритет">+</button>
+      </div>
+
+      <span class="routing-rules__sentence-part">, то отправить уведомление</span>
+      <select name="action_kind" class="routing-rules__notify-select" required aria-label="Тип уведомления">
+        {% for ch in journal_notification_choices %}
+        <option value="{{ ch.action_kind }}" {% if ch.action_kind == 'updated' %}selected{% endif %}>{{ ch.label }}</option>
+        {% endfor %}
+      </select>
+
+      <span class="routing-rules__sentence-part">получателю</span>
+
+      <div class="routing-rules__clause-group" data-axis="recipient" data-for-form="">
+        <div class="routing-rules__slots" data-slots="recipient">
+          <div class="routing-rules__slot" data-slot>
+            <select name="recipient_modes" class="routing-rules__axis-select routing-rules__axis-select--recipient" aria-label="Получатель">
+              <option value="match_rooms" selected>В подходящие комнаты</option>
+              <option value="assignee">Текущему исполнителю</option>
+              <option value="watchers">Наблюдателям</option>
+            </select>
+            <button type="button" class="btn btn-ghost routing-rules__rm" aria-label="Убрать получателя">×</button>
+          </div>
+        </div>
+        <button type="button" class="btn btn-ghost routing-rules__add-slot" data-axis="recipient" aria-label="Добавить получателя">+</button>
+      </div>
+    </div>
+
+    <div class="table-actions">
+      <button class="btn btn-primary" type="submit">Добавить</button>
+    </div>
+  </form>
+</article>
+
+<article class="card demo-card routing-rules__rules-list">
+  <h2>Текущие правила</h2>
+  <div class="routing-rules__cards">
+    {% for r in rules %}
+    {% set fid = 'rule-edit-' ~ r.id %}
+    {% set sids = rule_status_ids.get(r.id, []) %}
+    {% set vids = rule_version_ids.get(r.id, []) %}
+    {% set pids = rule_priority_ids.get(r.id, []) %}
+    {% set rm = rule_recipient_modes.get(r.id, ['match_rooms']) %}
+    <article class="card demo-card routing-rules__rule-card">
+      <div class="stack-sm">
+        <label class="routing-rules__name-field">Название
+          <input type="text" name="name" value="{{ r.name }}" form="{{ fid }}"/>
+        </label>
+
+        <div class="routing-rules__sentence" aria-label="Условие правила">
+          <span class="routing-rules__sentence-part">Если у задачи</span>
+
+          <div class="routing-rules__clause-group" data-axis="status" data-for-form="{{ fid }}">
+            <span class="routing-rules__axis-word">статус</span>
+            <div class="routing-rules__slots" data-slots="status">
+              {% if sids %}
+                {% for sid in sids %}
+                <div class="routing-rules__slot" data-slot>
+                  <select name="status_ids" class="routing-rules__axis-select routing-rules__axis-select--wide" form="{{ fid }}" aria-label="Статус">
+                    <option value="">— любой —</option>
+                    {% for it in statuses %}<option value="{{ it.id }}" {% if it.id == sid %}selected{% endif %}>{{ it.name }}</option>{% endfor %}
+                  </select>
+                  <button type="button" class="btn btn-ghost routing-rules__rm" aria-label="Убрать">×</button>
+                </div>
+                {% endfor %}
+              {% else %}
+                <div class="routing-rules__slot" data-slot>
+                  <select name="status_ids" class="routing-rules__axis-select routing-rules__axis-select--wide" form="{{ fid }}" aria-label="Статус">
+                    <option value="">— любой —</option>
+                    {% for it in statuses %}<option value="{{ it.id }}">{{ it.name }}</option>{% endfor %}
+                  </select>
+                  <button type="button" class="btn btn-ghost routing-rules__rm" aria-label="Убрать">×</button>
+                </div>
+              {% endif %}
+            </div>
+            <button type="button" class="btn btn-ghost routing-rules__add-slot" data-axis="status" aria-label="Добавить статус">+</button>
+          </div>
+
+          <span class="routing-rules__sentence-sep">,</span>
+
+          <div class="routing-rules__clause-group" data-axis="version" data-for-form="{{ fid }}">
+            <span class="routing-rules__axis-word">версия</span>
+            <div class="routing-rules__slots" data-slots="version">
+              {% if vids %}
+                {% for vid in vids %}
+                <div class="routing-rules__slot" data-slot>
+                  <select name="version_ids" class="routing-rules__axis-select routing-rules__axis-select--wide" form="{{ fid }}" aria-label="Версия">
+                    <option value="">— любая —</option>
+                    {% for it in versions %}<option value="{{ it.id }}" {% if it.id == vid %}selected{% endif %}>{{ it.name }}</option>{% endfor %}
+                  </select>
+                  <button type="button" class="btn btn-ghost routing-rules__rm" aria-label="Убрать">×</button>
+                </div>
+                {% endfor %}
+              {% else %}
+                <div class="routing-rules__slot" data-slot>
+                  <select name="version_ids" class="routing-rules__axis-select routing-rules__axis-select--wide" form="{{ fid }}" aria-label="Версия">
+                    <option value="">— любая —</option>
+                    {% for it in versions %}<option value="{{ it.id }}">{{ it.name }}</option>{% endfor %}
+                  </select>
+                  <button type="button" class="btn btn-ghost routing-rules__rm" aria-label="Убрать">×</button>
+                </div>
+              {% endif %}
+            </div>
+            <button type="button" class="btn btn-ghost routing-rules__add-slot" data-axis="version" aria-label="Добавить версию">+</button>
+          </div>
+
+          <span class="routing-rules__sentence-sep">,</span>
+
+          <div class="routing-rules__clause-group" data-axis="priority" data-for-form="{{ fid }}">
+            <span class="routing-rules__axis-word">приоритет</span>
+            <div class="routing-rules__slots" data-slots="priority">
+              {% if pids %}
+                {% for pid in pids %}
+                <div class="routing-rules__slot" data-slot>
+                  <select name="priority_ids" class="routing-rules__axis-select routing-rules__axis-select--wide" form="{{ fid }}" aria-label="Приоритет">
+                    <option value="">— любой —</option>
+                    {% for it in priorities %}<option value="{{ it.id }}" {% if it.id == pid %}selected{% endif %}>{{ it.name }}</option>{% endfor %}
+                  </select>
+                  <button type="button" class="btn btn-ghost routing-rules__rm" aria-label="Убрать">×</button>
+                </div>
+                {% endfor %}
+              {% else %}
+                <div class="routing-rules__slot" data-slot>
+                  <select name="priority_ids" class="routing-rules__axis-select routing-rules__axis-select--wide" form="{{ fid }}" aria-label="Приоритет">
+                    <option value="">— любой —</option>
+                    {% for it in priorities %}<option value="{{ it.id }}">{{ it.name }}</option>{% endfor %}
+                  </select>
+                  <button type="button" class="btn btn-ghost routing-rules__rm" aria-label="Убрать">×</button>
+                </div>
+              {% endif %}
+            </div>
+            <button type="button" class="btn btn-ghost routing-rules__add-slot" data-axis="priority" aria-label="Добавить приоритет">+</button>
+          </div>
+
+          <span class="routing-rules__sentence-part">, то отправить уведомление</span>
+          <select name="action_kind" class="routing-rules__notify-select" required form="{{ fid }}" aria-label="Тип уведомления">
+            {% for ch in journal_notification_choices %}
+            <option value="{{ ch.action_kind }}" {% if (r.action_kind or 'updated') == ch.action_kind %}selected{% endif %}>{{ ch.label }}</option>
+            {% endfor %}
+          </select>
+
+          <span class="routing-rules__sentence-part">получателю</span>
+
+          <div class="routing-rules__clause-group" data-axis="recipient" data-for-form="{{ fid }}">
+            <div class="routing-rules__slots" data-slots="recipient">
+              {% for mode in rm %}
+              <div class="routing-rules__slot" data-slot>
+                <select name="recipient_modes" class="routing-rules__axis-select routing-rules__axis-select--recipient" form="{{ fid }}" aria-label="Получатель">
+                  <option value="match_rooms" {% if mode == 'match_rooms' %}selected{% endif %}>В подходящие комнаты</option>
+                  <option value="assignee" {% if mode == 'assignee' %}selected{% endif %}>Текущему исполнителю</option>
+                  <option value="watchers" {% if mode == 'watchers' %}selected{% endif %}>Наблюдателям</option>
+                </select>
+                <button type="button" class="btn btn-ghost routing-rules__rm" aria-label="Убрать">×</button>
+              </div>
+              {% endfor %}
+            </div>
+            <button type="button" class="btn btn-ghost routing-rules__add-slot" data-axis="recipient" aria-label="Добавить получателя">+</button>
+          </div>
+        </div>
+
+        <div class="table-actions routing-rules__card-actions">
+          <form id="{{ fid }}" class="routing-rules__policy-form" method="post" action="/onboarding/rules/{{ r.id }}">
+            <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
+            <button class="btn btn-primary" type="submit">Сохранить</button>
+          </form>
+          <form method="post" action="/onboarding/rules/{{ r.id }}/delete" data-inline-delete-form>
+            <input type="hidden" name="csrf_token" value="{{ request.state._state.get('csrf_token', '') }}"/>
+            <button class="btn btn-danger" type="submit">Удалить</button>
+          </form>
+        </div>
+      </div>
+    </article>
+    {% else %}
+    <p class="muted">Пока нет правил.</p>
+    {% endfor %}
+  </div>
+</article>
+
+<template id="routing-rules-tpl-status">
+  <div class="routing-rules__slot" data-slot>
+    <select name="status_ids" class="routing-rules__axis-select routing-rules__axis-select--wide" aria-label="Статус">
+      <option value="">— любой —</option>
+      {% for it in statuses %}<option value="{{ it.id }}">{{ it.name }}</option>{% endfor %}
+    </select>
+    <button type="button" class="btn btn-ghost routing-rules__rm" aria-label="Убрать значение">×</button>
+  </div>
+</template>
+
+<template id="routing-rules-tpl-version">
+  <div class="routing-rules__slot" data-slot>
+    <select name="version_ids" class="routing-rules__axis-select routing-rules__axis-select--wide" aria-label="Версия">
+      <option value="">— любая —</option>
+      {% for it in versions %}<option value="{{ it.id }}">{{ it.name }}</option>{% endfor %}
+    </select>
+    <button type="button" class="btn btn-ghost routing-rules__rm" aria-label="Убрать значение">×</button>
+  </div>
+</template>
+
+<template id="routing-rules-tpl-priority">
+  <div class="routing-rules__slot" data-slot>
+    <select name="priority_ids" class="routing-rules__axis-select routing-rules__axis-select--wide" aria-label="Приоритет">
+      <option value="">— любой —</option>
+      {% for it in priorities %}<option value="{{ it.id }}">{{ it.name }}</option>{% endfor %}
+    </select>
+    <button type="button" class="btn btn-ghost routing-rules__rm" aria-label="Убрать значение">×</button>
+  </div>
+</template>
+
+<template id="routing-rules-tpl-recipient">
+  <div class="routing-rules__slot" data-slot>
+    <select name="recipient_modes" class="routing-rules__axis-select routing-rules__axis-select--recipient" aria-label="Получатель">
+      <option value="match_rooms" selected>В подходящие комнаты</option>
+      <option value="assignee">Текущему исполнителю</option>
+      <option value="watchers">Наблюдателям</option>
+    </select>
+    <button type="button" class="btn btn-ghost routing-rules__rm" aria-label="Убрать получателя">×</button>
+  </div>
+</template>

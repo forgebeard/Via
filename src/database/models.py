@@ -123,6 +123,169 @@ class UserVersionRoute(Base):
     notify_on_assignment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
+class NotificationRoutingRule(Base):
+    """Rules-only маршрутизация: условия -> целевая Matrix-комната."""
+
+    __tablename__ = "notification_routing_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    target_room_id: Mapped[str] = mapped_column(Text, nullable=False)
+    status_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("redmine_statuses.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    version_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("redmine_versions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    priority_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("redmine_priorities.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class RoutingPolicy(Base):
+    """Policy-based routing v4: action + issue-axes conditions."""
+
+    __tablename__ = "routing_policies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    action_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="updated", index=True)
+    notification_type_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("notification_types.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    target_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="both")
+    recipient_modes: Mapped[list] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=lambda: ["match_rooms"],
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class RoutingPolicyStatus(Base):
+    __tablename__ = "routing_policy_statuses"
+    __table_args__ = (UniqueConstraint("policy_id", "status_id", name="uq_routing_policy_status"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    policy_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("routing_policies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("redmine_statuses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+
+class RoutingPolicyPriority(Base):
+    __tablename__ = "routing_policy_priorities"
+    __table_args__ = (
+        UniqueConstraint("policy_id", "priority_id", name="uq_routing_policy_priority"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    policy_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("routing_policies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    priority_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("redmine_priorities.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+
+class RoutingPolicyVersion(Base):
+    __tablename__ = "routing_policy_versions"
+    __table_args__ = (
+        UniqueConstraint("policy_id", "version_id", name="uq_routing_policy_version"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    policy_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("routing_policies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    version_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("redmine_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+
+class RoutingPolicyTargetUser(Base):
+    __tablename__ = "routing_policy_target_users"
+    __table_args__ = (
+        UniqueConstraint("policy_id", "user_id", name="uq_routing_policy_target_user"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    policy_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("routing_policies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("bot_users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+
+class RoutingPolicyTargetGroup(Base):
+    __tablename__ = "routing_policy_target_groups"
+    __table_args__ = (
+        UniqueConstraint("policy_id", "group_id", name="uq_routing_policy_target_group"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    policy_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("routing_policies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    group_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("support_groups.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+
 class SupportGroup(Base):
     __tablename__ = "support_groups"
 

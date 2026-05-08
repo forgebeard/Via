@@ -608,6 +608,22 @@ def _dash_events_tail_line_count(*, max_lines: int = 400) -> int:
     return sum(1 for line in text.splitlines() if line.strip())
 
 
+def _routing_no_match_stats(*, max_lines: int = 1200) -> tuple[int, list[str]]:
+    path = _admin_events_log_path()
+    if not path.is_file():
+        return 0, []
+    text = _read_log_tail(path, max_lines=max_lines)
+    lines = [ln.strip() for ln in text.splitlines() if "routing_no_match" in ln]
+    recent = lines[-5:]
+    compact_recent: list[str] = []
+    for ln in recent:
+        if len(ln) > 220:
+            compact_recent.append(ln[-220:])
+        else:
+            compact_recent.append(ln)
+    return len(lines), compact_recent
+
+
 async def _dashboard_counts(session: AsyncSession) -> dict[str, int]:
     user_count = int(
         (await session.execute(select(func.count()).select_from(BotUser))).scalar_one() or 0
