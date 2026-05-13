@@ -28,7 +28,6 @@ def test_event_to_template_covers_notification_types() -> None:
     assert_event_map_covers_notification_types()
     assert EVENT_TO_TEMPLATE["new"] == "tpl_new_issue"
     assert EVENT_TO_TEMPLATE["status_change"] == "tpl_task_change"
-    assert EVENT_TO_TEMPLATE["reminder"] == "tpl_reminder"
 
 
 @pytest.mark.asyncio
@@ -56,9 +55,7 @@ async def test_build_matrix_tpl_path_uses_render_named_template(simple_issue):
         return "<p>tpl-test</p>", "plain tpl-test"
 
     with patch("bot.template_loader.render_named_template", new=_fake_render):
-        out = await sender.build_matrix_message_content(
-            simple_issue, "new", session=mock_session
-        )
+        out = await sender.build_matrix_message_content(simple_issue, "new", session=mock_session)
     assert out["formatted_body"] == "<p>tpl-test</p>"
     assert out["body"] == "plain tpl-test"
     assert out["msgtype"] == "m.text"
@@ -95,12 +92,8 @@ async def test_build_matrix_tpl_event_map_parametrized(simple_issue, event_type:
     ctx = captured["context"]
     assert isinstance(ctx, dict)
     assert ctx["issue_id"] == simple_issue.id
-    if event_type == "reminder":
-        assert ctx.get("reminder_text") == "Задача без движения"
-        assert ctx.get("title") == "Напоминание"
-    else:
-        assert ctx.get("event_type") == NOTIFICATION_TYPES[event_type][1]
-        assert "pytest extra" in (ctx.get("extra_text") or "")
+    assert ctx.get("event_type") == NOTIFICATION_TYPES[event_type][1]
+    assert "pytest extra" in (ctx.get("extra_text") or "")
 
 
 @pytest.mark.asyncio

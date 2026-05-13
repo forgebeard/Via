@@ -124,7 +124,14 @@ def apply_service_timezone_to_admin_loggers(tz_name: str | None = None) -> None:
     os.environ["BOT_TIMEZONE"] = tz
     fmt = get_log_formatter(tz)
     seen: set[int] = set()
-    for name in ("admin", "uvicorn", "uvicorn.error", "uvicorn.access"):
+    for name in (
+        "admin",
+        "redmine_admin",
+        "catalog",
+        "uvicorn",
+        "uvicorn.error",
+        "uvicorn.access",
+    ):
         lg = logging.getLogger(name)
         for h in lg.handlers:
             hid = id(h)

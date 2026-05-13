@@ -214,16 +214,25 @@ async def phase_a_candidates(
             continue
         if iid and iid in watched_issue_ids:
             in_scope.append(iss)
-    if not contract_verbose and (required_count or optional_count):
-        logger.info(
-            "journal_contract_check_summary tick=%s optional_issues=%s required_issues=%s optional_samples=%s required_samples=%s sample_limit=%s",
-            _CONTRACT_TICK_NO,
-            optional_count,
-            required_count,
-            optional_sample_issue_ids,
-            required_sample_issue_ids,
-            sample_limit,
-        )
+    if not contract_verbose:
+        if required_count > 0:
+            logger.warning(
+                "journal_contract_check_summary tick=%s optional_issues=%s required_issues=%s optional_samples=%s required_samples=%s sample_limit=%s",
+                _CONTRACT_TICK_NO,
+                optional_count,
+                required_count,
+                optional_sample_issue_ids,
+                required_sample_issue_ids,
+                sample_limit,
+            )
+        elif optional_count > 0:
+            logger.debug(
+                "journal_contract_check_summary tick=%s optional_issues=%s optional_samples=%s sample_limit=%s",
+                _CONTRACT_TICK_NO,
+                optional_count,
+                optional_sample_issue_ids,
+                sample_limit,
+            )
     return in_scope, max_on
 
 

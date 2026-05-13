@@ -166,106 +166,12 @@
     });
   })();
 
-  /* --- Daily report schedule (cycle_settings via /api/bot/content) --- */
-  (function () {
-    var enabled = document.getElementById("daily_report_enabled");
-    var timeInput = document.getElementById("daily_report_time");
-    var saveBtn = document.getElementById("daily_report_schedule_save");
-    var status = document.getElementById("daily_report_schedule_status");
-    if (!enabled || !timeInput || !saveBtn || !status) return;
-
-    function csrfTok() {
-      var csrfInput = form.querySelector('input[name="csrf_token"]');
-      return csrfInput ? csrfInput.value : "";
-    }
-
-    function pad2(n) {
-      return n < 10 ? "0" + n : String(n);
-    }
-
-    function parseTime(value) {
-      var raw = String(value || "").trim();
-      var m = raw.match(/^([0-1]\d|2[0-3]):([0-5]\d)$/);
-      if (!m) return null;
-      return { hour: parseInt(m[1], 10), minute: parseInt(m[2], 10) };
-    }
-
-    function normalizeTime(value, fallbackHour, fallbackMinute) {
-      var parsed = parseTime(value);
-      if (parsed) return parsed;
-      return {
-        hour: Math.max(0, Math.min(23, parseInt(fallbackHour, 10) || 9)),
-        minute: Math.max(0, Math.min(59, parseInt(fallbackMinute, 10) || 0))
-      };
-    }
-
-    function loadSchedule() {
-      status.textContent = "Загрузка расписания…";
-      fetch("/api/bot/content", {
-        method: "GET",
-        credentials: "same-origin",
-        headers: { Accept: "application/json" }
-      }).then(function (resp) {
-        if (!resp.ok) throw new Error("load_failed");
-        return resp.json();
-      }).then(function (data) {
-        var s = (data && data.settings) || {};
-        enabled.checked = !!s.daily_report_enabled;
-        var parsed = normalizeTime("", s.daily_report_hour, s.daily_report_minute);
-        timeInput.value = pad2(parsed.hour) + ":" + pad2(parsed.minute);
-        status.textContent = "";
-      }).catch(function () {
-        status.textContent = "Не удалось загрузить расписание.";
-      });
-    }
-
-    saveBtn.addEventListener("click", function () {
-      var parsed = parseTime(timeInput.value);
-      if (!parsed) {
-        status.textContent = "Введите время в формате ЧЧ:ММ.";
-        return;
-      }
-      timeInput.value = pad2(parsed.hour) + ":" + pad2(parsed.minute);
-      status.textContent = "Сохранение…";
-      var fd = new FormData();
-      fd.append("csrf_token", csrfTok());
-      fd.append("daily_report_enabled", enabled.checked ? "true" : "false");
-      fd.append("daily_report_hour", String(parsed.hour));
-      fd.append("daily_report_minute", String(parsed.minute));
-      fetch("/api/bot/content", {
-        method: "POST",
-        body: fd,
-        credentials: "same-origin",
-        headers: { Accept: "application/json" }
-      }).then(function (resp) {
-        if (!resp.ok) throw new Error("save_failed");
-        return resp.json();
-      }).then(function (d) {
-        if (d && d.ok) {
-          status.textContent = "Расписание сохранено.";
-          showToast("Расписание утреннего отчёта сохранено", false);
-        } else {
-          status.textContent = "Ошибка сохранения.";
-        }
-      }).catch(function () {
-        status.textContent = "Ошибка сети при сохранении.";
-      });
-    });
-
-    window.addEventListener("via-settings-tab", function (ev) {
-      if (ev.detail && ev.detail.tab === "notifications") loadSchedule();
-    });
-    if (window.location.hash === "#notifications") loadSchedule();
-  })();
-
   /* --- Journal engine Jinja2 templates (notification_templates) --- */
   (function () {
     var root = document.getElementById("tpl-v2-fields");
     var statusEl = document.getElementById("tpl-v2-status");
     if (!root || !statusEl) return;
     var tplScope = document.getElementById("tab-notifications") || document;
-    void document.getElementById("daily-report-template-root");
-    void document.getElementById("daily-report-template-missing");
 
     function csrfToken() {
       var csrfInput = form.querySelector('input[name="csrf_token"]');
@@ -349,8 +255,6 @@
 
     function loadV2() {
       statusEl.textContent = "Загрузка шаблонов v2…";
-      var dailyRoot = document.getElementById("daily-report-template-root");
-      var dailyMissing = document.getElementById("daily-report-template-missing");
       fetch("/api/bot/notification-templates", {
         method: "GET",
         credentials: "same-origin",
@@ -360,15 +264,12 @@
         return resp.json();
       }).then(function (data) {
         root.innerHTML = "";
-        if (dailyRoot) dailyRoot.innerHTML = "";
-        var hadDailyTpl = false;
         (data.templates || []).forEach(function (tpl) {
           var displayLabel = tpl.display_name || tpl.name;
-          var isDailyTemplate = tpl.name === "tpl_daily_report";
           var wrap = document.createElement("div");
-          wrap.className = isDailyTemplate ? "daily-report__editor-wrap" : "service-bubble tpl-v2-template-card";
+          wrap.className = "service-bubble tpl-v2-template-card";
           var head = document.createElement("div");
-          head.className = "daily-report__head";
+          head.className = "tpl-v2-card__head";
           var headTitle = document.createElement("div");
           headTitle.className = "card-title";
           headTitle.textContent = displayLabel;
@@ -443,20 +344,8 @@
             previewTemplate(tpl.name, function () { return ta.value; }, pre, reqToken);
           }, 0);
 
-          var mount = root;
-          if (isDailyTemplate && dailyRoot) {
-            mount = dailyRoot;
-            hadDailyTpl = true;
-          }
-          mount.appendChild(wrap);
+          root.appendChild(wrap);
         });
-        if (dailyMissing) {
-          if (hadDailyTpl || !dailyRoot) {
-            dailyMissing.classList.add("is-hidden");
-          } else {
-            dailyMissing.classList.remove("is-hidden");
-          }
-        }
         tplScope.querySelectorAll(".tpl-v2-save").forEach(function (btn) {
           btn.addEventListener("click", function () {
             var name = btn.getAttribute("data-name");
@@ -475,9 +364,9 @@
             }).then(function (resp) {
               if (!resp.ok) throw new Error("save_failed");
               statusEl.textContent = "Сохранено: " + label;
-              var card = btn.closest(".service-bubble, .daily-report__editor-wrap");
+              var card = btn.closest(".service-bubble");
               if (card) {
-                var badge = card.querySelector(".daily-report__head .muted");
+                var badge = card.querySelector(".tpl-v2-card__head .muted");
                 if (badge) badge.textContent = sourceBadge("custom");
               }
               showToast("Шаблон " + label + " сохранён", false);

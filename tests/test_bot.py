@@ -31,6 +31,7 @@ import matrix_send
 import src.bot.main as bot
 from tests.conftest import MockIssue, MockJournal
 
+
 # Справочники для resolve_field_value / describe_journal (как фрагмент загрузки из БД).
 @pytest.fixture(scope="module")
 def test_catalogs():
@@ -83,9 +84,8 @@ def _matrix_test_body_from_context(ctx: dict) -> str:
 @pytest.fixture
 def matrix_message_session():
     """AsyncSession-мок + подмена render_named_template для тестов Matrix без БД."""
-    from bot.catalogs import BotCatalogs
-
     import bot.config_state as config_state
+    from bot.catalogs import BotCatalogs
 
     config_state.CATALOGS = BotCatalogs(
         status_id_to_name={1: "Новая", 2: "В работе"},
@@ -537,7 +537,9 @@ class TestResolveFieldValue:
     def test_known_status(self, test_catalogs):
         assert bot.resolve_field_value("status_id", "1", test_catalogs) == "Новая"
         assert bot.resolve_field_value("status_id", "2", test_catalogs) == "В работе"
-        assert bot.resolve_field_value("status_id", "13", test_catalogs) == "Информация предоставлена"
+        assert (
+            bot.resolve_field_value("status_id", "13", test_catalogs) == "Информация предоставлена"
+        )
 
     def test_unknown_status_returns_raw(self, test_catalogs):
         assert bot.resolve_field_value("status_id", "999", test_catalogs) == "999"
@@ -554,58 +556,6 @@ class TestResolveFieldValue:
     def test_regular_field_passthrough(self):
         """Обычное поле (не ID) → значение как есть."""
         assert bot.resolve_field_value("subject", "Тест") == "Тест"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 7. РОУТИНГ ПО КОМНАТАМ
-# ═══════════════════════════════════════════════════════════════════════════
-# Дополнительные Matrix-комнаты по версии задачи и статусу РВ.
-
-
-class TestRouting:
-    """Тесты маршрутизации уведомлений в доп. комнаты."""
-
-    def test_new_issue_without_version_goes_to_redos(self, simple_issue):
-        """Задача без версии → комната РЕД ОС."""
-        with patch.dict(bot.VERSION_ROOM_MAP, {"РЕД ОС": "!redos:server"}):
-            rooms = bot.get_extra_rooms_for_new(simple_issue, {})
-            assert "!redos:server" in rooms
-
-    def test_new_issue_virt_goes_to_virt(self, issue_with_version):
-        """Задача с версией Виртуализация → комната Виртуализации."""
-        with patch.dict(
-            bot.VERSION_ROOM_MAP,
-            {
-                "РЕД Виртуализация": "!virt:server",
-                "РЕД ОС": "!redos:server",
-            },
-        ):
-            rooms = bot.get_extra_rooms_for_new(issue_with_version, {})
-            assert "!virt:server" in rooms
-            assert "!redos:server" not in rooms
-
-    def test_rv_always_goes_to_rv_room(self, rv_issue):
-        """Передано в работу.РВ → всегда в комнату РВ."""
-        with patch.dict(bot.STATUS_ROOM_MAP, {"Передано в работу.РВ": "!rv:server"}):
-            with patch.dict(bot.VERSION_ROOM_MAP, {"РЕД Виртуализация": "!virt:server"}):
-                rooms = bot.get_extra_rooms_for_rv(rv_issue, {})
-                assert "!rv:server" in rooms
-                assert "!virt:server" in rooms  # т.к. версия Виртуализация
-
-    def test_rv_without_virt_version(self):
-        """РВ без версии Виртуализация → только комната РВ."""
-        issue = MockIssue(issue_id=8888, status="Передано в работу.РВ")
-        with patch.dict(bot.STATUS_ROOM_MAP, {"Передано в работу.РВ": "!rv:server"}):
-            with patch.dict(bot.VERSION_ROOM_MAP, {"РЕД Виртуализация": "!virt:server"}):
-                rooms = bot.get_extra_rooms_for_rv(issue, {})
-                assert "!rv:server" in rooms
-                assert "!virt:server" not in rooms
-
-    def test_empty_room_maps(self, simple_issue):
-        """Пустые маппинги → пустой набор комнат."""
-        with patch.dict(bot.VERSION_ROOM_MAP, {}, clear=True):
-            rooms = bot.get_extra_rooms_for_new(simple_issue, {})
-            assert rooms == set()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -691,7 +641,9 @@ class TestRoomSendWithRetry:
         client.room_send = AsyncMock(side_effect=[limited, success])
 
         with patch("matrix_send.asyncio.sleep", new_callable=AsyncMock) as sleep_mock:
-            await matrix_send.room_send_with_retry(client, "!room:server", {"msgtype": "m.text", "body": "x"})
+            await matrix_send.room_send_with_retry(
+                client, "!room:server", {"msgtype": "m.text", "body": "x"}
+            )
 
         sleep_mock.assert_awaited()
         assert sleep_mock.await_args_list[0].args[0] == pytest.approx(2.5, rel=1e-3)
@@ -709,7 +661,9 @@ class TestRoomSendWithRetry:
         client.room_send = AsyncMock(return_value=forbidden)
         with patch("matrix_send.asyncio.sleep", new_callable=AsyncMock) as sleep_mock:
             with pytest.raises(RuntimeError):
-                await matrix_send.room_send_with_retry(client, "!room:server", {"msgtype": "m.text", "body": "x"})
+                await matrix_send.room_send_with_retry(
+                    client, "!room:server", {"msgtype": "m.text", "body": "x"}
+                )
         assert client.room_send.call_count == 1
         sleep_mock.assert_not_awaited()
 
@@ -748,7 +702,9 @@ class TestSendMatrixMessage:
         mock_matrix_client.room_send.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_html_contains_issue_id(self, mock_matrix_client, simple_issue, matrix_message_session):
+    async def test_html_contains_issue_id(
+        self, mock_matrix_client, simple_issue, matrix_message_session
+    ):
         """HTML содержит ID задачи и ссылку."""
         await bot.send_matrix_message(
             mock_matrix_client,
@@ -767,7 +723,9 @@ class TestSendMatrixMessage:
         assert "/issues/7777" in html
 
     @pytest.mark.asyncio
-    async def test_html_contains_status(self, mock_matrix_client, simple_issue, matrix_message_session):
+    async def test_html_contains_status(
+        self, mock_matrix_client, simple_issue, matrix_message_session
+    ):
         """HTML содержит текущий статус."""
         await bot.send_matrix_message(
             mock_matrix_client,
@@ -783,7 +741,9 @@ class TestSendMatrixMessage:
         assert "Новая" in content["formatted_body"]
 
     @pytest.mark.asyncio
-    async def test_overdue_shows_days(self, mock_matrix_client, overdue_issue, matrix_message_session):
+    async def test_overdue_shows_days(
+        self, mock_matrix_client, overdue_issue, matrix_message_session
+    ):
         """Для просроченных — показывает количество дней."""
         await bot.send_matrix_message(
             mock_matrix_client,
@@ -799,7 +759,9 @@ class TestSendMatrixMessage:
         assert "просрочено" in content["formatted_body"]
 
     @pytest.mark.asyncio
-    async def test_status_change_uses_v5_lines(self, mock_matrix_client, simple_issue, matrix_message_session):
+    async def test_status_change_uses_v5_lines(
+        self, mock_matrix_client, simple_issue, matrix_message_session
+    ):
         """status_change рендерится в v5-полях и plain fallback с `| `."""
         await bot.send_matrix_message(
             mock_matrix_client,
@@ -838,7 +800,9 @@ class TestSendMatrixMessage:
         assert "&amp;" in body
 
     @pytest.mark.asyncio
-    async def test_version_shown_when_present(self, mock_matrix_client, issue_with_version, matrix_message_session):
+    async def test_version_shown_when_present(
+        self, mock_matrix_client, issue_with_version, matrix_message_session
+    ):
         """Версия отображается в сообщении, если есть."""
         await bot.send_matrix_message(
             mock_matrix_client,
@@ -914,7 +878,9 @@ class TestSendSafe:
         assert client.room_send.call_count == matrix_send.MAX_RETRIES
 
     @pytest.mark.asyncio
-    async def test_send_safe_success(self, mock_matrix_client, simple_issue, matrix_message_session):
+    async def test_send_safe_success(
+        self, mock_matrix_client, simple_issue, matrix_message_session
+    ):
         """send_safe при успехе — просто работает."""
         await bot.send_safe(
             mock_matrix_client,
@@ -948,12 +914,10 @@ class TestNotificationTypes:
         [
             "new",
             "info",
-            "reminder",
             "overdue",
             "status_change",
             "issue_updated",
             "reopened",
-            "daily_report",
         ],
     )
     def test_all_types_have_emoji_and_title(self, ntype):

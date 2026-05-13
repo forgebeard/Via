@@ -10,7 +10,7 @@ import fcntl
 import logging
 from pathlib import Path
 
-logger = logging.getLogger("redmine_bot")
+logger = logging.getLogger("redmine_admin")
 
 _ENV_FILE_PATH = Path("/app/.env")
 

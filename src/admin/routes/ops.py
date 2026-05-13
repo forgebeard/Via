@@ -1,4 +1,4 @@
-"""Ops routes: bot control, heartbeat."""
+"""Ops routes: bot control."""
 
 from __future__ import annotations
 

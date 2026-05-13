@@ -152,8 +152,6 @@ POLLING_INTERVAL_SEC = _parse_int_env("POLLING_INTERVAL_SEC", 90, min_value=15, 
 CHECK_INTERVAL = _parse_int_env(
     "CHECK_INTERVAL", POLLING_INTERVAL_SEC, min_value=15, max_value=86400
 )
-REMINDER_AFTER = int(os.getenv("REMINDER_AFTER", "3600"))
-GROUP_REPEAT_SECONDS = int(os.getenv("GROUP_REPEAT_SECONDS", "1800"))
 DEDUP_TTL_HOURS = _parse_int_env("DEDUP_TTL_HOURS", 24, min_value=1, max_value=168)
 SUBJECT_MAX_LEN = _parse_int_env("SUBJECT_MAX_LEN", 180, min_value=32, max_value=500)
 PORTAL_BASE_URL = (os.getenv("PORTAL_BASE_URL") or "").strip().rstrip("/") or REDMINE_URL
@@ -166,14 +164,13 @@ MATRIX_RETRY_MAX_ATTEMPTS = int(os.getenv("MATRIX_RETRY_MAX_ATTEMPTS", "3"))
 MATRIX_RETRY_BASE_DELAY_SEC = float(os.getenv("MATRIX_RETRY_BASE_DELAY_SEC", "1.0"))
 
 # ═══════════════════════════════════════════════════════════════
-# BOT — LEASE / HEARTBEAT / CONFIG POLL
+# BOT — LEASE / CONFIG POLL / COMMAND POLL
 # ═══════════════════════════════════════════════════════════════
 
 BOT_LEASE_TTL_SECONDS = int(os.getenv("BOT_LEASE_TTL_SECONDS", "300"))
-HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "60"))
 CONFIG_POLL_INTERVAL_SEC = int(os.getenv("CONFIG_POLL_INTERVAL_SEC", "30"))
 COMMAND_POLL_INTERVAL_SEC = int(os.getenv("COMMAND_POLL_INTERVAL_SEC", "20"))
-ROUTING_ENGINE = (os.getenv("ROUTING_ENGINE", "legacy") or "legacy").strip().lower()
+BOT_INTERNAL_API_TOKEN = (os.getenv("BOT_INTERNAL_API_TOKEN") or "").strip()
 
 # ═══════════════════════════════════════════════════════════════
 # СТАТУСЫ REDMINE и приоритеты — re-export из bot.logic (единственный источник)
@@ -214,8 +211,6 @@ __all__ = [
     "BOT_TIMEZONE",
     "POLLING_INTERVAL_SEC",
     "CHECK_INTERVAL",
-    "REMINDER_AFTER",
-    "GROUP_REPEAT_SECONDS",
     "DEDUP_TTL_HOURS",
     "SUBJECT_MAX_LEN",
     # matrix retry
@@ -223,10 +218,9 @@ __all__ = [
     "MATRIX_RETRY_BASE_DELAY_SEC",
     # bot internals
     "BOT_LEASE_TTL_SECONDS",
-    "HEARTBEAT_INTERVAL_SEC",
     "CONFIG_POLL_INTERVAL_SEC",
     "COMMAND_POLL_INTERVAL_SEC",
-    "ROUTING_ENGINE",
+    "BOT_INTERNAL_API_TOKEN",
     # statuses (re-export from bot.logic)
     "STATUS_NEW",
     "STATUS_INFO_PROVIDED",
@@ -240,8 +234,6 @@ __all__ = [
     # validation (re-export from bot.logic)
     "should_notify",
     "validate_users",
-    "ROOM_RED_OS_KEY",
-    "ROOM_VIRT_KEY",
     # env check
     "validate_required_env",
 ]
@@ -257,14 +249,6 @@ def _parse_json_env(var_name: str, default: str = "{}") -> dict | list:
         return json.loads(default)
 
 
-# ═══════════════════════════════════════════════════════════════
-# РОУТИНГ — ключи для VERSION_ROOM_MAP
-# ═══════════════════════════════════════════════════════════════
-
-ROOM_RED_OS_KEY = "РЕД ОС"
-ROOM_VIRT_KEY = "РЕД Виртуализация"
-
-
 def __getattr__(name: str):
     """
     Legacy shim для старых импортов маршрутов из config.
@@ -273,8 +257,6 @@ def __getattr__(name: str):
     """
     legacy_defaults: dict[str, list[Any] | dict[str, str]] = {
         "USERS": [],
-        "STATUS_ROOM_MAP": {},
-        "VERSION_ROOM_MAP": {},
     }
     if name in legacy_defaults:
         warnings.warn(

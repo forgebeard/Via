@@ -8,8 +8,8 @@
 |--------|----------------|----------------------|---------------------|
 | Интеграция Matrix + Redmine (URL, ключ, токены) | `/onboarding` ([`settings.onboarding_save`](../src/admin/routes/settings.py)), `/secrets` ([`secrets_save`](../src/admin/routes/secrets.py)) | `app_secrets` (`AppSecret`) | [`main.py`](../src/bot/main.py): ожидание всех имён `REDMINE_URL`, `REDMINE_API_KEY`, `MATRIX_HOMESERVER`, `MATRIX_ACCESS_TOKEN`, `MATRIX_USER_ID` |
 | Сервисная таймзона (для админки при старте) | onboarding, секрет с именем `__service_timezone` (см. [`main.py`](../src/admin/main.py) `SERVICE_TIMEZONE_SECRET`) | `app_secrets` | Бот основную таймзону берёт из `cycle_settings` / каталогов после старта, не из этого ключа напрямую |
-| Интервалы, таймзона бота; расписание утреннего отчёта; **Matrix device ID** — env / `cycle_settings` | [`/onboarding`](../src/admin/routes/settings.py), API [`/api/bot/content`](../src/admin/routes/bot_content.py) (только `DAILY_REPORT_*` расписание) | `cycle_settings` (`CycleSettings`); ключи в т.ч. `BOT_TIMEZONE`, `MATRIX_DEVICE_ID`, `DAILY_REPORT_ENABLED` / `HOUR` / `MINUTE` | [`load_catalogs`](../src/bot/catalogs.py) + [`fetch_cycle_settings`](../src/database/load_config.py) в [`main.py`](../src/bot/main.py) |
-| Тексты Matrix и утреннего отчёта (tpl v2) | вкладка «Уведомления» onboarding, API [`/api/bot/notification-templates`](../src/admin/routes/notification_templates.py) | `notification_templates` + файлы `templates/bot/tpl_*.html.j2` | [`render_named_template`](../src/bot/template_loader.py), [`scheduler.daily_report`](../src/bot/scheduler.py) для `tpl_daily_report` |
+| Интервалы, таймзона бота; **Matrix device ID**; подготовка к daily-report | [`/onboarding`](../src/admin/routes/settings.py), API [`/api/bot/content`](../src/admin/routes/bot_content.py) | `cycle_settings` (`CycleSettings`); ключи в т.ч. `BOT_TIMEZONE`, `MATRIX_DEVICE_ID`, `DAILY_REPORT_ENABLED` / `HOUR` / `MINUTE` | [`load_catalogs`](../src/bot/catalogs.py) + [`fetch_cycle_settings`](../src/database/load_config.py) в [`main.py`](../src/bot/main.py) |
+| Тексты Matrix-шаблонов (tpl v2) | вкладка «Уведомления» onboarding, API [`/api/bot/notification-templates`](../src/admin/routes/notification_templates.py) | `notification_templates` + файлы `templates/bot/tpl_*.html.j2` | [`render_named_template`](../src/bot/template_loader.py); `tpl_digest` удалён из продуктового контура |
 | Пользователи бота | `/users` | `bot_users` (`BotUser`), опционально ключ в колонках ciphertext | [`fetch_runtime_config`](../src/database/load_config.py) |
 | Группы поддержки | `/groups` | `support_groups`, `group_version_routes` | то же |
 | Маршруты: статус→комната | `/groups` (формы `/groups/{id}/status-routes/*` в [`groups.py`](../src/admin/routes/groups.py)) | `status_room_routes` | `fetch_runtime_config` |
@@ -17,7 +17,6 @@
 | Доп. маршруты версий | формы пользователя/группы | `user_version_routes`, `group_version_routes` | то же |
 | Справочники Redmine | каталог в админке [`catalog`](../src/admin/routes/catalog.py) | `redmine_statuses`, `redmine_versions`, `redmine_priorities`, `notification_types` | [`load_catalogs`](../src/bot/catalogs.py) |
 | Аккаунты панели (логин) | `/app-users` и др. | `bot_app_users`, `bot_sessions`, … | Не используются ботом для рассылки |
-| Heartbeat | бот POST [`/api/bot/heartbeat`](../src/admin/routes/users.py) | `bot_heartbeat` | Только мониторинг |
 | Очередь доставки Matrix (thin worker) | GET [`/api/bot/commands`](../src/admin/routes/bot_runtime.py), POST ack/error | `pending_notifications` (отдельной таблицы «команд» нет) | [`command_worker`](../src/bot/command_worker.py): pull из API; та же DLQ, что и retry в монолитном боте |
 
 ## 2. Что бот всё ещё берёт из окружения / [`config.py`](../src/config.py) (не из «мозга» БД)
@@ -28,11 +27,11 @@
 |----------------------|------------|---------|
 | `BOT_INSTANCE_ID` | UUID инстанса | Инфраструктура |
 | `BOT_RUNTIME_STATUS_FILE` | путь к `runtime_status.json` | Инфраструктура |
-| `ADMIN_URL` | HTTP к админке: команды + heartbeat | Инфраструктура; должен указывать на тот же «мозг» |
+| `ADMIN_URL` | HTTP к админке: pull-команды + ack/error | Инфраструктура; должен указывать на тот же «мозг» |
 
 ### 2.2. Через импорт [`config.py`](../src/config.py) (загрузка при старте модуля)
 
-Пути логов (`LOG_*`), `MATRIX_DEVICE_ID`, retry Matrix (`MATRIX_RETRY_*`), `CHECK_INTERVAL` / `REMINDER_AFTER` / … как **дефолты до** перезаписи из БД в `main()`; `CONFIG_POLL_INTERVAL_SEC`, `COMMAND_POLL_INTERVAL_SEC`, `HEARTBEAT_INTERVAL_SEC`, `BOT_LEASE_TTL_SECONDS` — пока без UI в `cycle_settings` для части из них.
+Пути логов (`LOG_*`), `MATRIX_DEVICE_ID`, retry Matrix (`MATRIX_RETRY_*`), `CHECK_INTERVAL` / `REMINDER_AFTER` / … как **дефолты до** перезаписи из БД в `main()`; `CONFIG_POLL_INTERVAL_SEC`, `COMMAND_POLL_INTERVAL_SEC`, `BOT_LEASE_TTL_SECONDS` — пока без UI в `cycle_settings` для части из них.
 
 В [`config.py`](../src/config.py) имена `USERS` / `STATUS_ROOM_MAP` / `VERSION_ROOM_MAP` оставлены пустыми (не читаются из `.env`); источник правды — Postgres и `bot.main`. Периодическая подгрузка без рестарта: [`config_hot_reload.py`](../src/bot/config_hot_reload.py), env `BOT_HOT_RELOAD` / `BOT_HOT_RELOAD_INTERVAL_SEC`.
 

@@ -5,7 +5,7 @@ Config:
 
 State:
   - BotUserLease: координация обработки пользователя несколькими инстансами
-  - BotIssueState: дедупликация и таймеры уведомлений (sent/reminders/overdue/journals)
+  - BotIssueState: дедупликация и курсоры уведомлений
 """
 
 from __future__ import annotations
@@ -167,7 +167,9 @@ class RoutingPolicy(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
-    action_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="updated", index=True)
+    action_kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="updated", index=True
+    )
     notification_type_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("notification_types.id", ondelete="CASCADE"),
@@ -385,6 +387,7 @@ class BotIssueState(Base):
     status_changed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Исторические поля таймеров оставлены для обратной совместимости схемы.
     group_reminder_due_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -392,14 +395,37 @@ class BotIssueState(Base):
         DateTime(timezone=True), nullable=True
     )
     reminder_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
-    # reminders / overdue таймеры
     last_reminder_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_overdue_notified_at: Mapped[str | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class BotIssueDedupState(Base):
+    """Дедуп доставки журнала по issue/room/type и осям задачи."""
+
+    __tablename__ = "bot_issue_dedup_state"
+    __table_args__ = (
+        UniqueConstraint(
+            "issue_id",
+            "room_id",
+            "notification_type",
+            name="uq_bot_issue_dedup_issue_room_type",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    issue_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    room_id: Mapped[str] = mapped_column(Text, nullable=False)
+    notification_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    version_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    priority_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
 
@@ -411,25 +437,6 @@ class BotIssueJournalCursor(Base):
     issue_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     last_journal_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-
-
-class PendingDigest(Base):
-    __tablename__ = "pending_digests"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("bot_users.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    issue_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    issue_subject: Mapped[str] = mapped_column(String(255), nullable=False)
-    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    journal_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    journal_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    status_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    assigned_to: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
@@ -625,24 +632,6 @@ class CycleSettings(Base):
     description: Mapped[str | None] = mapped_column(String(512), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
-    )
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Heartbeat бота (мониторинг живучести)
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-class BotHeartbeat(Base):
-    __tablename__ = "bot_heartbeat"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    # Уникальная запись для одного инстанса бота.
-    instance_id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True), unique=True, nullable=False, index=True
-    )
-    last_seen: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 

@@ -186,16 +186,16 @@ async def _validate_fk_active(
 async def _overlap_warning(
     session: AsyncSession, *, action_kind: str, exclude_id: int | None = None
 ) -> str | None:
-    stmt = select(RoutingPolicy).where(
-        RoutingPolicy.action_kind == action_kind,
-        RoutingPolicy.enabled.is_(True),
-    )
+    stmt = select(RoutingPolicy).where(RoutingPolicy.enabled.is_(True))
     if exclude_id is not None:
         stmt = stmt.where(RoutingPolicy.id != exclude_id)
     row = (await session.execute(stmt.order_by(RoutingPolicy.id))).scalars().first()
     if row is None:
         return None
-    return f"Возможное пересечение с правилом #{row.id}."
+    return (
+        f"Возможное пересечение с правилом #{row.id}. "
+        "Поле action_kind носит вспомогательный характер, проверьте оси статуса/версии/приоритета."
+    )
 
 
 async def _replace_policy_links(

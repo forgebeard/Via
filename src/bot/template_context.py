@@ -1,16 +1,46 @@
-"""Единый Jinja-контекст для issue-шаблонов (tpl_new_issue, tpl_task_change, tpl_reminder).
-
-Digest (`tpl_digest`) — отдельная модель: только ``{"items": [...]}``; не использовать
-``build_issue_context`` на корне контекста (см. ``digest_service``).
-"""
+"""Единый Jinja-контекст для issue-шаблонов (tpl_new_issue, tpl_task_change, tpl_reminder)."""
 
 from __future__ import annotations
 
+import logging
+import os
 from typing import Any
+from urllib.parse import urlparse
 
+import bot.sender as sender_mod
 from bot.logic import get_version_name
-from bot.sender import PORTAL_BASE_URL, REDMINE_URL
 from config import SUBJECT_MAX_LEN
+
+logger = logging.getLogger("redmine_bot")
+
+
+def _effective_portal_base() -> str:
+    base = (sender_mod.PORTAL_BASE_URL or sender_mod.REDMINE_URL or "").strip().rstrip("/")
+    if base:
+        return base
+    try:
+        import bot.main as main_mod
+
+        base = (main_mod.PORTAL_BASE_URL or main_mod.REDMINE_URL or "").strip().rstrip("/")
+        if base:
+            return base
+    except Exception:
+        pass
+    # Сборка pytest и утилиты могут импортировать config до выставления REDMINE_URL в тестах;
+    # getenv на момент вызова, а не константы из config при первом импорте.
+    portal = (os.getenv("PORTAL_BASE_URL") or "").strip().rstrip("/")
+    redmine = (os.getenv("REDMINE_URL") or "").strip().rstrip("/")
+    return portal or redmine
+
+
+def is_valid_http_issue_url(url: str) -> bool:
+    value = (url or "").strip()
+    if not value or value.startswith("/"):
+        return False
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    return bool(parsed.netloc)
 
 
 def _status_display(issue: Any, catalogs: Any | None) -> str:
@@ -88,13 +118,13 @@ def build_issue_context(
         iid = int(getattr(issue, "id", 0) or 0)
     except Exception:
         iid = 0
-    portal_base = (PORTAL_BASE_URL or REDMINE_URL or "").rstrip("/")
-    base_url = portal_base
-    issue_url = (
-        f"{base_url}/issues/{iid}" if base_url and iid else (f"/issues/{iid}" if iid else "")
-    )
+    base_url = _effective_portal_base()
+    issue_url = f"{base_url}/issues/{iid}" if base_url and iid else ""
+    if iid and not issue_url:
+        logger.warning("issue_url_base_missing issue_id=%s", iid)
     ctx: dict[str, Any] = {
         "issue_id": iid,
+        "portal_base_url": base_url,
         "issue_url": issue_url,
         "subject": _subject_display(issue),
         "project_name": _project_display(issue),
@@ -108,7 +138,6 @@ def build_issue_context(
         "title": "",
         "event_type": "",
         "extra_text": "",
-        "reminder_text": "",
     }
     for k, v in extra.items():
         ctx[str(k)] = v
@@ -144,6 +173,8 @@ def preview_issue_context_demo(**overrides: Any) -> dict[str, Any]:
 
     fake_issue = _FakeIssue()
     ctx = build_issue_context(fake_issue, _FakeCats())
+    ctx["portal_base_url"] = "https://redmine.example"
+    ctx["issue_url"] = "https://redmine.example/issues/101"
     # Для шаблонов с точечной нотацией `issue.*` (предпросмотр в админке).
     ctx["issue"] = fake_issue
     ctx.update(
@@ -152,7 +183,6 @@ def preview_issue_context_demo(**overrides: Any) -> dict[str, Any]:
             "title": "Предпросмотр",
             "event_type": "comment",
             "extra_text": "Тестовое описание журнала",
-            "reminder_text": "Нет активности 4 ч",
         }
     )
     ctx.update(overrides)

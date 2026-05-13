@@ -3,8 +3,8 @@
 #{{ issue_id | default('') }}{% if subject | default('') %} — {{ subject }}{% endif %}<br>
 <br>
 Проект: {{ project_name | default('—') }}<br>
-Версия: {{ version_line | default(version | default('—')) }}<br>
 Статус: {{ status_line | default(status | default('—')) }}<br>
+Версия: {{ version_line | default(version | default('—')) }}<br>
 Приоритет: {{ priority_line | default(priority | default('—')) }}<br>
 <br>
 <a href="{{ issue_url | default('') }}">Открыть задачу</a>

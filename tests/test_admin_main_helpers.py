@@ -112,7 +112,7 @@ class TestNormalizeNotify:
     """_normalize_notify: нормализация списка уведомлений."""
 
     def test_valid_values(self):
-        allowed = ["all", "new", "status_change", "overdue", "reminder"]
+        allowed = ["all", "new", "status_change", "overdue"]
         result = main._normalize_notify(["new", "overdue"], allowed)
         assert result == ["new", "overdue"]
 

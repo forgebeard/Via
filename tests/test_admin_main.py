@@ -211,6 +211,28 @@ def test_health_ok(client: TestClient):
     assert r.headers.get("x-frame-options") == "DENY"
 
 
+def test_bot_machine_api_requires_bearer_token(client: TestClient, monkeypatch):
+    monkeypatch.setenv("BOT_INTERNAL_API_TOKEN", "pytest-machine-token")
+    r = client.get("/api/bot/commands", follow_redirects=False)
+    assert r.status_code == 403
+    assert r.json().get("error") == "forbidden"
+
+
+def test_bot_machine_api_accepts_valid_bearer_token(client: TestClient, monkeypatch):
+    db_url = os.getenv("DATABASE_URL", "")
+    if not str(db_url).startswith("postgresql://"):
+        pytest.skip("Тест требует Postgres (DATABASE_URL)")
+    monkeypatch.setenv("BOT_INTERNAL_API_TOKEN", "pytest-machine-token")
+    r = client.get(
+        "/api/bot/commands",
+        headers={"Authorization": "Bearer pytest-machine-token"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 200
+    assert r.json().get("ok") is True
+    assert isinstance(r.json().get("commands"), list)
+
+
 def test_login_page_ok(client: TestClient):
     r = client.get("/login")
     assert r.status_code == 200

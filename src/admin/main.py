@@ -38,6 +38,10 @@ logger = logging.getLogger("admin")
 async def _app_lifespan(_app: FastAPI):
     setup_json_logging("admin")
     logger.info("🚀 Admin panel starting up...")
+    if not (os.getenv("BOT_INTERNAL_API_TOKEN") or "").strip():
+        logger.warning(
+            "BOT_INTERNAL_API_TOKEN is empty: machine bot API requests will be forbidden"
+        )
     try:
         load_master_key()
     except SecurityError as e:

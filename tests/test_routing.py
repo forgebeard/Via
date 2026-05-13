@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from bot.journal_handlers import infer_event_type
-from bot.routing import get_matching_route, resolve_policy_target_rooms
+from bot.routing import resolve_policy_target_rooms
 
 
 def _issue(*, status_id=11, version_id=21, priority_id=31, assignee_id=42):
@@ -19,100 +19,6 @@ def _issue(*, status_id=11, version_id=21, priority_id=31, assignee_id=42):
         assigned_to=asg,
         priority=SimpleNamespace(id=priority_id, name="Нормальный"),
     )
-
-
-def test_single_match():
-    routes = {
-        "routing_rules": [
-            {
-                "id": 7,
-                "target_room_id": "!room:example.org",
-                "status_id": 11,
-                "version_id": 21,
-                "priority_id": 31,
-                "priority": 5,
-                "sort_order": 0,
-            }
-        ]
-    }
-    m = get_matching_route(_issue(), routes, {}, groups=[])
-    assert m is not None
-    assert m.room_id == "!room:example.org"
-    assert m.source_table == "notification_routing_rules"
-
-
-def test_tie_break_by_priority_sort_order_id():
-    routes = {
-        "routing_rules": [
-            {
-                "id": 9,
-                "target_room_id": "!room9:example.org",
-                "status_id": 11,
-                "version_id": 21,
-                "priority_id": 31,
-                "priority": 20,
-                "sort_order": 0,
-            },
-            {
-                "id": 3,
-                "target_room_id": "!room3:example.org",
-                "status_id": 11,
-                "version_id": 21,
-                "priority_id": 31,
-                "priority": 10,
-                "sort_order": 1,
-            },
-            {
-                "id": 2,
-                "target_room_id": "!room2:example.org",
-                "status_id": 11,
-                "version_id": 21,
-                "priority_id": 31,
-                "priority": 10,
-                "sort_order": 0,
-            },
-        ]
-    }
-    m = get_matching_route(_issue(), routes, {}, groups=[])
-    assert m is not None
-    assert m.room_id == "!room2:example.org"
-
-
-def test_wildcard_null_axes_match():
-    routes = {
-        "routing_rules": [
-            {
-                "id": 1,
-                "target_room_id": "!any-version:example.org",
-                "status_id": 11,
-                "version_id": None,
-                "priority_id": 31,
-                "priority": 15,
-                "sort_order": 0,
-            }
-        ]
-    }
-    m = get_matching_route(_issue(version_id=999), routes, {}, groups=[])
-    assert m is not None
-    assert m.room_id == "!any-version:example.org"
-
-
-def test_no_match_returns_none():
-    routes = {
-        "routing_rules": [
-            {
-                "id": 1,
-                "target_room_id": "!strict:example.org",
-                "status_id": 11,
-                "version_id": 21,
-                "priority_id": 32,
-                "priority": 1,
-                "sort_order": 0,
-            }
-        ]
-    }
-    m = get_matching_route(_issue(priority_id=31), routes, {}, groups=[])
-    assert m is None
 
 
 def test_infer_event_type_comment_vs_assigned():
@@ -218,7 +124,7 @@ def test_policy_routing_self_action_skips_only_actor_user():
     assert sorted(res.room_ids) == ["!g7:example.org", "!u2:example.org"]
 
 
-def test_policy_routing_created_maps_to_new_when_type_unknown():
+def test_policy_routing_unknown_type_falls_back_to_issue_updated():
     routes = {
         "routing_policies": [
             {
@@ -232,13 +138,16 @@ def test_policy_routing_created_maps_to_new_when_type_unknown():
             },
         ]
     }
-    users = [_cfg_user(notify=["new"])]
+    users = [_cfg_user(notify=["issue_updated"])]
     groups = [_cfg_group()]
     res = resolve_policy_target_rooms(
         _issue(), routes, action_kind="created", users=users, groups=groups
     )
-    assert res.deliveries == (("!u1:example.org", "new"),)
-    assert sorted(res.room_ids) == ["!u1:example.org"]
+    assert res.deliveries == (
+        ("!u1:example.org", "issue_updated"),
+        ("!g7:example.org", "issue_updated"),
+    )
+    assert sorted(res.room_ids) == ["!g7:example.org", "!u1:example.org"]
 
 
 def test_policy_routing_recipient_modes_assignee_and_watchers():

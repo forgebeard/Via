@@ -165,3 +165,11 @@ class TestCanNotify:
     def test_weekend_blocks_normal(self):
         dt = _dt(12, 0, weekday=6)
         assert can_notify({}, "", dt) is False
+
+    def test_notify_always_bypasses_dnd(self):
+        dt = _dt(12, 0, weekday=0)
+        assert can_notify({"dnd": True, "notify_always": True}, "", dt) is True
+
+    def test_notify_always_bypasses_working_hours(self):
+        dt = _dt(23, 0, weekday=6)
+        assert can_notify({"notify_always": True}, "", dt) is True

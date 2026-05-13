@@ -29,6 +29,10 @@ os.environ["ADMIN_DISABLE_RATE_LIMITS"] = "1"
 # Тесты /setup и /login не должны зависеть от локального ADMIN_LOGINS в окружении разработчика.
 os.environ.pop("ADMIN_LOGINS", None)
 
+# build_issue_context / sender: абсолютный issue_url; setdefault не перезаписывает пустую строку из shell.
+if not (os.getenv("REDMINE_URL") or "").strip():
+    os.environ["REDMINE_URL"] = "https://redmine.test"
+
 
 # ── Фикстура TestClient ────────────────────────────────────────────────────
 

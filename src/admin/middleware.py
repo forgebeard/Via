@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hmac
+import logging
 import os
 import uuid
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from fastapi import Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -25,6 +28,8 @@ from database.session import get_session_factory
 
 if TYPE_CHECKING:
     from starlette.types import ASGIApp, Receive, Scope, Send
+
+logger = logging.getLogger("redmine_admin")
 
 
 # ── CSP / Security headers middleware ────────────────────────────────────────
@@ -79,14 +84,53 @@ class CspSecurityMiddleware:
 
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0").strip().lower() in ("1", "true", "yes", "on")
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.getenv("ADMIN_SESSION_IDLE_TIMEOUT", "1800"))
+_ADMIN_HTTP_TRACE = (os.getenv("ADMIN_HTTP_TRACE") or "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
+
+def _machine_api_path_allowed(path: str, method: str) -> bool:
+    p = (path or "").strip()
+    m = (method or "").upper()
+    if p == "/api/bot/commands" and m == "GET":
+        return True
+    if p.startswith("/api/bot/commands/") and m == "POST":
+        tail = p.removeprefix("/api/bot/commands/")
+        return tail.endswith("/ack") or tail.endswith("/error")
+    return False
+
+
+def _expected_bot_api_token() -> str:
+    return (os.getenv("BOT_INTERNAL_API_TOKEN") or "").strip()
+
+
+def _machine_auth_ok(request: Request) -> bool:
+    expected = _expected_bot_api_token()
+    if not expected:
+        return False
+    auth = (request.headers.get("authorization") or "").strip()
+    if not auth.lower().startswith("bearer "):
+        return False
+    provided = auth[7:].strip()
+    return hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8"))
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
     """Аутентификация через session cookie, CSRF."""
 
     async def dispatch(self, request: Request, call_next):
-        print(f"[MW] >>> {request.method} {request.url.path}")
+        if _ADMIN_HTTP_TRACE:
+            logger.debug("[MW] >>> %s %s", request.method, request.url.path)
         p = request.url.path
+        method = request.method
+
+        if _machine_api_path_allowed(p, method):
+            if _machine_auth_ok(request):
+                return await call_next(request)
+            return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
 
         # ── Пропускаем без проверки ──
         if (
@@ -179,7 +223,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.csrf_token = csrf_token
 
         response = await call_next(request)
-        print(f"[MW] <<< {request.method} {p} → {response.status_code}")
+        if _ADMIN_HTTP_TRACE:
+            logger.debug("[MW] <<< %s %s -> %s", method, p, response.status_code)
         if set_csrf_cookie:
             response.set_cookie(
                 CSRF_COOKIE_NAME,

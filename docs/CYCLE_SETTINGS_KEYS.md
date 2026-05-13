@@ -7,27 +7,24 @@
 | Ключ | Где читается | Назначение |
 |------|--------------|------------|
 | `CHECK_INTERVAL` | `bot/main.py`, `bot/config_hot_reload.py`, `bot/journal_tick.py` | Интервал основного цикла |
-| `REMINDER_AFTER` | `bot/main.py`, `bot/config_hot_reload.py` | Legacy fallback для reminder |
-| `GROUP_REPEAT_SECONDS` | `bot/main.py`, `bot/config_hot_reload.py` | Интервал повтора group-notify |
 | `BOT_LEASE_TTL_SECONDS` | `bot/main.py`, `bot/config_hot_reload.py` | TTL lease координации |
 | `BOT_TIMEZONE` | `bot/main.py`, `bot/config_hot_reload.py`, `admin/routes/settings.py` | Таймзона бота |
 | `MATRIX_DEVICE_ID` | `bot/main.py`, `bot/config_hot_reload.py` | Device ID Matrix-клиента |
-| `DAILY_REPORT_ENABLED` | `bot/main.py`, `bot/config_hot_reload.py` | Вкл/выкл daily-report job |
-| `DAILY_REPORT_HOUR` | `bot/main.py`, `bot/config_hot_reload.py` | Час daily-report |
-| `DAILY_REPORT_MINUTE` | `bot/main.py`, `bot/config_hot_reload.py` | Минута daily-report |
 | `MAX_ISSUES_PER_TICK` | `bot/journal_tick.py` | Ограничение фазы A |
 | `MAX_PAGES_PER_TICK` | `bot/journal_tick.py` | Ограничение страниц фазы A |
-| `DRAIN_MAX_USERS_PER_TICK` | `bot/journal_tick.py` | Лимит drain digest |
 | `WATCHER_CACHE_REFRESH_EVERY_N_TICKS` | `bot/journal_tick.py` | Частота refresh watcher cache |
 | `DLQ_BATCH_SIZE` | `bot/journal_tick.py` | Batch size DLQ retry |
-| `MAX_REMINDERS` | `bot/reminder_service.py`, `bot/sender.py` | Лимит напоминаний |
-| `DEFAULT_REMINDER_INTERVAL` | `bot/reminder_service.py` | Интервал ремайндеров |
 
 ## Deprecated / неиспользуемые ключи
 
 | Ключ | Статус |
 |------|--------|
 | `JOURNAL_ENGINE_ENABLED` | В актуальном `src/` не читается. Исторический маркер из legacy-доков; не переключает кодовые ветки. |
+| `REMINDER_AFTER` | Legacy-ключ, в текущем контуре журнала не используется для отправки reminder. |
+| `GROUP_REPEAT_SECONDS` | Legacy-ключ, в текущем контуре журнала не используется. |
+| `DRAIN_MAX_USERS_PER_TICK` | Исторический ключ digest-drain; digest-очередь отключена. |
+| `MAX_REMINDERS` / `DEFAULT_REMINDER_INTERVAL` | Исторические ключи старого reminder_service. Следующая итерация rules-reminder будет использовать отдельные policy-настройки. |
+| `DAILY_REPORT_*` | Ключи зарезервированы под следующую итерацию daily-report (таймзоны/точное время); текущий журнальный тик их не читает. |
 
 ## Примечание
 

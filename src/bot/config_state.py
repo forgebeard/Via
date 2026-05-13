@@ -17,12 +17,6 @@ USERS: list[dict] = []
 # Группы бота (загружаются из БД)
 GROUPS: list[dict] = []
 
-# Маршрутизация: статус → Matrix room
-STATUS_ROOM_MAP: dict[str, str] = {}
-
-# Маршрутизация: версия → Matrix room (глобальный)
-VERSION_ROOM_MAP: dict[str, str] = {}
-
 # Расширенные маршруты для журнального движка (из load_config.fetch_runtime_config)
 ROUTING: dict[str, Any] | None = None
 

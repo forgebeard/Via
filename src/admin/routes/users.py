@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+import os
+from datetime import datetime
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
@@ -15,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.template_loader import render_named_template
-from database.models import BotHeartbeat, BotUser, SupportGroup, UserVersionRoute
+from database.models import BotUser, SupportGroup, UserVersionRoute
 from database.session import get_session
 from database.user_runtime_cleanup import delete_runtime_data_for_redmine_user
 
@@ -24,6 +25,22 @@ logger = logging.getLogger("redmine_admin")
 router = APIRouter(tags=["users"])
 
 _TIME_RE = __import__("re").compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+
+
+def _diag_enabled() -> bool:
+    return (os.getenv("ADMIN_DIAG_LOG") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _diag_log(
+    level: int,
+    msg: str,
+    *args: object,
+    exc_info: bool = False,
+) -> None:
+    if _diag_enabled():
+        logger.log(level, msg, *args, exc_info=exc_info)
+        return
+    logger.debug(msg, *args, exc_info=exc_info)
 
 
 def _validate_work_time(val: str, label: str) -> str:
@@ -305,7 +322,7 @@ async def user_test_message(
     # ── Диагностика: Matrix client ──
     client = await admin._get_matrix_client(session)
     if not client:
-        logger.error("[DIAG] Test message: Matrix client is None")
+        _diag_log(logging.ERROR, "[DIAG] Test message: Matrix client is None")
         return JSONResponse(
             {"ok": False, "error": "Matrix не настроен (нет homeserver/token/user_id)"},
             status_code=400,
@@ -315,7 +332,8 @@ async def user_test_message(
     redmine_key = await admin._load_secret_plain(session, "REDMINE_API_KEY")
     bot_mxid = await admin._load_secret_plain(session, "MATRIX_USER_ID")
 
-    logger.info(
+    _diag_log(
+        logging.INFO,
         "[DIAG] Test message: bot_mxid='%s', redmine_url='%s', redmine_key_len=%d",
         bot_mxid,
         redmine_url,
@@ -326,7 +344,7 @@ async def user_test_message(
     raw_uid = form.get("user_id", "")
     raw_mxid = form.get("mxid", "")
 
-    logger.info("[DIAG] Test message: raw_uid='%s', raw_mxid='%s'", raw_uid, raw_mxid)
+    _diag_log(logging.INFO, "[DIAG] Test message: raw_uid='%s', raw_mxid='%s'", raw_uid, raw_mxid)
 
     uid = 0
     if raw_uid:
@@ -340,8 +358,11 @@ async def user_test_message(
 
     homeserver = client.homeserver
     matrix_domain = homeserver.replace("https://", "").replace("http://", "").rstrip("/")
-    logger.info(
-        "[DIAG] Test message: homeserver='%s', matrix_domain='%s'", homeserver, matrix_domain
+    _diag_log(
+        logging.INFO,
+        "[DIAG] Test message: homeserver='%s', matrix_domain='%s'",
+        homeserver,
+        matrix_domain,
     )
 
     if target_mxid and ":" not in target_mxid:
@@ -355,7 +376,8 @@ async def user_test_message(
             await client.close()
             return JSONResponse({"ok": False, "error": "Пользователь не найден"}, status_code=404)
 
-        logger.info(
+        _diag_log(
+            logging.INFO,
             "[DIAG] Test message: user row: id=%d, room='%s', redmine_id=%d, group_id=%s",
             row.id,
             row.room,
@@ -380,7 +402,8 @@ async def user_test_message(
                 target_mxid = f"@{raw_room}"
             room_id = None
 
-        logger.info(
+        _diag_log(
+            logging.INFO,
             "[DIAG] Test message: after room processing: target_mxid='%s', room_id='%s'",
             target_mxid,
             room_id,
@@ -390,9 +413,12 @@ async def user_test_message(
             try:
                 from redmine_cache import fetch_redmine_user_by_id
 
-                logger.info("[DIAG] Test message: fetching Redmine user id=%d", row.redmine_id)
+                _diag_log(
+                    logging.INFO, "[DIAG] Test message: fetching Redmine user id=%d", row.redmine_id
+                )
                 rdata, err = fetch_redmine_user_by_id(row.redmine_id, redmine_url, redmine_key)
-                logger.info(
+                _diag_log(
+                    logging.INFO,
                     "[DIAG] Test message: Redmine fetch result: err=%s, rdata keys=%s",
                     err,
                     list(rdata.keys()) if rdata else None,
@@ -402,16 +428,27 @@ async def user_test_message(
                     if login:
                         domain = bot_mxid.split(":", 1)[1] if ":" in bot_mxid else ""
                         target_mxid = f"@{login}:{domain}" if domain else None
-                        logger.info(
+                        _diag_log(
+                            logging.INFO,
                             "[DIAG] Test message: resolved target_mxid from Redmine login='%s' → '%s'",
                             login,
                             target_mxid,
                         )
             except Exception as e:
-                logger.error("[DIAG] Test message: Redmine fetch exception: %s", e, exc_info=True)
+                _diag_log(
+                    logging.ERROR,
+                    "[DIAG] Test message: Redmine fetch exception: %s",
+                    e,
+                    exc_info=True,
+                )
                 pass
 
-    logger.info("[DIAG] Test message: FINAL target_mxid='%s', room_id='%s'", target_mxid, room_id)
+    _diag_log(
+        logging.INFO,
+        "[DIAG] Test message: FINAL target_mxid='%s', room_id='%s'",
+        target_mxid,
+        room_id,
+    )
 
     if not target_mxid and not room_id:
         await client.close()
@@ -461,14 +498,16 @@ async def user_test_message(
                 {"ok": False, "error": "Не удалось определить комнату"}, status_code=500
             )
 
-        logger.info(
+        _diag_log(
+            logging.INFO,
             "[DIAG] test_message: pre_send uid=%s client.user_id=%s final_room_id=%s",
             uid,
             getattr(client, "user_id", None),
             final_room_id,
         )
         sync_ok = await admin._sync_matrix_client(client)
-        logger.info(
+        _diag_log(
+            logging.INFO,
             "[DIAG] test_message: matrix sync_ok=%s rooms_cached=%d room_in_cache=%s",
             sync_ok,
             len(client.rooms),
@@ -477,10 +516,15 @@ async def user_test_message(
         if (final_room_id or "").startswith("!") and final_room_id not in client.rooms:
             try:
                 join_r = await client.join(final_room_id)
-                logger.info("[DIAG] test_message: explicit room join response=%s", join_r)
+                _diag_log(
+                    logging.INFO, "[DIAG] test_message: explicit room join response=%s", join_r
+                )
             except Exception as join_exc:
-                logger.warning(
-                    "[DIAG] test_message: join failed (may still send): %s", join_exc, exc_info=True
+                _diag_log(
+                    logging.WARNING,
+                    "[DIAG] test_message: join failed (may still send): %s",
+                    join_exc,
+                    exc_info=True,
                 )
 
         tz_eff = await admin.effective_bot_timezone_for_admin(session)
@@ -821,86 +865,3 @@ async def users_delete(
             session, user, "bot_user", "delete", {"id": uid, "redmine_id": rmid}
         )
     return RedirectResponse("/users", status_code=303)
-
-
-# --- Bot Heartbeat API ---
-
-
-@router.post("/api/bot/heartbeat")
-async def bot_heartbeat_post(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-):
-    """Бот вызывает этот endpoint раз в минуту, чтобы сообщить, что он жив."""
-    try:
-        data = await request.json()
-        instance_id_str = data.get("instance_id")
-        if not instance_id_str:
-            return JSONResponse({"ok": False, "error": "instance_id required"}, status_code=400)
-
-        import uuid
-
-        instance_id = uuid.UUID(instance_id_str)
-
-        stmt = select(BotHeartbeat).where(BotHeartbeat.instance_id == instance_id)
-        result = await session.execute(stmt)
-        hb = result.scalar_one_or_none()
-
-        if hb:
-            from datetime import datetime
-
-            hb.last_seen = datetime.now(UTC)
-        else:
-            from datetime import datetime
-
-            session.add(BotHeartbeat(instance_id=instance_id, last_seen=datetime.now(UTC)))
-
-        await session.commit()
-        return JSONResponse({"ok": True})
-    except Exception as e:
-        logger.error("heartbeat_post_failed: %s", e)
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-
-
-@router.get("/api/bot/status", response_class=JSONResponse)
-async def bot_status_get(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-):
-    """Возвращает статус бота для дашборда."""
-    try:
-        from datetime import datetime
-
-        stmt = select(BotHeartbeat).order_by(BotHeartbeat.last_seen.desc()).limit(1)
-        result = await session.execute(stmt)
-        hb = result.scalar_one_or_none()
-
-        if not hb:
-            return {
-                "status": "unknown",
-                "last_seen": None,
-                "message": "Бот ещё не отправлял heartbeat",
-            }
-
-        now = datetime.now(UTC)
-        diff = (now - hb.last_seen).total_seconds()
-
-        if diff < 120:
-            status = "alive"
-            message = f"Бот активен ({int(diff)} сек. назад)"
-        elif diff < 600:
-            status = "warning"
-            message = f"Бот может быть завис ({int(diff)} сек. назад)"
-        else:
-            status = "dead"
-            message = f"Бот не отвечает ({int(diff)} сек. назад)"
-
-        return {
-            "status": status,
-            "last_seen": hb.last_seen.isoformat(),
-            "message": message,
-            "seconds_ago": int(diff),
-        }
-    except Exception as e:
-        logger.error("bot_status_failed: %s", e)
-        return {"status": "error", "message": str(e)}

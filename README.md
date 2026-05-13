@@ -89,9 +89,8 @@ Via/
 │   ├── bot/
 │   │   ├── main.py              # Entry point: APScheduler, graceful shutdown
 │   │   ├── logic.py             # Чистая бизнес-логика (без I/O)
-│   │   ├── scheduler.py         # check_all_users, daily_report, DLQ retry
+│   │   ├── scheduler.py         # check_all_users, cleanup_state_files, DLQ retry
 │   │   ├── sender.py            # Отправка через Jinja2 шаблон
-│   │   └── heartbeat.py         # Heartbeat на админку
 │   ├── admin/
 │   │   ├── main.py              # FastAPI app, lifespan, routers
 │   │   └── routes/              # 14 маршрутов (auth, users, groups, etc.)
@@ -152,15 +151,15 @@ python -m pytest tests/e2e/ -v --tb=short
 | `PORTAL_BASE_URL`             | `REDMINE_URL` | Базовый URL портала для ссылок на задачу; если пусто, используется `REDMINE_URL` |
 | `POLLING_INTERVAL_SEC`        | `90`          | Каноничный интервал опроса (сек)                                                 |
 | `CHECK_INTERVAL`              | `90`          | Интервал опроса Redmine (сек)                                                    |
-| `REMINDER_AFTER`              | `3600`        | Напоминание после (сек)                                                          |
 | `GROUP_REPEAT_SECONDS`        | `1800`        | Повтор уведомлений в группу (сек)                                                |
 | `DEDUP_TTL_HOURS`             | `24`          | TTL ключей дедупликации (часы)                                                   |
 | `SUBJECT_MAX_LEN`             | `180`         | Максимальная длина темы задачи в карточке                                        |
 | `MATRIX_RETRY_MAX_ATTEMPTS`   | `3`           | Попытки отправки в Matrix                                                        |
 | `MATRIX_RETRY_BASE_DELAY_SEC` | `1.0`         | Базовая задержка retry (сек)                                                     |
 | `BOT_LEASE_TTL_SECONDS`       | `300`         | Lease-координация (сек)                                                          |
-| `HEARTBEAT_INTERVAL_SEC`      | `60`          | Heartbeat на админку (сек)                                                       |
 | `CONFIG_POLL_INTERVAL_SEC`    | `30`          | Интервал повторной попытки, пока при старте не готовы секреты в БД (сек)         |
+| `COMMAND_POLL_INTERVAL_SEC`   | `20`          | Интервал pull-команд из админки (сек)                                            |
+| `BOT_INTERNAL_API_TOKEN`      | _(пусто)_     | Общий Bearer-токен для machine API `/api/bot/commands` между bot и admin         |
 | `BOT_HOT_RELOAD`              | `1`           | Периодически подгружать конфиг из БД без рестарта (`0` — выкл.)                  |
 | `BOT_HOT_RELOAD_INTERVAL_SEC` | `45`          | Интервал hot reload, секунды (15–3600)                                           |
 | `CONTRACT_AUDIT_VERBOSE`      | `0`           | Подробные per-issue логи `journal_contract_check` (`1` — включить)               |
@@ -168,6 +167,18 @@ python -m pytest tests/e2e/ -v --tb=short
 
 
 В onboarding задаётся только `REDMINE_URL`; `PORTAL_BASE_URL` синхронизируется автоматически с ним.
+
+### Pull-команды и `BOT_INTERNAL_API_TOKEN`
+
+Это не legacy-слой heartbeat. Токен нужен для отдельного machine API, через который бот забирает
+команды доставки из админки:
+
+1. Админка подготавливает записи на отправку в `pending_notifications`.
+2. Бот по интервалу `COMMAND_POLL_INTERVAL_SEC` вызывает `GET /api/bot/commands`.
+3. После отправки в Matrix бот подтверждает результат через `POST .../ack` или `POST .../error`.
+
+`BOT_INTERNAL_API_TOKEN` должен быть одинаковым в bot и admin (через общий `.env`), иначе
+командный API будет возвращать `403`, а бот выведет `commands_pull_disabled`.
 
 ## Редактор шаблонов уведомлений
 

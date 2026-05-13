@@ -11,7 +11,7 @@
 - Сброс (`POST /api/bot/notification-templates/{name}/reset`) удаляет override и возвращает файловый default.
 - Live-preview использует `POST /api/bot/notification-templates/preview`; при ошибке рендера UI показывает текст ошибки и не зависает в `loading`.
 
-Общее для issue-шаблонов (`tpl_new_issue`, `tpl_task_change`, `tpl_reminder`): функция `build_issue_context` в [`src/bot/template_context.py`](../src/bot/template_context.py) задаёт базовые поля; вызовы в [`sender.py`](../src/bot/sender.py) / [`journal_handlers.py`](../src/bot/journal_handlers.py) / [`reminder_service.py`](../src/bot/reminder_service.py) дополняют `emoji`, `title`, `event_type`, `extra_text`, `reminder_text` по сценарию.
+Общее для issue-шаблонов (`tpl_new_issue`, `tpl_task_change`, `tpl_reminder`): функция `build_issue_context` в [`src/bot/template_context.py`](../src/bot/template_context.py) задаёт базовые поля; вызовы в [`sender.py`](../src/bot/sender.py) / [`journal_handlers.py`](../src/bot/journal_handlers.py) дополняют `emoji`, `title`, `event_type`, `extra_text` по сценарию.
 
 | Переменная | Описание |
 |------------|----------|
@@ -66,21 +66,7 @@
 
 Маршрут: `reminder`.
 
-`reminder_text` — текст напоминания (например «Задача без движения»). Также доступны `reminder_count`, `max_reminders`, `elapsed_human`, `due_date`, `assignee_name`.
-
----
-
-## `tpl_digest`
-
-Контекст: `items` (и alias `digest_items`) — список агрегированных словарей (см. [`digest_service.py`](../src/bot/digest_service.py)).
-
-Базовые поля элемента:
-
-- `issue_id`, `subject`, `url`
-- `events` (список типов событий)
-- `changes` (список `{field, old, new}`)
-- `comments` (список строк)
-- `status_name`, `assigned_to`, `reminders_count`, `extra_changes`
+`extra_text` содержит текст напоминания (например «Задача без движения»). Также доступны `elapsed_human`, `due_date`, `assignee_name`.
 
 ---
 

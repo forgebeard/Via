@@ -59,7 +59,6 @@ NOTIFICATION_TYPES = {
     "overdue": ("", "Просроченная задача"),
     "issue_updated": ("", "Задача обновлена"),
     "status_change": ("", "Смена статуса"),
-    "daily_report": ("", "Утренний отчёт"),
 }
 
 FIELD_NAMES: dict[str, str | None] = {
@@ -166,87 +165,6 @@ def validate_users(users: list[dict]) -> tuple[bool, list[str]]:
                 f"USERS[{i}]: 'notify' должен быть списком, получено {type(u['notify']).__name__}"
             )
     return len(errors) == 0, errors
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# РОУТИНГ: какие доп. комнаты получают уведомление
-# ═══════════════════════════════════════════════════════════════════════════
-
-_LEGACY_VERSION_FALLBACK_KEY = "РЕД ОС"
-
-
-def _extra_rooms_for_issue_version(
-    issue: _IssueLike,
-    user_cfg: dict[str, Any],
-    version_room_map: dict[str, str],
-    users: list[dict[str, Any]],
-) -> set[str]:
-    """
-    Доп. комнаты по названию версии задачи в Redmine.
-    """
-    rooms: set[str] = set()
-    version_name = get_version_name(issue) or ""
-    if not version_name.strip():
-        r = (version_room_map.get(_LEGACY_VERSION_FALLBACK_KEY) or "").strip()
-        return {r} if r else set()
-    vn = version_name.lower()
-    for spec in user_cfg.get("version_routes") or []:
-        key = (spec.get("key") or "").strip()
-        rid = (spec.get("room") or "").strip()
-        if key and rid and key.lower() in vn:
-            rooms.add(rid)
-    for key, room in (version_room_map or {}).items():
-        r = (room or "").strip()
-        if not r:
-            continue
-        k = (key or "").strip()
-        if k and k.lower() in vn:
-            rooms.add(r)
-    return rooms
-
-
-def get_extra_rooms_for_new(
-    issue: _IssueLike,
-    user_cfg: dict[str, Any],
-    version_room_map: dict[str, str],
-    users: list[dict[str, Any]],
-) -> set[str]:
-    """Доп. комнаты для НОВОЙ задачи — по версии и глобальным маршрутам."""
-    return _extra_rooms_for_issue_version(issue, user_cfg, version_room_map, users)
-
-
-def get_extra_rooms_for_rv(
-    issue: _IssueLike,
-    user_cfg: dict[str, Any],
-    status_room_map: dict[str, str],
-    version_room_map: dict[str, str],
-    users: list[dict[str, Any]],
-) -> set[str]:
-    """Доп. комнаты для статуса «Передано в работу.РВ»."""
-    rooms: set[str] = set()
-    rv_room = status_room_map.get(STATUS_RV)
-    if rv_room:
-        rooms.add(rv_room)
-    rooms |= _extra_rooms_for_issue_version(issue, user_cfg, version_room_map, users)
-    return rooms
-
-
-def _group_member_rooms(
-    user_cfg: dict[str, Any],
-    users: list[dict[str, Any]],
-) -> set[str]:
-    """Личные комнаты участников той же группы."""
-    gid = user_cfg.get("group_id")
-    if gid is None:
-        return set()
-    out: set[str] = set()
-    for u in users:
-        if u.get("group_id") != gid:
-            continue
-        r = (u.get("room") or "").strip()
-        if r:
-            out.add(r)
-    return out
 
 
 def _group_room(user_cfg: dict[str, Any]) -> str:

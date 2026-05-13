@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import bot.template_context as template_context
-from bot.digest_service import _aggregate_digest_items
+import bot.sender as sender_mod
 from bot.journal_handlers import build_journal_template_context, infer_event_type
 from bot.journal_pipeline import aggregate_journals_first_old_last_new
-from bot.template_context import build_issue_context
+from bot.template_context import build_issue_context, is_valid_http_issue_url
 from tests.conftest import MockIssue, MockJournal
 
 
@@ -24,8 +23,12 @@ def test_build_issue_context_contains_extended_fields() -> None:
 
 
 def test_infer_event_type_reassigned_and_unassigned() -> None:
-    j_reassigned = MockJournal(details=[{"name": "assigned_to_id", "old_value": "10", "new_value": "20"}])
-    j_unassigned = MockJournal(details=[{"name": "assigned_to_id", "old_value": "10", "new_value": ""}])
+    j_reassigned = MockJournal(
+        details=[{"name": "assigned_to_id", "old_value": "10", "new_value": "20"}]
+    )
+    j_unassigned = MockJournal(
+        details=[{"name": "assigned_to_id", "old_value": "10", "new_value": ""}]
+    )
     assert infer_event_type(j_reassigned) == "reassigned"
     assert infer_event_type(j_unassigned) == "unassigned"
 
@@ -55,41 +58,6 @@ def test_build_journal_template_context_contains_structured_changes() -> None:
     assert ctx["status_from"] in ("1", "Новая")
 
 
-def test_aggregate_digest_items_keeps_comments_and_reminder_count() -> None:
-    row1 = type(
-        "Row",
-        (),
-        {
-            "id": 1,
-            "issue_id": 1001,
-            "issue_subject": "Digest task",
-            "event_type": "comment",
-            "journal_notes": "Есть комментарий",
-            "status_name": "В работе",
-            "assigned_to": "Иван",
-        },
-    )()
-    row2 = type(
-        "Row",
-        (),
-        {
-            "id": 2,
-            "issue_id": 1001,
-            "issue_subject": "Digest task",
-            "event_type": "reminder",
-            "journal_notes": "",
-            "status_name": "В работе",
-            "assigned_to": "Иван",
-        },
-    )()
-    items = _aggregate_digest_items([row1, row2])
-    assert len(items) == 1
-    item = items[0]
-    assert item["reminders_count"] == 1
-    assert item["comments"] == ["Есть комментарий"]
-    assert item["events"] == ["comment", "reminder"]
-
-
 def test_reminder_elapsed_rendered_as_text() -> None:
     issue = MockIssue(issue_id=555)
     issue.updated_on = datetime.now(UTC) - timedelta(hours=2, minutes=30)
@@ -99,10 +67,62 @@ def test_reminder_elapsed_rendered_as_text() -> None:
 
 def test_issue_url_falls_back_to_redmine_when_portal_empty(monkeypatch) -> None:
     issue = MockIssue(issue_id=321)
-    monkeypatch.setattr(template_context, "PORTAL_BASE_URL", "")
-    monkeypatch.setattr(template_context, "REDMINE_URL", "https://support.red-soft.ru")
+    monkeypatch.setattr(sender_mod, "PORTAL_BASE_URL", "")
+    monkeypatch.setattr(sender_mod, "REDMINE_URL", "https://support.red-soft.ru")
     ctx = build_issue_context(issue, catalogs=None)
     assert ctx["issue_url"] == "https://support.red-soft.ru/issues/321"
+
+
+def test_issue_url_reads_sender_values_dynamically(monkeypatch) -> None:
+    issue = MockIssue(issue_id=322)
+    monkeypatch.setattr(sender_mod, "PORTAL_BASE_URL", "")
+    monkeypatch.setattr(sender_mod, "REDMINE_URL", "https://support.red-soft.ru")
+    first_ctx = build_issue_context(issue, catalogs=None)
+    assert first_ctx["issue_url"] == "https://support.red-soft.ru/issues/322"
+
+    monkeypatch.setattr(sender_mod, "PORTAL_BASE_URL", "https://portal.red-soft.ru")
+    second_ctx = build_issue_context(issue, catalogs=None)
+    assert second_ctx["issue_url"] == "https://portal.red-soft.ru/issues/322"
+
+
+def test_issue_url_empty_when_no_runtime_base(monkeypatch) -> None:
+    issue = MockIssue(issue_id=323)
+    monkeypatch.setattr(sender_mod, "PORTAL_BASE_URL", "")
+    monkeypatch.setattr(sender_mod, "REDMINE_URL", "")
+
+    import bot.main as main_mod
+
+    monkeypatch.setattr(main_mod, "PORTAL_BASE_URL", "")
+    monkeypatch.setattr(main_mod, "REDMINE_URL", "")
+
+    monkeypatch.delenv("PORTAL_BASE_URL", raising=False)
+    monkeypatch.delenv("REDMINE_URL", raising=False)
+
+    ctx = build_issue_context(issue, catalogs=None)
+    assert ctx["portal_base_url"] == ""
+    assert ctx["issue_url"] == ""
+
+
+def test_issue_url_falls_back_to_main_runtime_base(monkeypatch) -> None:
+    issue = MockIssue(issue_id=324)
+    monkeypatch.setattr(sender_mod, "PORTAL_BASE_URL", "")
+    monkeypatch.setattr(sender_mod, "REDMINE_URL", "")
+
+    import bot.main as main_mod
+
+    monkeypatch.setattr(main_mod, "PORTAL_BASE_URL", "https://runtime.red-soft.ru")
+    monkeypatch.setattr(main_mod, "REDMINE_URL", "")
+
+    ctx = build_issue_context(issue, catalogs=None)
+    assert ctx["portal_base_url"] == "https://runtime.red-soft.ru"
+    assert ctx["issue_url"] == "https://runtime.red-soft.ru/issues/324"
+
+
+def test_is_valid_http_issue_url_rejects_relative() -> None:
+    assert is_valid_http_issue_url("https://support.red-soft.ru/issues/1")
+    assert not is_valid_http_issue_url("/issues/1")
+    assert not is_valid_http_issue_url("redv://redv/issues/1")
+    assert not is_valid_http_issue_url("")
 
 
 def test_aggregate_journals_first_old_last_new() -> None:

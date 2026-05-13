@@ -117,18 +117,30 @@ class TestLogFileBackupCount:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+_ENV_PLACEHOLDER_HINT_KEYS = (
+    "MATRIX_HOMESERVER",
+    "MATRIX_USER_ID",
+    "MATRIX_ACCESS_TOKEN",
+    "REDMINE_URL",
+    "REDMINE_API_KEY",
+)
+
+
 class TestEnvPlaceholderHints:
     """env_placeholder_hints: предупреждения о placeholder-значениях."""
 
-    def teardown_method(self):
-        for key in [
-            "MATRIX_HOMESERVER",
-            "MATRIX_USER_ID",
-            "MATRIX_ACCESS_TOKEN",
-            "REDMINE_URL",
-            "REDMINE_API_KEY",
-        ]:
-            os.environ.pop(key, None)
+    def setup_method(self) -> None:
+        self._env_prev = {k: os.environ.get(k) for k in _ENV_PLACEHOLDER_HINT_KEYS}
+
+    def teardown_method(self) -> None:
+        # Восстанавливаем значения до теста; иначе pop ломает REDMINE_URL для остального suite
+        # (conftest выставляет его один раз при импорте).
+        for key in _ENV_PLACEHOLDER_HINT_KEYS:
+            prev = self._env_prev[key]
+            if prev is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prev
 
     def test_no_placeholders_no_hints(self):
         os.environ["MATRIX_HOMESERVER"] = "https://real.server"

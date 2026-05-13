@@ -16,6 +16,7 @@ import signal
 import uuid
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -72,13 +73,9 @@ __all__ = [
     "ensure_tz",
     "_cfg_for_room",
     "_group_room",
-    "get_extra_rooms_for_new",
-    "get_extra_rooms_for_rv",
-    "_group_member_rooms",
     "send_matrix_message",
     "send_safe",
     "check_all_users",
-    "daily_report",
     "cleanup_state_files",
 ]
 
@@ -105,41 +102,34 @@ def _group_room(user_cfg: dict) -> str:
     return _raw(user_cfg)
 
 
-def get_extra_rooms_for_new(issue, user_cfg: dict) -> set[str]:
-    from bot.logic import get_extra_rooms_for_new as _raw
-
-    return _raw(issue, user_cfg, VERSION_ROOM_MAP, USERS)
-
-
-def get_extra_rooms_for_rv(issue, user_cfg: dict) -> set[str]:
-    from bot.logic import get_extra_rooms_for_rv as _raw
-
-    return _raw(issue, user_cfg, STATUS_ROOM_MAP, VERSION_ROOM_MAP, USERS)
-
-
-def _group_member_rooms(user_cfg: dict) -> set[str]:
-    from bot.logic import _group_member_rooms as _raw
-
-    return _raw(user_cfg, USERS)
+def _safe_issue_link_base_for_log(raw_url: str) -> str:
+    """Короткое безопасное представление базы ссылок для логов."""
+    value = (raw_url or "").strip()
+    if not value:
+        return "(empty)"
+    parts = urlsplit(value)
+    if parts.scheme and parts.netloc:
+        return f"{parts.scheme}://{parts.netloc}"
+    if parts.scheme:
+        return f"{parts.scheme}://(no-host)"
+    return "(invalid-url)"
 
 
 # ── Re-export sender и scheduler для тестов ──────────────────────────────────
 # fmt: off
-import bot.sender as _sender_mod  # noqa: E402, I001
-from bot.scheduler import check_all_users, cleanup_state_files, daily_report  # noqa: E402, I001
+from bot.scheduler import check_all_users, cleanup_state_files  # noqa: E402, I001
 from bot.sender import send_matrix_message, send_safe  # noqa: E402, I001
 # fmt: on
 
 # ── Config (не-секретные) ───────────────────────────────────────────────────
 from config import (  # noqa: E402, I001
+    BOT_INTERNAL_API_TOKEN,
     BOT_LEASE_TTL_SECONDS,
     BOT_TIMEZONE,
     CHECK_INTERVAL,
     COMMAND_POLL_INTERVAL_SEC,
     CONFIG_POLL_INTERVAL_SEC,
-    GROUP_REPEAT_SECONDS,
     MATRIX_DEVICE_ID as MATRIX_DEVICE_ID_ENV,
-    REMINDER_AFTER,
 )
 
 import config as cfg  # noqa: E402
@@ -173,8 +163,6 @@ def runtime_status_file() -> Path:
 
 USERS: list[dict] = []
 GROUPS: list[dict] = []
-STATUS_ROOM_MAP: dict[str, str] = {}
-VERSION_ROOM_MAP: dict[str, str] = {}
 
 HOMESERVER: str = ""
 ACCESS_TOKEN: str = ""
@@ -185,7 +173,6 @@ PORTAL_BASE_URL: str = ""
 
 # Время последней успешной проверки для каждого пользователя
 _last_check_time: dict[int, datetime] = {}
-_last_unassigned_new_check_time: dict[str, datetime] = {}
 
 # ── Логирование ──────────────────────────────────────────────────────────────
 
@@ -255,19 +242,6 @@ def now_tz():
     return datetime.now(tz=BOT_TZ)
 
 
-def today_tz():
-    """Сегодняшняя дата в таймзоне бота."""
-    return now_tz().date()
-
-
-def _safe_hour(value: int) -> int:
-    return max(0, min(23, int(value)))
-
-
-def _safe_minute(value: int) -> int:
-    return max(0, min(59, int(value)))
-
-
 def _log_redmine_list_error(uid: int, err: Exception, where: str) -> None:
     """Логирует сбой Redmine при issue.filter и т.п."""
     if isinstance(err, (AuthError, ForbiddenError)):
@@ -285,8 +259,6 @@ async def main() -> None:
     global \
         USERS, \
         GROUPS, \
-        STATUS_ROOM_MAP, \
-        VERSION_ROOM_MAP, \
         HOMESERVER, \
         ACCESS_TOKEN, \
         MATRIX_USER_ID, \
@@ -294,8 +266,6 @@ async def main() -> None:
         REDMINE_KEY, \
         PORTAL_BASE_URL, \
         CHECK_INTERVAL, \
-        REMINDER_AFTER, \
-        GROUP_REPEAT_SECONDS, \
         BOT_TIMEZONE, \
         BOT_TZ, \
         BOT_LEASE_TTL_SECONDS, \
@@ -398,7 +368,7 @@ async def main() -> None:
     try:
         from database.load_config import fetch_runtime_config
 
-        u, sm, vm, g, routes_cfg = await fetch_runtime_config()
+        u, _, _, g, routes_cfg = await fetch_runtime_config()
     except Exception as e:
         logger.error("❌ Не удалось загрузить конфиг из БД: %s", e, exc_info=True)
         return
@@ -409,26 +379,14 @@ async def main() -> None:
         GROUPS as _SG,
     )
     from bot.config_state import (
-        STATUS_ROOM_MAP as _SR,
-    )
-    from bot.config_state import (
         USERS as _SU,
-    )
-    from bot.config_state import (
-        VERSION_ROOM_MAP as _SV,
     )
 
     USERS = u
     GROUPS = g
-    STATUS_ROOM_MAP = sm or {}
-    VERSION_ROOM_MAP = vm or {}
     _cstate.ROUTING = routes_cfg or {}
     _SU[:] = USERS
     _SG[:] = GROUPS
-    _SR.clear()
-    _SR.update(STATUS_ROOM_MAP)
-    _SV.clear()
-    _SV.update(VERSION_ROOM_MAP)
 
     logger.info("Конфиг из БД обновлён, пользователей: %s, групп: %s", len(USERS), len(GROUPS))
     group_rooms = sorted(
@@ -455,9 +413,6 @@ async def main() -> None:
 
     if cycle:
         CHECK_INTERVAL = int(cycle.get("CHECK_INTERVAL", str(CHECK_INTERVAL)))
-        REMINDER_AFTER = int(cycle.get("REMINDER_AFTER", str(REMINDER_AFTER)))
-        GROUP_REPEAT_SECONDS = int(cycle.get("GROUP_REPEAT_SECONDS", str(GROUP_REPEAT_SECONDS)))
-
         new_tz = cycle.get("BOT_TIMEZONE", "").strip()
         if new_tz:
             BOT_TIMEZONE = new_tz
@@ -468,11 +423,8 @@ async def main() -> None:
             BOT_LEASE_TTL_SECONDS = max(15, min(int(new_lease), 3600))
 
         logger.info(
-            "⚙ cycle_settings из БД: interval=%ds, reminder=%ds, "
-            "group_repeat=%ds, tz=%s, lease_ttl=%ds",
+            "⚙ cycle_settings из БД: interval=%ds, tz=%s, lease_ttl=%ds",
             CHECK_INTERVAL,
-            REMINDER_AFTER,
-            GROUP_REPEAT_SECONDS,
             BOT_TZ,
             BOT_LEASE_TTL_SECONDS,
         )
@@ -498,8 +450,6 @@ async def main() -> None:
 
     # Переопределяем интервалы через каталоги (fallback на уже загруженные значения)
     CHECK_INTERVAL = CATALOGS.cycle_int("CHECK_INTERVAL", CHECK_INTERVAL)
-    REMINDER_AFTER = CATALOGS.cycle_int("REMINDER_AFTER", REMINDER_AFTER)
-    GROUP_REPEAT_SECONDS = CATALOGS.cycle_int("GROUP_REPEAT_SECONDS", GROUP_REPEAT_SECONDS)
     BOT_LEASE_TTL_SECONDS = max(
         15, min(CATALOGS.cycle_int("BOT_LEASE_TTL_SECONDS", BOT_LEASE_TTL_SECONDS), 3600)
     )
@@ -515,10 +465,8 @@ async def main() -> None:
         MATRIX_DEVICE_ID = md_db[:255]
 
     logger.info(
-        "⚙ cycle: interval=%ds, reminder=%ds, repeat=%ds, tz=%s, matrix_device_id=%s",
+        "⚙ cycle: interval=%ds, tz=%s, matrix_device_id=%s",
         CHECK_INTERVAL,
-        REMINDER_AFTER,
-        GROUP_REPEAT_SECONDS,
         BOT_TZ,
         MATRIX_DEVICE_ID or "(env default)",
     )
@@ -526,10 +474,12 @@ async def main() -> None:
     apply_service_timezone_to_bot_logger(BOT_TIMEZONE)
 
     # ── Инициализация sender (URL для ссылок в шаблонах) ──
-    import bot.sender as _sender_mod
+    import bot.sender as sender_mod
 
-    _sender_mod.REDMINE_URL = REDMINE_URL
-    _sender_mod.PORTAL_BASE_URL = PORTAL_BASE_URL or REDMINE_URL
+    sender_mod.REDMINE_URL = REDMINE_URL
+    sender_mod.PORTAL_BASE_URL = PORTAL_BASE_URL or REDMINE_URL
+    effective_base = (sender_mod.PORTAL_BASE_URL or sender_mod.REDMINE_URL or "").rstrip("/")
+    logger.info("🔗 База ссылок на задачи: %s", _safe_issue_link_base_for_log(effective_base))
 
     # ── Подключение к Matrix ──
     from nio import AsyncClient
@@ -580,12 +530,9 @@ async def main() -> None:
 
     # ── Импорт функций для scheduler ──
     from bot.command_worker import process_backend_commands
-    from bot.heartbeat import start_heartbeat_task
     from bot.scheduler import (
         check_all_users,
-        check_unassigned_new_issues,
         cleanup_state_files,
-        daily_report,
     )
 
     def _redmine_client_for_user(redmine_inst, user_cfg):
@@ -614,19 +561,11 @@ async def main() -> None:
     _reload_ctx = {
         "client": client,
         "redmine": redmine,
-        "daily_kwargs": {
-            "now_tz": now_tz,
-            "today_tz": today_tz,
-            "redmine_client_for_user": _redmine_client_for_user,
-            "redmine_url": REDMINE_URL,
-        },
     }
 
     from bot.config_hot_reload import (
-        JOB_DAILY_REPORT,
         JOB_HOT_RELOAD,
         JOB_POLL_ALL,
-        JOB_POLL_UNASSIGNED,
         hot_reload_interval_sec,
         is_hot_reload_enabled,
         run_hot_reload_once,
@@ -655,54 +594,6 @@ async def main() -> None:
     )
 
     scheduler.add_job(
-        check_unassigned_new_issues,
-        "interval",
-        seconds=CHECK_INTERVAL,
-        args=[client, redmine],
-        kwargs={
-            "now_tz": now_tz,
-            "last_check_time": _last_unassigned_new_check_time,
-            "bot_instance_id": BOT_INSTANCE_ID_UUID,
-            "bot_lease_ttl": BOT_LEASE_TTL_SECONDS,
-        },
-        id=JOB_POLL_UNASSIGNED,
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=30,
-        next_run_time=datetime.now(tz=BOT_TZ),
-    )
-
-    daily_report_enabled = str(
-        CATALOGS.cycle_settings.get("DAILY_REPORT_ENABLED", "1")
-    ).lower() in (
-        "1",
-        "true",
-        "on",
-    )
-    daily_report_hour = _safe_hour(CATALOGS.cycle_int("DAILY_REPORT_HOUR", 9))
-    daily_report_minute = _safe_minute(CATALOGS.cycle_int("DAILY_REPORT_MINUTE", 0))
-    if daily_report_enabled:
-        scheduler.add_job(
-            daily_report,
-            CronTrigger(
-                hour=daily_report_hour,
-                minute=daily_report_minute,
-                timezone=BOT_TZ,
-            ),
-            args=[client, redmine],
-            kwargs=_reload_ctx["daily_kwargs"],
-            id=JOB_DAILY_REPORT,
-        )
-        logger.info(
-            "📊 Утренний отчёт включен: %02d:%02d (%s)",
-            daily_report_hour,
-            daily_report_minute,
-            BOT_TZ,
-        )
-    else:
-        logger.info("📊 Утренний отчёт отключен (DAILY_REPORT_ENABLED=0)")
-
-    scheduler.add_job(
         cleanup_state_files,
         CronTrigger(hour=3, minute=0, timezone=BOT_TZ),
         args=[redmine],
@@ -719,6 +610,7 @@ async def main() -> None:
         args=[client],
         kwargs={
             "admin_url": os.getenv("ADMIN_URL", "http://admin:8080"),
+            "api_token": BOT_INTERNAL_API_TOKEN,
             "limit": 20,
         },
         max_instances=1,
@@ -737,8 +629,6 @@ async def main() -> None:
 
             baseline = EnvBaseline(
                 check_interval=cfg.CHECK_INTERVAL,
-                reminder_after=cfg.REMINDER_AFTER,
-                group_repeat_seconds=cfg.GROUP_REPEAT_SECONDS,
                 bot_lease_ttl=cfg.BOT_LEASE_TTL_SECONDS,
                 bot_timezone=cfg.BOT_TIMEZONE,
                 matrix_device_id=(cfg.MATRIX_DEVICE_ID or "").strip() or "redmine_bot",
@@ -769,10 +659,6 @@ async def main() -> None:
         len(USERS),
     )
 
-    # ── Heartbeat ──
-    admin_url = os.getenv("ADMIN_URL", "http://admin:8080")
-    start_heartbeat_task(admin_url)
-
     # ── Graceful shutdown ──
     stop_event = asyncio.Event()
 
@@ -796,7 +682,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-# ── Post-import инициализация (после того как все переменные определены) ─────
-_sender_mod.REDMINE_URL = REDMINE_URL
-_sender_mod.PORTAL_BASE_URL = PORTAL_BASE_URL or REDMINE_URL

@@ -853,12 +853,16 @@ class TestSettingsIntegration:
         factory = get_session_factory()
         async with factory() as session:
             rows = (
-                await session.execute(
-                    select(AppSecret).where(
-                        AppSecret.name.in_(["REDMINE_URL", "PORTAL_BASE_URL"])
+                (
+                    await session.execute(
+                        select(AppSecret).where(
+                            AppSecret.name.in_(["REDMINE_URL", "PORTAL_BASE_URL"])
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             vals = {
                 row.name: decrypt_secret(row.ciphertext, row.nonce, load_master_key())
                 for row in rows

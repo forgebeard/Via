@@ -26,3 +26,9 @@
 08.05.2026 12:41:08 [AUDIT] ADMIN_CRUD entity=routing_policy action=create actor=admin details={"id": "13", "action_kind": "created", "notification_type_id": "1", "recipient_modes": "[omitted]", "status_ids": "[omitted]", "version_ids": "[omitted]", "priority_ids": "[omitted]"}
 08.05.2026 12:44:02 [AUDIT] ADMIN_CRUD entity=group action=create actor=admin entity_id=1 details={"id": "1", "name": "тест_РВ"}
 08.05.2026 12:44:32 [AUDIT] ADMIN_CRUD entity=bot_user action=update actor=admin entity_id=1 details={"id": "1", "redmine_id": "1972"}
+08.05.2026 19:39:27 [AUDIT] ADMIN_CRUD entity=group action=update actor=admin entity_id=1 details={"id": "1", "name": "тест_РВ"}
+09.05.2026 09:06:22 [AUDIT] ADMIN_CRUD entity=bot_user action=update actor=admin entity_id=1 details={"id": "1", "redmine_id": "1972"}
+09.05.2026 09:06:29 [AUDIT] ADMIN_CRUD entity=group action=update actor=admin entity_id=1 details={"id": "1", "name": "тест_РВ"}
+12.05.2026 10:50:17 [AUDIT] ADMIN_CRUD entity=group action=create actor=admin entity_id=2 details={"id": "2", "name": "ТП_РЕД_ВИРТ"}
+12.05.2026 10:51:29 [AUDIT] ADMIN_CRUD entity=routing_policy action=update actor=admin details={"id": "13", "action_kind": "created", "notification_type_id": "1", "recipient_modes": "[omitted]", "status_ids": "[omitted]", "version_ids": "[omitted]", "priority_ids": "[omitted]", "enabled": "1"}
+12.05.2026 10:51:32 [AUDIT] ADMIN_CRUD entity=routing_policy action=update actor=admin details={"id": "12", "action_kind": "updated", "notification_type_id": "6", "recipient_modes": "[omitted]", "status_ids": "[omitted]", "version_ids": "[omitted]", "priority_ids": "[omitted]", "enabled": "1"}

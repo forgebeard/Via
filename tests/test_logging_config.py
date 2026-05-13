@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 
 import pytest
-
-from datetime import datetime, timezone
 
 from logging_config import (
     ServiceTimezoneFormatter,
@@ -90,7 +89,7 @@ class TestServiceTimezoneFormatter:
             args=(),
             exc_info=None,
         )
-        record.created = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc).timestamp()
+        record.created = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC).timestamp()
         s = fmt.format(record)
         assert "2024-01-15 15:00:00" in s
         assert "x" in s

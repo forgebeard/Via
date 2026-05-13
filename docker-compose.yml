@@ -164,11 +164,13 @@ services:
       DOCKER_HOST: ${DOCKER_HOST:-tcp://docker-socket-proxy:2375}
       DOCKER_TARGET_SERVICE: ${DOCKER_TARGET_SERVICE:-bot}
       BOT_RUNTIME_STATUS_FILE: ${BOT_RUNTIME_STATUS_FILE:-/app/data/runtime_status.json}
+      ADMIN_UVICORN_LOG_LEVEL: ${ADMIN_UVICORN_LOG_LEVEL:-info}
+      ADMIN_UVICORN_ACCESS_LOG: ${ADMIN_UVICORN_ACCESS_LOG:-0}
     command:
       [
         "sh",
         "-c",
-        "exec uvicorn src.admin.main:app --host 0.0.0.0 --port 8080",
+        "if [ \"${ADMIN_UVICORN_ACCESS_LOG:-0}\" = \"1\" ]; then ACCESS_LOG_FLAG='--access-log'; else ACCESS_LOG_FLAG='--no-access-log'; fi; exec uvicorn src.admin.main:app --host 0.0.0.0 --port 8080 --log-level ${ADMIN_UVICORN_LOG_LEVEL:-info} ${ACCESS_LOG_FLAG}",
       ]
     ports:
       - "${ADMIN_PORT:-8080}:8080"

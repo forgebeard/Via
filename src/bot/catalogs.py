@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -22,6 +23,7 @@ from database.models import (
 from database.session import get_session_factory
 
 logger = logging.getLogger("redmine_bot")
+_LAST_CATALOG_SUMMARY: tuple[int, int, int, int, int, int, int, int, int, int] | None = None
 
 
 # Допустимые значения RedmineStatus.role
@@ -112,16 +114,6 @@ async def load_catalogs(session: AsyncSession | None = None) -> BotCatalogs:
 
     closed_ids = frozenset(s.redmine_status_id for s in statuses if s.is_closed)
 
-    logger.info(
-        "📋 Статусы: %d (new=%d, info=%d, reopen=%d, transfer=%d, closed=%d)",
-        len(statuses),
-        len(role_map["trigger_new"]),
-        len(role_map["trigger_info_provided"]),
-        len(role_map["trigger_reopened"]),
-        len(role_map["trigger_transferred"]),
-        len(closed_ids),
-    )
-
     # ── 2. Приоритеты ────────────────────────────────────────────────
     rows = await session.execute(select(RedminePriority).where(RedminePriority.is_active.is_(True)))
     priorities = list(rows.scalars().all())
@@ -133,12 +125,6 @@ async def load_catalogs(session: AsyncSession | None = None) -> BotCatalogs:
     priority_name_to_id = {p.name: p.redmine_priority_id for p in priorities}
     emergency_names = frozenset(p.name for p in priorities if p.is_emergency)
     emergency_ids = frozenset(p.redmine_priority_id for p in priorities if p.is_emergency)
-
-    logger.info(
-        "📋 Приоритеты: %d (emergency=%d)",
-        len(priorities),
-        len(emergency_ids),
-    )
 
     # ── 3. Типы уведомлений ──────────────────────────────────────────
     rows = await session.execute(
@@ -152,14 +138,37 @@ async def load_catalogs(session: AsyncSession | None = None) -> BotCatalogs:
         logger.error("❌ Таблица notification_types пуста! Заполните справочники через админку.")
 
     notification_types = {nt.key: (nt.emoji, nt.label) for nt in ntypes}
-    logger.info("📋 Типы уведомлений: %d", len(ntypes))
-
     # ── 4. Настройки цикла ───────────────────────────────────────────
     rows = await session.execute(select(CycleSettings))
     csettings = list(rows.scalars().all())
 
     cycle_settings = {cs.key: cs.value for cs in csettings}
-    logger.info("📋 Настройки цикла: %d", len(cycle_settings))
+    summary = (
+        len(statuses),
+        len(role_map["trigger_new"]),
+        len(role_map["trigger_info_provided"]),
+        len(role_map["trigger_reopened"]),
+        len(role_map["trigger_transferred"]),
+        len(closed_ids),
+        len(priorities),
+        len(emergency_ids),
+        len(ntypes),
+        len(cycle_settings),
+    )
+    mode = (os.getenv("BOT_CATALOG_LOG") or "summary").strip().lower()
+    if mode == "debug-only":
+        logger.debug(
+            "📋 Каталоги: statuses=%d new=%d info=%d reopen=%d transfer=%d closed=%d priorities=%d emergency=%d ntypes=%d cycle=%d",
+            *summary,
+        )
+    else:
+        global _LAST_CATALOG_SUMMARY
+        if summary != _LAST_CATALOG_SUMMARY:
+            logger.info(
+                "📋 Каталоги обновлены: statuses=%d (new=%d, info=%d, reopen=%d, transfer=%d, closed=%d), priorities=%d (emergency=%d), ntypes=%d, cycle=%d",
+                *summary,
+            )
+            _LAST_CATALOG_SUMMARY = summary
 
     # ── Результат ────────────────────────────────────────────────────
     return BotCatalogs(

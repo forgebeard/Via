@@ -106,6 +106,9 @@ def can_notify(
     if _priority_is_emergency(priority):
         return True
 
+    if user_cfg.get("notify_always") is True:
+        return True
+
     # Ручной DND
     if is_dnd(user_cfg):
         return False

@@ -149,49 +149,6 @@ async def test_upsert_and_load_state():
 
 
 @pytest.mark.asyncio
-async def test_reminder_and_overdue_conditions_from_loaded_state():
-    await ensure_migrated()
-    from database.session import get_session_factory
-    from database.state_repo import load_user_issue_state, upsert_user_issue_state
-    from src.bot.main import REMINDER_AFTER, ensure_tz
-
-    factory = get_session_factory()
-    uid = 1972
-    iid = "100"
-
-    now = datetime.now(UTC)
-    sent_at = now - timedelta(minutes=10)
-    reminder_at = now - timedelta(seconds=REMINDER_AFTER + 10)
-    overdue_at = now - timedelta(days=2)
-
-    sent = {iid: {"notified_at": sent_at.isoformat(), "status": "Информация предоставлена"}}
-    reminders = {iid: {"last_reminder": reminder_at.isoformat()}}
-    overdue = {iid: {"last_notified": overdue_at.isoformat()}}
-    journals = {}
-
-    async with factory() as session:
-        await upsert_user_issue_state(
-            session,
-            user_redmine_id=uid,
-            issue_ids={iid},
-            sent=sent,
-            reminders=reminders,
-            overdue=overdue,
-            journals=journals,
-        )
-        await session.commit()
-
-        loaded_sent, loaded_rem, loaded_over, _ = await load_user_issue_state(session, uid)
-
-    last_rem = ensure_tz(datetime.fromisoformat(loaded_rem[iid]["last_reminder"]))
-    time_since = (now - last_rem).total_seconds()
-    assert time_since >= REMINDER_AFTER
-
-    last_notified = ensure_tz(datetime.fromisoformat(loaded_over[iid]["last_notified"]))
-    assert last_notified.date() < now.date()
-
-
-@pytest.mark.asyncio
 async def test_concurrent_lease_one_winner():
     await ensure_migrated()
     from database.session import get_session_factory

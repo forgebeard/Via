@@ -27,6 +27,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger("redmine_bot")
 
 
+class InvalidIssueUrlError(RuntimeError):
+    """Отправка пропускается, если issue_url не абсолютный http(s)."""
+
+
 def _strip_html_to_plain(html: str) -> str:
     """Грубое снятие тегов для Matrix body при отсутствии body_plain в БД."""
     t = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", html)
@@ -128,10 +132,10 @@ async def prewarm_dm_rooms(client: AsyncClient, mxids: list[str]) -> None:
             to_resolve.append(m)
 
     if not to_resolve:
-        logger.info("🔗 Pre-warm DM: все %d комнат уже в кеше", found_in_cache)
+        logger.debug("🔗 Pre-warm DM: все %d комнат уже в кеше", found_in_cache)
         return
 
-    logger.info(
+    logger.debug(
         "🔗 Pre-warm DM: %d в кеше, %d нужно резолвить...",
         found_in_cache,
         len(to_resolve),
@@ -149,7 +153,7 @@ async def prewarm_dm_rooms(client: AsyncClient, mxids: list[str]) -> None:
         if room_id:
             _mxid_to_room_cache[target_mxid] = room_id
             found_count += 1
-            logger.info("🔗 DM найден: %s → %s", target_mxid, room_id)
+            logger.debug("🔗 DM найден: %s → %s", target_mxid, room_id)
         else:
             need_create.append(target_mxid)
 
@@ -162,7 +166,7 @@ async def prewarm_dm_rooms(client: AsyncClient, mxids: list[str]) -> None:
             )
             _mxid_to_room_cache[target_mxid] = room_id
             created_count += 1
-            logger.info(
+            logger.debug(
                 "✅ DM создан (%d/%d): %s → %s",
                 i + 1,
                 len(need_create),
@@ -189,7 +193,7 @@ async def prewarm_dm_rooms(client: AsyncClient, mxids: list[str]) -> None:
                     )
                     _mxid_to_room_cache[target_mxid] = room_id
                     created_count += 1
-                    logger.info("✅ DM создан (retry): %s → %s", target_mxid, room_id)
+                    logger.debug("✅ DM создан (retry): %s → %s", target_mxid, room_id)
                 except (RuntimeError, ValueError, OSError) as retry_err:
                     logger.warning("⚠ Pre-warm DM retry failed: %s — %s", target_mxid, retry_err)
                     failed_count += 1
@@ -295,24 +299,24 @@ async def _resolve_room_id(client: AsyncClient, room_or_mxid: str) -> str:
 
     # Синхронизируем список комнат (нужен хотя бы один sync)
     if not client.rooms:
-        logger.info("📡 Matrix sync (первый раз, для поиска DM)...")
+        logger.debug("📡 Matrix sync (первый раз, для поиска DM)...")
         await client.sync(timeout=10000, full_state=True)
 
     # Ищем существующую DM-комнату
     room_id = _find_existing_dm(client, target_mxid, bot_mxid)
     if room_id:
-        logger.info("🔗 DM найден: %s → %s", target_mxid, room_id)
+        logger.debug("🔗 DM найден: %s → %s", target_mxid, room_id)
         _mxid_to_room_cache[target_mxid] = room_id
         return room_id
 
     # Создаём новую DM с таймаутом
-    logger.info("📨 Создаём DM с %s...", target_mxid)
+    logger.debug("📨 Создаём DM с %s...", target_mxid)
     try:
         new_room_id = await asyncio.wait_for(
             _create_dm(client, target_mxid),
             timeout=DM_CREATE_TIMEOUT,
         )
-        logger.info("✅ DM создан: %s → %s", target_mxid, new_room_id)
+        logger.debug("✅ DM создан: %s → %s", target_mxid, new_room_id)
         _mxid_to_room_cache[target_mxid] = new_room_id
         return new_room_id
     except TimeoutError:
@@ -335,7 +339,7 @@ async def _tpl_build_matrix_message_content(
     extra_text: str,
 ) -> dict:
     from bot.config_state import CATALOGS
-    from bot.template_context import build_issue_context
+    from bot.template_context import build_issue_context, is_valid_http_issue_url
     from bot.template_loader import render_named_template
 
     tpl_name = EVENT_TO_TEMPLATE[notification_type]
@@ -344,7 +348,7 @@ async def _tpl_build_matrix_message_content(
 
     extra_merged = (extra_text or "").strip()
     if notification_type == "overdue" and issue.due_date:
-        from bot.main import today_tz
+        from utils import today_tz
 
         days = (today_tz() - issue.due_date).days
         ov_line = f"просрочено на {plural_days(days)}"
@@ -352,27 +356,21 @@ async def _tpl_build_matrix_message_content(
             extra_merged = ov_line + (f"<br/>{extra_merged}" if extra_merged else "")
 
     event_label = NOTIFICATION_TYPES[notification_type][1]
+    ctx = build_issue_context(
+        issue,
+        catalogs,
+        emoji=emoji,
+        title=title,
+        event_type=event_label,
+        extra_text=extra_merged,
+    )
 
-    if tpl_name == "tpl_reminder":
-        ctx = build_issue_context(
-            issue,
-            catalogs,
-            reminder_text="Задача без движения",
-            title="Напоминание",
-            emoji="",
-            reminder_count=1,
-            max_reminders=max(1, int(catalogs.cycle_int("MAX_REMINDERS", 3))) if catalogs else 1,
-            elapsed_human=_elapsed_human_since(getattr(issue, "updated_on", None)),
-        )
-    else:
-        ctx = build_issue_context(
-            issue,
-            catalogs,
-            emoji=emoji,
-            title=title,
-            event_type=event_label,
-            extra_text=extra_merged,
-        )
+    if tpl_name in {"tpl_new_issue", "tpl_task_change"}:
+        issue_url = str(ctx.get("issue_url") or "").strip()
+        if not is_valid_http_issue_url(issue_url):
+            raise InvalidIssueUrlError(
+                f"invalid issue_url for issue #{getattr(issue, 'id', '?')}: {issue_url!r}"
+            )
 
     html_out, plain_opt = await render_named_template(session, tpl_name, ctx)
     if notification_type in {"issue_updated", "status_change"}:
@@ -422,7 +420,7 @@ async def send_matrix_message(
         issue, notification_type, extra_text=extra_text, session=session
     )
     await room_send_with_retry(client, resolved_room, content, txn_id=txn_id)
-    logger.info("📨 #%s → %s... (%s)", issue.id, resolved_room[:20], notification_type)
+    logger.debug("📨 #%s → %s... (%s)", issue.id, resolved_room[:20], notification_type)
 
 
 async def send_safe(
@@ -466,6 +464,9 @@ async def send_safe(
             session=db_session,
             txn_id=txn_id,
         )
+    except InvalidIssueUrlError as e:
+        logger.error("❌ Пропуск отправки #%s → %s: %s", issue.id, room_id[:20], e)
+        return
     except Exception as e:
         logger.error("❌ Ошибка отправки #%s → %s: %s", issue.id, room_id[:20], e)
         # Сохраняем в DLQ для повторной отправки

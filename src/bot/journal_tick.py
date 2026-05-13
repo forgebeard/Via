@@ -1,4 +1,4 @@
-"""Один тик журнального движка v2: digest → фаза A/B → handlers → DLQ."""
+"""Один тик журнального движка v2: фаза A/B → handlers → DLQ."""
 
 from __future__ import annotations
 
@@ -10,9 +10,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.catalogs import load_catalogs
+from bot.catalogs import BotCatalogs, load_catalogs
 from bot.config_state import GROUPS, ROUTING, USERS
-from bot.digest_service import drain_pending_digests
 from bot.journal_handlers import handle_journal_entry
 from bot.journal_pipeline import (
     advance_cursor_after_journal,
@@ -24,7 +23,6 @@ from bot.journal_pipeline import (
     reload_issue_with_journals,
     sync_watcher_cache_for_issue,
 )
-from bot.reminder_service import process_reminders, update_reminder_timers
 from bot.scheduler import retry_dlq_notifications
 from database.models import BotUser
 from database.session import get_session_factory
@@ -65,30 +63,27 @@ async def run_journal_tick(
     redmine: Any,
     *,
     now_tz: Callable[[], Any],
+    catalogs: BotCatalogs | None = None,
 ) -> None:
-    """Точка входа планировщика для основного тика назначенных задач и напоминаний."""
+    """Точка входа планировщика для основного тика журнального движка."""
     global _TICK_COUNTER
     _TICK_COUNTER += 1
 
     session_factory = get_session_factory()
     dlq_batch = 10
     async with session_factory() as session:
-        catalogs = await load_catalogs(session)
+        if catalogs is None:
+            catalogs = await load_catalogs(session)
         from bot import config_state as _cs
 
         _cs.CATALOGS = catalogs
 
         max_issues = catalogs.cycle_int("MAX_ISSUES_PER_TICK", 50)
         max_pages = catalogs.cycle_int("MAX_PAGES_PER_TICK", 3)
-        drain_max = catalogs.cycle_int("DRAIN_MAX_USERS_PER_TICK", 5)
         n_refresh = catalogs.cycle_int("WATCHER_CACHE_REFRESH_EVERY_N_TICKS", 10)
         dlq_batch = max(1, catalogs.cycle_int("DLQ_BATCH_SIZE", 10))
 
         users = list(USERS)
-        ubid = _users_by_bot_id(users)
-        await drain_pending_digests(
-            client, session, users_by_bot_id=ubid, drain_max_users=drain_max
-        )
 
         bot_ids = await load_bot_user_redmine_ids(session)
         watched = await issue_ids_watched_by_bot_users(session)
@@ -168,29 +163,6 @@ async def run_journal_tick(
                 await advance_cursor_after_journal(session, int(full.id), int(aggregated.id))
                 await session.commit()
 
-            try:
-                issue_for_timers = await reload_issue_with_journals(redmine, int(full.id))
-            except Exception as e:
-                logger.warning("journal_reload_timers issue #%s: %s", full.id, e)
-                issue_for_timers = full
-            await update_reminder_timers(
-                session,
-                issue_for_timers,
-                catalogs=catalogs,
-                now=now_tz(),
-            )
-            await session.commit()
-
-        await process_reminders(
-            client,
-            redmine,
-            session,
-            catalogs=catalogs,
-            users=users,
-            routes_cfg=routes_cfg,
-            groups=groups,
-            now_tz=now_tz,
-        )
         await session.commit()
 
     try:

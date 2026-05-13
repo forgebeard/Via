@@ -23,7 +23,6 @@ flowchart LR
   deploy --> db
   admin --> db
   bot --> db
-  bot -->|heartbeat optional| admin
 ```
 
 ---
@@ -142,10 +141,11 @@ GET/POST — только **расписание утреннего отчёта
 
 ---
 
-## 12. Heartbeat и очередь команд
+## 12. Очередь команд (thin worker)
 
-- **`POST /api/bot/heartbeat`** — бот периодически сообщает «жив», запись в **`bot_heartbeat`**.
-- **`GET /api/bot/commands`** (если используется тонкий воркер) — выдача отложенных доставок из **`pending_notifications`** и связанная семантика DLQ.
+- **`GET /api/bot/commands`** — выдача отложенных доставок из **`pending_notifications`**.
+- **`POST /api/bot/commands/{id}/ack`** — подтверждение успешной доставки.
+- **`POST /api/bot/commands/{id}/error`** — фиксация ошибки и планирование retry в DLQ-сценарии.
 
 ---
 

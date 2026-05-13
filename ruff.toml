@@ -22,7 +22,7 @@ ignore = [
     "S607",  # start process with partial path — допустимо
     "S105",  # hardcoded password — false positive на секрет-ключах (__service_timezone и т.п.)
     "S107",  # hardcoded password default — допустимо для regen-параметров форм
-    "S110",  # try-except-pass — допустимо в heartbeat и non-critical коде
+    "S110",  # try-except-pass — допустимо в non-critical коде
     "S310",  # URL open — допустимо для HTTP-запросов
     "S701",  # jinja2 autoescape=False — намеренно, шаблоны контролируются разработчиком
     "SIM102",  # nested if — иногда читаемее

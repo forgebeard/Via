@@ -1,6 +1,5 @@
 """
-Загрузка USERS / STATUS_ROOM_MAP / VERSION_ROOM_MAP из Postgres
-в формате, совместимом с bot.py и .env JSON.
+Загрузка runtime-конфига из Postgres для policy-based маршрутизации.
 
 См. двойные проекции маршрутов (мапы vs routes_config): docs/RUNTIME_ROUTING_CONFIG.md
 """
@@ -18,51 +17,17 @@ from .models import (
     BotUser,
     CycleSettings,
     GroupVersionRoute,
-    NotificationRoutingRule,
     NotificationType,
     RoutingPolicy,
     RoutingPolicyPriority,
     RoutingPolicyStatus,
     RoutingPolicyVersion,
-    StatusRoomRoute,
     SupportGroup,
     UserVersionRoute,
-    VersionRoomRoute,
 )
 from .session import get_session_factory
 
 logger = logging.getLogger("redmine_bot")
-
-
-def _routes_and_flat_map(
-    rows: list[Any],
-    *,
-    key_field: str,
-    source_name: str,
-) -> tuple[dict[str, str], list[dict[str, Any]]]:
-    """
-    Строит одновременно плоскую map-проекцию и list-проекцию маршрутов.
-
-    Это единая точка сборки для глобальных status/version route-таблиц.
-    """
-    flat_map: dict[str, str] = {}
-    routes: list[dict[str, Any]] = []
-    for row in rows:
-        key = str(getattr(row, key_field))
-        room_id = str(getattr(row, "room_id"))
-        flat_map[key] = room_id
-        routes.append(
-            {
-                key_field: key,
-                "room_id": room_id,
-                "priority": int(getattr(row, "priority")),
-                "sort_order": int(getattr(row, "sort_order")),
-                "notify_on_assignment": bool(getattr(row, "notify_on_assignment")),
-                "route_source": source_name,
-                "route_id": int(getattr(row, "id")),
-            }
-        )
-    return flat_map, routes
 
 
 def user_orm_to_cfg(
@@ -144,15 +109,14 @@ async def fetch_runtime_config(
     """
     Возвращает (USERS, STATUS_ROOM_MAP, VERSION_ROOM_MAP, GROUPS, routes_config).
 
-    ``routes_config`` — метаданные маршрутов для ``bot.routing``:
-    ``status_routes``, ``version_routes_global`` (списки словарей).
+    STATUS_ROOM_MAP / VERSION_ROOM_MAP возвращаются пустыми для обратной совместимости.
     """
     if session is None:
         factory = get_session_factory()
         async with factory() as s:
             return await fetch_runtime_config(s)
 
-    r_groups = await session.execute(select(SupportGroup))
+    r_groups = await session.execute(select(SupportGroup).order_by(SupportGroup.id))
     groups = list(r_groups.scalars().all())
     groups_by_id = {g.id: g for g in groups}
 
@@ -204,65 +168,14 @@ async def fetch_runtime_config(
     ]
     groups_cfg = [group_orm_to_cfg(g) for g in groups]
 
-    r_st = await session.execute(
-        select(StatusRoomRoute).order_by(
-            StatusRoomRoute.priority,
-            StatusRoomRoute.sort_order,
-            StatusRoomRoute.id,
-        )
-    )
-    status_rows = list(r_st.scalars().all())
-    status_map, status_routes = _routes_and_flat_map(
-        status_rows,
-        key_field="status_key",
-        source_name="status_room_route",
-    )
-
-    r_ver = await session.execute(
-        select(VersionRoomRoute).order_by(
-            VersionRoomRoute.priority,
-            VersionRoomRoute.sort_order,
-            VersionRoomRoute.id,
-        )
-    )
-    version_rows = list(r_ver.scalars().all())
-    version_map, version_routes_global = _routes_and_flat_map(
-        version_rows,
-        key_field="version_key",
-        source_name="version_room_route",
-    )
+    status_map: dict[str, str] = {}
+    version_map: dict[str, str] = {}
 
     routes_config: dict[str, Any] = {
-        "status_routes": status_routes,
-        "version_routes_global": version_routes_global,
-        "routing_rules": [],
+        "status_routes": [],
+        "version_routes_global": [],
         "routing_policies": [],
     }
-
-    r_rules = await session.execute(
-        select(NotificationRoutingRule)
-        .where(NotificationRoutingRule.enabled.is_(True))
-        .order_by(
-            NotificationRoutingRule.priority,
-            NotificationRoutingRule.sort_order,
-            NotificationRoutingRule.id,
-        )
-    )
-    rules_rows = list(r_rules.scalars().all())
-    routes_config["routing_rules"] = [
-        {
-            "id": int(row.id),
-            "enabled": bool(row.enabled),
-            "priority": int(row.priority),
-            "sort_order": int(row.sort_order),
-            "target_room_id": str(row.target_room_id),
-            "status_id": int(row.status_id) if row.status_id is not None else None,
-            "version_id": int(row.version_id) if row.version_id is not None else None,
-            "priority_id": int(row.priority_id) if row.priority_id is not None else None,
-            "source_table": "notification_routing_rules",
-        }
-        for row in rules_rows
-    ]
 
     policies = list(
         (
@@ -277,7 +190,9 @@ async def fetch_runtime_config(
     nt_ids = {int(p.notification_type_id) for p in policies}
     id_to_nt_key: dict[int, str] = {}
     if nt_ids:
-        r_nt = await session.execute(select(NotificationType).where(NotificationType.id.in_(nt_ids)))
+        r_nt = await session.execute(
+            select(NotificationType).where(NotificationType.id.in_(nt_ids))
+        )
         for nt in r_nt.scalars().all():
             id_to_nt_key[int(nt.id)] = str(nt.key or "")
     status_map_by_policy: dict[int, list[int]] = defaultdict(list)
@@ -310,9 +225,7 @@ async def fetch_runtime_config(
             "name": str(p.name or ""),
             "enabled": bool(p.enabled),
             "action_kind": str(getattr(p, "action_kind", "") or "updated"),
-            "notification_type_key": id_to_nt_key.get(
-                int(p.notification_type_id), "issue_updated"
-            ),
+            "notification_type_key": id_to_nt_key.get(int(p.notification_type_id), "issue_updated"),
             "recipient_modes": list(p.recipient_modes)
             if isinstance(getattr(p, "recipient_modes", None), list)
             else ["match_rooms"],
@@ -332,18 +245,15 @@ async def row_counts(session: AsyncSession | None = None) -> tuple[int, int, int
         async with factory() as s:
             return await row_counts(s)
     nu = await session.scalar(select(func.count()).select_from(BotUser))
-    ns = await session.scalar(select(func.count()).select_from(StatusRoomRoute))
-    nv = await session.scalar(select(func.count()).select_from(VersionRoomRoute))
+    ns = 0
+    nv = 0
     return int(nu or 0), int(ns or 0), int(nv or 0)
-
-
-# src/database/load_config.py — добавить в конец файла:
 
 
 async def fetch_cycle_settings(session: AsyncSession | None = None) -> dict[str, str]:
     """
     Загружает настройки цикла из таблицы cycle_settings.
-    Возвращает {key: value} — например {"CHECK_INTERVAL": "90", "REMINDER_AFTER": "3600"}.
+    Возвращает {key: value} — например {"CHECK_INTERVAL": "90"}.
     """
     if session is None:
         factory = get_session_factory()

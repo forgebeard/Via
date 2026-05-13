@@ -44,6 +44,7 @@ class _Redmine:
 
 @pytest.mark.asyncio
 async def test_contract_check_first_tick_logs_summary_for_optional(caplog, monkeypatch):
+    caplog.set_level(logging.DEBUG, logger="redmine_bot")
     jp._CONTRACT_LOGGED_ISSUES.clear()
     jp._CONTRACT_TICK_NO = 0
 

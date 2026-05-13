@@ -113,10 +113,10 @@ class TestShouldNotify:
         cfg = {"redmine_id": 1}
         assert should_notify(cfg, "new") is True
 
-    def test_daily_report_type(self):
+    def test_unknown_notify_tokens_treated_as_attribute_filters(self):
         cfg = {"notify": ["new", "daily_report"]}
         assert should_notify(cfg, "daily_report") is True
-        assert should_notify(cfg, "overdue") is False
+        assert should_notify(cfg, "overdue") is True
 
 
 # ═══════════════════════════════════════════════════════════════

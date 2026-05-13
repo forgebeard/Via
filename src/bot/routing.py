@@ -8,21 +8,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from bot.logic import issue_matches_cfg, should_notify
+from bot.logic import NOTIFICATION_TYPES, issue_matches_cfg, should_notify
 
 logger = logging.getLogger("redmine_bot")
 
 _ALLOWED_RECIPIENT_MODES = frozenset({"match_rooms", "assignee", "watchers"})
-
-
-@dataclass(frozen=True)
-class MatchedRoute:
-    room_id: str
-    priority: int
-    sort_order: int
-    notify_on_assignment: bool
-    source_table: str
-    source_id: int | None
 
 
 @dataclass(frozen=True)
@@ -55,28 +45,12 @@ def _issue_axis_ids(issue: Any) -> tuple[int | None, int | None, int | None]:
     return status_id, version_id, priority_id
 
 
-def _rule_matches_axis(rule_value: int | None, issue_value: int | None) -> bool:
-    if rule_value is None:
-        return True
-    if issue_value is None:
-        return False
-    return int(rule_value) == int(issue_value)
-
-
 def _axis_matches(values: list[int], issue_value: int | None) -> bool:
     if not values:
         return True
     if issue_value is None:
         return False
     return int(issue_value) in {int(v) for v in values}
-
-
-def _notify_token_for_action(action_kind: str) -> str:
-    """Сопоставление action_kind -> ключ подписки notify для обратной совместимости."""
-    kind = (action_kind or "").strip().lower()
-    if kind == "created":
-        return "new"
-    return "issue_updated"
 
 
 def _normalize_recipient_modes(raw: Any) -> list[str]:
@@ -94,11 +68,18 @@ def _normalize_recipient_modes(raw: Any) -> list[str]:
     return out or ["match_rooms"]
 
 
-def _notification_type_key_for_policy(p: dict[str, Any], action: str) -> str:
+def _notification_type_key_for_policy(p: dict[str, Any]) -> str:
     key = str(p.get("notification_type_key") or "").strip()
-    if key in ("new", "issue_updated"):
-        return key
-    return _notify_token_for_action(action)
+    if not key:
+        return "issue_updated"
+    if key not in NOTIFICATION_TYPES:
+        logger.debug(
+            "routing: unknown notification_type_key %r in policy id=%s, using issue_updated",
+            key,
+            p.get("id"),
+        )
+        return "issue_updated"
+    return key
 
 
 def _dedupe_deliveries(pairs: list[tuple[str, str]]) -> tuple[tuple[str, str], ...]:
@@ -134,9 +115,6 @@ def resolve_policy_target_rooms(
     policies = list(routes_config.get("routing_policies") or [])
     matched_policies: list[dict[str, Any]] = []
     for p in policies:
-        p_action = str(p.get("action_kind") or "").strip().lower()
-        if p_action != action:
-            continue
         status_values = [_int_or_none(x) for x in (p.get("status_ids") or [])]
         if not _axis_matches([int(x) for x in status_values if x is not None], status_id):
             continue
@@ -168,7 +146,7 @@ def resolve_policy_target_rooms(
         pid = _int_or_none(p.get("id"))
         if pid is not None:
             matched_policy_ids.append(pid)
-        notify_key = _notification_type_key_for_policy(p, action)
+        notify_key = _notification_type_key_for_policy(p)
         modes = _normalize_recipient_modes(p.get("recipient_modes"))
 
         if "match_rooms" in modes:
@@ -177,8 +155,10 @@ def resolve_policy_target_rooms(
                 if not room:
                     continue
                 recipient_rid = _int_or_none(cfg.get("redmine_id"))
-                if action == "updated" and actor_redmine_id and recipient_rid == int(
-                    actor_redmine_id
+                if (
+                    action == "updated"
+                    and actor_redmine_id
+                    and recipient_rid == int(actor_redmine_id)
                 ):
                     continue
                 if not should_notify(cfg, notify_key):
@@ -198,8 +178,10 @@ def resolve_policy_target_rooms(
 
         if "assignee" in modes and assignee_cfg:
             room = str(assignee_cfg.get("room") or "").strip()
-            if room and issue_matches_cfg(issue, assignee_cfg) and should_notify(
-                assignee_cfg, notify_key
+            if (
+                room
+                and issue_matches_cfg(issue, assignee_cfg)
+                and should_notify(assignee_cfg, notify_key)
             ):
                 ar = _int_or_none(assignee_cfg.get("redmine_id"))
                 if not (action == "updated" and actor_redmine_id and ar == int(actor_redmine_id)):
@@ -241,65 +223,9 @@ def resolve_policy_target_rooms(
             "target_rooms": [d[0] for d in deduped],
             "ts": datetime.now(UTC).isoformat(),
         }
-        logger.info(json.dumps(payload_match, ensure_ascii=False))
+        logger.debug(json.dumps(payload_match, ensure_ascii=False))
     return PolicyRoutingResult(
         deliveries=deduped,
         matched_policy_ids=tuple(matched_policy_ids),
         action_kind=action,
     )
-
-
-def get_matching_route(
-    issue: Any,
-    routes_config: dict[str, Any] | None,
-    assignee_cfg: dict[str, Any],
-    *,
-    groups: list[dict[str, Any]] | None = None,
-) -> MatchedRoute | None:
-    """Возвращает лучший маршрут только из notification_routing_rules."""
-    routes_config = routes_config or {}
-    status_id, version_id, priority_id = _issue_axis_ids(issue)
-    rules = list(routes_config.get("routing_rules") or [])
-    candidates: list[tuple[tuple[int, int, int], MatchedRoute]] = []
-    for spec in rules:
-        room_id = (spec.get("target_room_id") or "").strip()
-        if not room_id:
-            continue
-        if not _rule_matches_axis(_int_or_none(spec.get("status_id")), status_id):
-            continue
-        if not _rule_matches_axis(_int_or_none(spec.get("version_id")), version_id):
-            continue
-        if not _rule_matches_axis(_int_or_none(spec.get("priority_id")), priority_id):
-            continue
-        rid = _int_or_none(spec.get("id"))
-        priority = _int_or_none(spec.get("priority")) or 100
-        sort_order = _int_or_none(spec.get("sort_order")) or 0
-        tiebreak_id = rid if rid is not None else 0
-        candidates.append(
-            (
-                (priority, sort_order, tiebreak_id),
-                MatchedRoute(
-                    room_id=room_id,
-                    priority=priority,
-                    sort_order=sort_order,
-                    notify_on_assignment=True,
-                    source_table="notification_routing_rules",
-                    source_id=rid,
-                ),
-            )
-        )
-
-    if not candidates:
-        payload = {
-            "event": "routing_no_match",
-            "issue_id": _int_or_none(getattr(issue, "id", None)),
-            "status_id": status_id,
-            "version_id": version_id,
-            "priority_id": priority_id,
-            "matched_rules_count": 0,
-            "ts": datetime.now(UTC).isoformat(),
-        }
-        logger.warning(json.dumps(payload, ensure_ascii=False))
-        return None
-    candidates.sort(key=lambda x: x[0])
-    return candidates[0][1]

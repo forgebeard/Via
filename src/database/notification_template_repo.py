@@ -11,9 +11,7 @@ TEMPLATE_NAMES = (
     "tpl_new_issue",
     "tpl_task_change",
     "tpl_reminder",
-    "tpl_digest",
     "tpl_test_message",
-    "tpl_daily_report",
 )
 
 # Подписи в админке (заголовки карточек, тосты); технический ключ — ``name`` в API.
@@ -21,9 +19,7 @@ NOTIFICATION_TEMPLATE_LABELS: dict[str, str] = {
     "tpl_new_issue": "Новая задача",
     "tpl_task_change": "Изменение задачи",
     "tpl_reminder": "Напоминание",
-    "tpl_digest": "Дайджест",
     "tpl_test_message": "Тестовое сообщение",
-    "tpl_daily_report": "Утренний отчёт",
 }
 
 assert set(TEMPLATE_NAMES) == set(NOTIFICATION_TEMPLATE_LABELS.keys())
