@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from bot.journal_handlers import (
     former_assignee_redmine_id,
     infer_event_type,
+    journal_action_kind_for_routing,
     jinja_context_json_safe,
 )
 
@@ -24,6 +25,20 @@ def test_infer_event_type_assigned() -> None:
         notes="", details=[{"property": "assigned_to_id", "old_value": "1", "new_value": "2"}]
     )
     assert infer_event_type(j) == "assigned"
+
+
+def test_journal_action_kind_first_journal_is_created() -> None:
+    j1 = SimpleNamespace(id=10, notes="")
+    issue = SimpleNamespace(journals=[j1])
+    journal = SimpleNamespace(id=10, notes="", details=[], user=None)
+    assert journal_action_kind_for_routing(issue, journal) == "created"
+
+
+def test_journal_action_kind_second_journal_uses_infer() -> None:
+    j1 = SimpleNamespace(id=1, notes="")
+    j2 = SimpleNamespace(id=2, notes="hi", details=[], user=None)
+    issue = SimpleNamespace(journals=[j1, j2])
+    assert journal_action_kind_for_routing(issue, j2) == "comment"
 
 
 def test_former_assignee_empty_old_values() -> None:
@@ -53,8 +68,7 @@ def test_jinja_context_json_safe_roundtrip() -> None:
 def test_two_journals_close_resets_timers_documented() -> None:
     """Регрессия (план): в одном тике два журнала — reassign затем закрытие.
 
-    После ``update_reminder_timers`` с финальным ``issue.status.is_closed`` поля
-    ``group_reminder_due_at`` / ``personal_reminder_due_at`` должны стать NULL;
-    курсор — на id последнего журнала (см. ``advance_cursor_after_journal`` в тике).
+    Устаревшие колонки таймеров напоминаний в ``bot_issue_state`` сняты миграцией
+    ``0014``; курсор журнала — ``bot_issue_journal_cursor`` (см. ``advance_cursor_after_journal``).
     """
     assert True

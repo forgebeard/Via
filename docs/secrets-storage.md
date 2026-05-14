@@ -1,4 +1,3 @@
-```markdown
 # Хранение секретов
 
 Описание того, как Via хранит и защищает чувствительные данные.
@@ -8,7 +7,7 @@
 | Секрет | Где используется |
 |--------|-----------------|
 | `POSTGRES_PASSWORD` | Подключение к БД |
-| `APP_MASTER_KEY` | Шифрование токенов Redmine и Matrix в БД |
+| `APP_MASTER_KEY` | Шифрование токенов Redmine и Matrix в БД (`app_secrets`) |
 | `REDMINE_API_KEY` | Доступ к Redmine REST API |
 | `MATRIX_ACCESS_TOKEN` | Доступ к Matrix Homeserver |
 | `SESSION_SECRET` | Подпись cookie сессий админки |
@@ -17,7 +16,7 @@
 
 ### 1. Шифрование в БД (AES-256-GCM)
 
-Токены Redmine и Matrix хранятся в таблице `app_settings` **зашифрованными**. Ключ — `APP_MASTER_KEY`.
+Токены Redmine и Matrix хранятся в таблице **`app_secrets`** зашифрованными. Ключ — `APP_MASTER_KEY`.
 
 - Алгоритм: AES-256-GCM (аутентифицированное шифрование).
 - Каждое значение шифруется с уникальным nonce.
@@ -64,7 +63,7 @@ APP_MASTER_KEY=base64:абвгд...==
 
 ## Ротация `APP_MASTER_KEY`
 
-> ⚠️ Смена ключа требует перешифрования данных в `app_settings`.
+Смена ключа требует перешифрования данных в `app_secrets`.
 
 1. Сделайте бэкап БД.
 2. Запустите скрипт ротации:
@@ -83,4 +82,26 @@ APP_MASTER_KEY=base64:абвгд...==
 - **Ограничьте доступ:** `chmod 600 .env`.
 - **Для production** используйте Docker secrets (вариант B).
 - **При компрометации** `APP_MASTER_KEY` — выполните ротацию и смените токены Redmine / Matrix.
-```
+
+## Имена ключей в `app_secrets`
+
+Не удалять ключи без проверки: они нужны onboarding, боту и синхронизации каталогов.
+
+### Обязательные для интеграции (onboarding; `REQUIRED_SECRET_NAMES` в [`helpers_ext.py`](../src/admin/helpers_ext.py))
+
+- `REDMINE_URL`, `REDMINE_API_KEY`
+- `MATRIX_HOMESERVER`, `MATRIX_ACCESS_TOKEN`, `MATRIX_USER_ID`
+
+### Ожидание `bot.main` при bootstrap
+
+Включая необязательный URL портала: `REDMINE_URL`, `REDMINE_API_KEY`, `PORTAL_BASE_URL`, `MATRIX_HOMESERVER`, `MATRIX_ACCESS_TOKEN`, `MATRIX_USER_ID`.  
+`PORTAL_BASE_URL` в onboarding может быть пустым («нет override»).
+
+### Системные имена админки (не в матрице onboarding)
+
+Из [`helpers.py`](../src/admin/helpers.py):
+
+- `__service_timezone` (`SERVICE_TIMEZONE_SECRET`)
+- `__catalog_notify`, `__catalog_versions` — опрос каталогов Redmine
+
+Управление: `/secrets` и onboarding. Удаление неиспользуемых имён — после аудита вызовов `_load_secret_plain` и веток onboarding.

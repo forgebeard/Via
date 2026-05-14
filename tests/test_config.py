@@ -96,14 +96,14 @@ class TestShouldNotify:
     def test_all_matches_everything(self):
         cfg = {"notify": ["all"]}
         assert should_notify(cfg, "new") is True
-        assert should_notify(cfg, "overdue") is True
+        assert should_notify(cfg, "issue_updated") is True
         assert should_notify(cfg, "whatever") is True
 
     def test_specific_types(self):
-        cfg = {"notify": ["new", "info"]}
+        cfg = {"notify": ["new", "issue_updated"]}
         assert should_notify(cfg, "new") is True
-        assert should_notify(cfg, "info") is True
-        assert should_notify(cfg, "overdue") is False
+        assert should_notify(cfg, "issue_updated") is True
+        assert should_notify(cfg, "reminder") is False
 
     def test_empty_notify(self):
         cfg = {"notify": []}
@@ -114,9 +114,10 @@ class TestShouldNotify:
         assert should_notify(cfg, "new") is True
 
     def test_unknown_notify_tokens_treated_as_attribute_filters(self):
-        cfg = {"notify": ["new", "daily_report"]}
+        # Токен не из NOTIFICATION_TYPES → режим совместимости: не режем по виду уведомления.
+        cfg = {"notify": ["new", "n_catalog_only"]}
         assert should_notify(cfg, "daily_report") is True
-        assert should_notify(cfg, "overdue") is True
+        assert should_notify(cfg, "reminder") is True
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -26,10 +26,10 @@ class TestNotifyPreset:
         assert main._status_preset(["all", "new"]) == "default"
 
     def test_custom_returns_custom(self):
-        assert main._status_preset(["new", "status_change"]) == "custom"
+        assert main._status_preset(["new", "issue_updated"]) == "custom"
 
     def test_single_custom(self):
-        assert main._status_preset(["overdue"]) == "custom"
+        assert main._status_preset(["reminder"]) == "custom"
 
     def test_matches_catalog_defaults_is_default(self):
         assert main._status_preset(["a", "b"], ["a", "b"]) == "default"
@@ -112,17 +112,17 @@ class TestNormalizeNotify:
     """_normalize_notify: нормализация списка уведомлений."""
 
     def test_valid_values(self):
-        allowed = ["all", "new", "status_change", "overdue"]
-        result = main._normalize_notify(["new", "overdue"], allowed)
-        assert result == ["new", "overdue"]
+        allowed = ["all", "new", "issue_updated", "reminder"]
+        result = main._normalize_notify(["new", "reminder"], allowed)
+        assert result == ["new", "reminder"]
 
     def test_filters_invalid(self):
-        allowed = ["new", "status_change"]
-        result = main._normalize_notify(["new", "invalid", "status_change"], allowed)
-        assert result == ["new", "status_change"]
+        allowed = ["new", "issue_updated"]
+        result = main._normalize_notify(["new", "invalid", "issue_updated"], allowed)
+        assert result == ["new", "issue_updated"]
 
     def test_all_in_values_returns_all(self):
-        allowed = ["new", "status_change"]
+        allowed = ["new", "issue_updated"]
         result = main._normalize_notify(["all", "new"], allowed)
         assert result == ["all"]  # "all" → returns ["all"]
 

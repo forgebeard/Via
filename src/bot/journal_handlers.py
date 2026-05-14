@@ -97,8 +97,7 @@ def _is_assignee_detail(d: dict[str, Any]) -> bool:
 
 
 def _event_type_from_assignee(d: dict[str, Any]) -> str:
-    # Legacy compatibility for tests/older payloads:
-    # details with only "property" are interpreted as simple assignment event.
+    # Старые payload'ы journal.details: только поле property → трактуем как назначение.
     if "name" not in d and d.get("property") in ("assigned_to_id", "assigned_to"):
         return "assigned"
     old_raw = _as_text(d.get("old_value"))
@@ -131,6 +130,20 @@ def infer_event_type(journal: Any) -> str:
     except Exception:
         pass
     return "issue_updated"
+
+
+def journal_action_kind_for_routing(issue: Any, journal: Any) -> str:
+    """
+    Для сопоставления с политиками: первая запись журнала у задачи трактуется как ``created``,
+    чтобы политики с ключом ``new`` могли матчиться; иначе — как ``infer_event_type``.
+    """
+    try:
+        journals = list(getattr(issue, "journals", None) or [])
+        if len(journals) == 1:
+            return "created"
+    except Exception:
+        pass
+    return infer_event_type(journal)
 
 
 def former_assignee_redmine_id(journal: Any) -> int | None:
@@ -382,13 +395,27 @@ async def journal_render_send_or_dlq(
     return False
 
 
+def _effective_sender_redmine_id(assignee_cfg: dict[str, Any] | None, journal: Any) -> int:
+    if assignee_cfg:
+        try:
+            rid = int(assignee_cfg.get("redmine_id") or 0)
+        except (TypeError, ValueError):
+            rid = 0
+        if rid > 0:
+            return rid
+    try:
+        return int(getattr(getattr(journal, "user", None), "id", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 async def handle_journal_entry(
     client: Any,
     session: AsyncSession,
     *,
     issue: Any,
     journal: Any,
-    assignee_cfg: dict[str, Any],
+    assignee_cfg: dict[str, Any] | None,
     routes_cfg: dict[str, Any] | None,
     groups: list[dict[str, Any]],
     users: list[dict[str, Any]],
@@ -411,7 +438,7 @@ async def handle_journal_entry(
     policy_rooms = resolve_policy_target_rooms(
         issue,
         routes_cfg,
-        action_kind=event_type,
+        action_kind=journal_action_kind_for_routing(issue, journal),
         users=users,
         groups=groups,
         actor_redmine_id=int(getattr(getattr(journal, "user", None), "id", 0) or 0),
@@ -422,7 +449,12 @@ async def handle_journal_entry(
     if not policy_rooms.deliveries:
         return
 
-    candidates: list[dict[str, Any]] = [assignee_cfg, *users, *groups, *watcher_cfgs_r]
+    candidates: list[dict[str, Any]] = [
+        *([assignee_cfg] if assignee_cfg else []),
+        *users,
+        *groups,
+        *watcher_cfgs_r,
+    ]
     room_to_cfgs: dict[str, list[dict[str, Any]]] = {}
     for cfg in candidates:
         room = str(cfg.get("room") or "").strip()
@@ -474,7 +506,7 @@ async def handle_journal_entry(
             template_name=template_name,
             jinja_context=base_ctx,
             plain_body=plain,
-            user_redmine_id=int(assignee_cfg.get("redmine_id") or 0),
+            user_redmine_id=_effective_sender_redmine_id(assignee_cfg, journal),
             issue_id=int(issue.id),
             notification_type=ntype,
             dedup_key=_policy_dedup_key(issue, room_id=room_id, notification_type=ntype),

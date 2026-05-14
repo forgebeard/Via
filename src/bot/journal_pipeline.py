@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import UTC, datetime
@@ -63,6 +64,43 @@ async def _contract_audit_settings(session: AsyncSession) -> tuple[bool, int]:
         os.getenv("CONTRACT_AUDIT_SAMPLE_LIMIT", "10"),
     )
     return _to_bool(verbose_raw, default=False), _to_int(sample_raw, default=10)
+
+
+async def journal_scope_mode(session: AsyncSession) -> str:
+    """
+    Режим охвата Phase A: ``narrow`` (только исполнитель из bot_users или watcher cache),
+    ``all`` (все задачи из поллинга с валидным required-contract), ``projects`` (как ``all``,
+    но сбор по списку ``JOURNAL_PROJECT_IDS``).
+    """
+    raw = (await _cycle_str(session, "JOURNAL_SCOPE_MODE", "narrow")).strip().lower()
+    if raw in ("narrow", "all", "projects"):
+        return raw
+    return "narrow"
+
+
+async def journal_project_ids(session: AsyncSession) -> list[int]:
+    """Список Redmine ``project_id`` для режима ``projects`` (JSON-массив в ``cycle_settings``)."""
+    raw = await _cycle_str(session, "JOURNAL_PROJECT_IDS", "")
+    if not (raw or "").strip():
+        return []
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[int] = []
+    for x in data:
+        try:
+            out.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _required_contract_problems(issue: Any) -> list[str]:
+    problems = _issue_contract_problems(issue)
+    return [p for p in problems if not p.startswith("optional-empty ")]
 
 
 def _parse_watermark(raw: str) -> datetime:
@@ -129,6 +167,10 @@ async def phase_a_candidates(
     """
     Один проход по Redmine ``updated_on >= LAST_ISSUES_POLL_AT`` без assigned_to/status_id.
 
+    Режим ``JOURNAL_SCOPE_MODE`` (см. ``journal_scope_mode``): ``narrow`` — только задачи,
+    назначенные на ``bot_users`` или из watcher cache; ``all`` / ``projects`` — все задачи из
+    выборки без этого фильтра, но с обязательным contract-check (без «дырявых» required-полей).
+
     Возвращает (кандидаты в scope, max_updated_on по **всем** строкам ответа для водяного знака).
     """
     global _CONTRACT_TICK_NO
@@ -140,30 +182,51 @@ async def phase_a_candidates(
     wm = _parse_watermark(wm_raw)
     ts = _redmine_ts(wm)
 
+    scope_mode = await journal_scope_mode(session)
+    project_ids = await journal_project_ids(session)
+
     collected: list[Any] = []
     max_on: datetime | None = None
-    offset = 0
-    for _page in range(max(1, max_pages)):
-        params: dict[str, Any] = {
-            "updated_on": f">={ts}",
-            "sort": "updated_on:asc",
-            "limit": max_issues,
-            "offset": offset,
-        }
-        try:
-            batch = await run_in_thread(lambda p=params: list(redmine.issue.filter(**p)))
-        except Exception as e:
-            logger.error("journal_phase_a_redmine_failed: %s", e, exc_info=True)
-            break
-        if not batch:
-            break
-        mo = _max_updated_on(batch)
-        if mo is not None and (max_on is None or mo > max_on):
-            max_on = mo
-        collected.extend(batch)
-        if len(batch) < max_issues:
-            break
-        offset += len(batch)
+
+    async def _fetch_pages(extra: dict[str, Any]) -> None:
+        nonlocal collected, max_on
+        offset = 0
+        for _page in range(max(1, max_pages)):
+            params: dict[str, Any] = {
+                "updated_on": f">={ts}",
+                "sort": "updated_on:asc",
+                "limit": max_issues,
+                "offset": offset,
+                **extra,
+            }
+            try:
+                batch = await run_in_thread(lambda p=params: list(redmine.issue.filter(**p)))
+            except Exception as e:
+                logger.error("journal_phase_a_redmine_failed: %s", e, exc_info=True)
+                break
+            if not batch:
+                break
+            mo = _max_updated_on(batch)
+            if mo is not None and (max_on is None or mo > max_on):
+                max_on = mo
+            collected.extend(batch)
+            if len(batch) < max_issues:
+                break
+            offset += len(batch)
+
+    if scope_mode == "projects" and project_ids:
+        by_id: dict[int, Any] = {}
+        for pid in project_ids:
+            await _fetch_pages({"project_id": pid})
+        for iss in collected:
+            try:
+                by_id[int(getattr(iss, "id", 0) or 0)] = iss
+            except Exception as e:
+                logger.debug("journal_phase_a_skip_issue: %s", e, exc_info=True)
+                continue
+        collected = list(by_id.values())
+    else:
+        await _fetch_pages({})
 
     in_scope: list[Any] = []
     optional_count = 0
@@ -205,6 +268,11 @@ async def phase_a_candidates(
                                 ", ".join(optional_problems),
                             )
             _CONTRACT_LOGGED_ISSUES.add(iid)
+        broad = scope_mode in ("all", "projects")
+        if broad:
+            if not _required_contract_problems(iss):
+                in_scope.append(iss)
+            continue
         try:
             aid = getattr(getattr(iss, "assigned_to", None), "id", None)
         except Exception:
@@ -233,6 +301,12 @@ async def phase_a_candidates(
                 optional_sample_issue_ids,
                 sample_limit,
             )
+    logger.info(
+        "journal_phase_a scope_mode=%s collected=%s in_scope=%s",
+        scope_mode,
+        len(collected),
+        len(in_scope),
+    )
     return in_scope, max_on
 
 
@@ -314,7 +388,7 @@ def aggregate_journals_first_old_last_new(journals: list[Any]) -> Any | None:
     return SimpleNamespace(
         id=int(getattr(last, "id", 0) or 0),
         details=details,
-        notes="",
+        notes=str(getattr(last, "notes", None) or ""),
         user=getattr(last, "user", None),
     )
 

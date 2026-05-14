@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.template_loader import render_named_template
-from database.models import GroupVersionRoute, StatusRoomRoute, SupportGroup
+from database.models import SupportGroup
 from database.session import get_session
 
 logger = logging.getLogger("redmine_admin")
@@ -113,9 +113,6 @@ async def groups_new(
             "timezone_top_options": admin._top_timezone_options(),
             "timezone_all_options": admin._standard_timezone_options(),
             "timezone_labels": admin._timezone_labels(admin._standard_timezone_options()),
-            "status_routes": [],
-            "status_err": "",
-            "status_msg": "",
             # Статусы
             "status_json": json.dumps(status_default_keys, ensure_ascii=False),
             "status_preset": "default",
@@ -267,26 +264,6 @@ async def groups_edit(
     if admin._is_reserved_support_group(row):
         raise HTTPException(404, "Группа не найдена")
 
-    status_err = (request.query_params.get("status_err") or "").strip()
-    status_msg = (request.query_params.get("status_msg") or "").strip()
-    version_err = (request.query_params.get("version_err") or "").strip()
-    version_msg = (request.query_params.get("version_msg") or "").strip()
-
-    room = (row.room_id or "").strip()
-    sr_stmt = (
-        select(StatusRoomRoute)
-        .where(StatusRoomRoute.room_id == room)
-        .order_by(StatusRoomRoute.status_key)
-    )
-    status_rows = list((await session.execute(sr_stmt)).scalars().all()) if room else []
-
-    gv_stmt = (
-        select(GroupVersionRoute)
-        .where(GroupVersionRoute.group_id == group_id)
-        .order_by(GroupVersionRoute.version_key)
-    )
-    version_rows = list((await session.execute(gv_stmt)).scalars().all())
-
     # Загружаем каталоги (формат [{key, label, is_default}, ...])
     statuses_catalog = await admin._load_statuses_catalog(session)
     versions_catalog = await admin._load_versions_catalog(session)
@@ -326,12 +303,6 @@ async def groups_edit(
             "timezone_top_options": admin._top_timezone_options(),
             "timezone_all_options": admin._standard_timezone_options(),
             "timezone_labels": admin._timezone_labels(admin._standard_timezone_options()),
-            "status_routes": status_rows,
-            "status_err": status_err,
-            "status_msg": status_msg,
-            "version_routes": version_rows,
-            "version_err": version_err,
-            "version_msg": version_msg,
             # Статусы
             "status_json": json.dumps(row.notify, ensure_ascii=False),
             "status_preset": preset,
@@ -585,146 +556,6 @@ async def groups_update(
         {"id": group_id, "name": n},
     )
     return RedirectResponse(f"/groups?highlight_group_id={group_id}&saved=1", status_code=303)
-
-
-@router.post("/groups/{group_id}/status-routes/add")
-async def group_status_route_add(
-    request: Request,
-    group_id: int,
-    status_key: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    admin = _admin()
-    admin._verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    row = await session.get(SupportGroup, group_id)
-    if not row or admin._is_reserved_support_group(row):
-        raise HTTPException(404, "Группа не найдена")
-    room = (row.room_id or "").strip()
-    if not room:
-        return RedirectResponse(f"/groups/{group_id}/edit?status_err=no_room", status_code=303)
-    key = (status_key or "").strip()
-    if not key:
-        return RedirectResponse(f"/groups/{group_id}/edit?status_err=empty", status_code=303)
-    exists = await session.execute(select(StatusRoomRoute).where(StatusRoomRoute.status_key == key))
-    if exists.scalar_one_or_none():
-        return RedirectResponse(f"/groups/{group_id}/edit?status_err=exists", status_code=303)
-    session.add(StatusRoomRoute(status_key=key, room_id=room))
-    await admin._maybe_log_admin_crud(
-        session,
-        user,
-        "group_status_route",
-        "create",
-        {"group_id": group_id, "status_key": key},
-    )
-    return RedirectResponse(f"/groups/{group_id}/edit?status_msg=added", status_code=303)
-
-
-@router.post("/groups/{group_id}/status-routes/{route_row_id}/delete")
-async def group_status_route_delete(
-    request: Request,
-    group_id: int,
-    route_row_id: int,
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    admin = _admin()
-    admin._verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    row = await session.get(SupportGroup, group_id)
-    if not row or admin._is_reserved_support_group(row):
-        raise HTTPException(404, "Группа не найдена")
-    room = (row.room_id or "").strip()
-    rte = await session.get(StatusRoomRoute, route_row_id)
-    if not rte or (rte.room_id or "").strip() != room:
-        raise HTTPException(404, "Маршрут не найден")
-    sk = rte.status_key
-    await session.delete(rte)
-    await admin._maybe_log_admin_crud(
-        session,
-        user,
-        "group_status_route",
-        "delete",
-        {"group_id": group_id, "status_key": sk, "route_id": route_row_id},
-    )
-    return RedirectResponse(f"/groups/{group_id}/edit?status_msg=deleted", status_code=303)
-
-
-@router.post("/groups/{group_id}/version-routes/add")
-async def group_version_route_add(
-    request: Request,
-    group_id: int,
-    version_key: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    admin = _admin()
-    admin._verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    row = await session.get(SupportGroup, group_id)
-    if not row or admin._is_reserved_support_group(row):
-        raise HTTPException(404, "Группа не найдена")
-    room = (row.room_id or "").strip()
-    if not room:
-        return RedirectResponse(f"/groups/{group_id}/edit?version_err=no_room", status_code=303)
-    key = (version_key or "").strip()
-    if not key:
-        return RedirectResponse(f"/groups/{group_id}/edit?version_err=empty", status_code=303)
-    exists = await session.execute(
-        select(GroupVersionRoute.id).where(
-            GroupVersionRoute.group_id == group_id,
-            GroupVersionRoute.version_key == key,
-        )
-    )
-    if exists.scalar_one_or_none():
-        return RedirectResponse(f"/groups/{group_id}/edit?version_err=exists", status_code=303)
-    session.add(GroupVersionRoute(group_id=group_id, version_key=key, room_id=room))
-    await admin._maybe_log_admin_crud(
-        session,
-        user,
-        "group_version_route",
-        "create",
-        {"group_id": group_id, "version_key": key},
-    )
-    return RedirectResponse(f"/groups/{group_id}/edit?version_msg=added", status_code=303)
-
-
-@router.post("/groups/{group_id}/version-routes/{route_row_id}/delete")
-async def group_version_route_delete(
-    request: Request,
-    group_id: int,
-    route_row_id: int,
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    admin = _admin()
-    admin._verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    row = await session.get(SupportGroup, group_id)
-    if not row or admin._is_reserved_support_group(row):
-        raise HTTPException(404, "Группа не найдена")
-    rte = await session.get(GroupVersionRoute, route_row_id)
-    if not rte or rte.group_id != group_id:
-        raise HTTPException(404, "Маршрут не найден")
-    vkey = rte.version_key
-    await session.delete(rte)
-    await admin._maybe_log_admin_crud(
-        session,
-        user,
-        "group_version_route",
-        "delete",
-        {"group_id": group_id, "version_key": vkey, "route_id": route_row_id},
-    )
-    return RedirectResponse(f"/groups/{group_id}/edit?version_msg=deleted", status_code=303)
 
 
 @router.post("/groups/{group_id}/delete")

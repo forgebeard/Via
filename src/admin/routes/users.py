@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.template_loader import render_named_template
-from database.models import BotUser, SupportGroup, UserVersionRoute
+from database.models import BotUser, SupportGroup
 from database.session import get_session
 from database.user_runtime_cleanup import delete_runtime_data_for_redmine_user
 
@@ -275,22 +275,6 @@ async def users_create(
         raise HTTPException(
             400, "Не удалось создать пользователя: проверьте уникальность redmine_id"
         )
-    version_keys: list[str] = []
-    for key in row.versions or []:
-        key_norm = str(key).strip()
-        if not key_norm or key_norm == "all":
-            continue
-        version_keys.append(key_norm)
-    for vkey in version_keys:
-        ex = await session.execute(
-            select(UserVersionRoute.id).where(
-                UserVersionRoute.bot_user_id == row.id,
-                UserVersionRoute.version_key == vkey,
-            )
-        )
-        if ex.scalar_one_or_none():
-            continue
-        session.add(UserVersionRoute(bot_user_id=row.id, version_key=vkey, room_id=row.room))
     await admin._maybe_log_admin_crud(
         session,
         user,
@@ -773,75 +757,6 @@ async def users_update(
         {"id": user_id, "redmine_id": redmine_id},
     )
     return RedirectResponse(f"/users?highlight_user_id={user_id}&saved=1", status_code=303)
-
-
-@router.post("/users/{user_id}/version-routes/add")
-async def user_version_route_add(
-    request: Request,
-    user_id: int,
-    version_key: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    admin = _admin()
-    admin._verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    row = await session.get(BotUser, user_id)
-    if not row:
-        raise HTTPException(404)
-    room = (row.room or "").strip()
-    if not room:
-        return RedirectResponse(f"/users/{user_id}/edit?version_err=no_room", status_code=303)
-    key = (version_key or "").strip()
-    if not key:
-        return RedirectResponse(f"/users/{user_id}/edit?version_err=empty", status_code=303)
-    exists = await session.execute(
-        select(UserVersionRoute.id).where(
-            UserVersionRoute.bot_user_id == user_id,
-            UserVersionRoute.version_key == key,
-        )
-    )
-    if exists.scalar_one_or_none():
-        return RedirectResponse(f"/users/{user_id}/edit?version_err=exists", status_code=303)
-    session.add(UserVersionRoute(bot_user_id=user_id, version_key=key, room_id=room))
-    await admin._maybe_log_admin_crud(
-        session,
-        user,
-        "user_version_route",
-        "create",
-        {"bot_user_id": user_id, "version_key": key},
-    )
-    return RedirectResponse(f"/users/{user_id}/edit?version_msg=added", status_code=303)
-
-
-@router.post("/users/{user_id}/version-routes/{route_row_id}/delete")
-async def user_version_route_delete(
-    request: Request,
-    user_id: int,
-    route_row_id: int,
-    csrf_token: Annotated[str, Form()] = "",
-    session: AsyncSession = Depends(get_session),
-):
-    admin = _admin()
-    admin._verify_csrf(request, csrf_token)
-    user = getattr(request.state, "current_user", None)
-    if not user or getattr(user, "role", "") != "admin":
-        raise HTTPException(403, "Только admin")
-    rte = await session.get(UserVersionRoute, route_row_id)
-    if not rte or rte.bot_user_id != user_id:
-        raise HTTPException(404, "Маршрут не найден")
-    vkey = rte.version_key
-    await session.delete(rte)
-    await admin._maybe_log_admin_crud(
-        session,
-        user,
-        "user_version_route",
-        "delete",
-        {"bot_user_id": user_id, "version_key": vkey, "route_id": route_row_id},
-    )
-    return RedirectResponse(f"/users/{user_id}/edit?version_msg=deleted", status_code=303)
 
 
 @router.post("/users/{user_id}/delete")

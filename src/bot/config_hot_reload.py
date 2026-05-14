@@ -95,7 +95,7 @@ def _snapshot_fingerprint(snap: BotRuntimeSnapshot) -> str:
 async def build_snapshot(session: AsyncSession, baseline: EnvBaseline) -> BotRuntimeSnapshot:
     from zoneinfo import ZoneInfo
 
-    u, _, _, g, routes_cfg = await fetch_runtime_config(session)
+    u, g, routes_cfg = await fetch_runtime_config(session)
     catalogs = await load_catalogs(session)
 
     ci = catalogs.cycle_int("CHECK_INTERVAL", baseline.check_interval)
@@ -139,7 +139,7 @@ async def refresh_runtime_lists_from_db(session_factory: async_sessionmaker) -> 
 
     try:
         async with session_factory() as session:
-            u, _, _, g, routes_cfg = await fetch_runtime_config(session)
+            u, g, routes_cfg = await fetch_runtime_config(session)
     except Exception as e:
         logger.warning("⚠ Список пользователей из БД не обновлён: %s", e)
         return

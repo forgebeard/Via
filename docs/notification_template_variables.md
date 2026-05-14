@@ -38,7 +38,7 @@
 
 ## `tpl_new_issue`
 
-Маршрут: типы `new`, `reopened` → [`EVENT_TO_TEMPLATE`](../src/bot/notification_template_routing.py).
+Маршрут: тип `new` → [`EVENT_TO_TEMPLATE`](../src/bot/notification_template_routing.py) → `tpl_new_issue`.
 
 Используются поля из общей таблицы выше; в заголовке выводится `emoji` и «Новая задача», затем блоки темы и статуса/приоритета.
 
@@ -46,7 +46,7 @@
 
 ## `tpl_task_change`
 
-Маршрут: `info`, `overdue`, `issue_updated`, `status_change`.
+Маршрут: ключи `issue_updated`, `daily_report` (и иные, мапящиеся на этот tpl в [`EVENT_TO_TEMPLATE`](../src/bot/notification_template_routing.py)). Внутренний класс события журнала (`infer_event_type`: смена статуса, комментарий и т.д.) задаёт только поля контекста шаблона, а не отдельный ключ справочника `notification_types`.
 
 Дополнительно: `title` (подпись рядом с префиксом), `event_type`, `extra_text`, а также структурированные поля журнала:
 
@@ -102,3 +102,30 @@
 ## Безопасность
 
 Поля с произвольным HTML из Redmine проходят экранирование при сборке контекста, кроме явно помеченных фрагментов списков в отчёте (`info_items_html` / `overdue_items_html`), собранных из уже экранированных частей в коде планировщика.
+
+---
+
+## Точки вызова рендера и контракт
+
+### Решения по шаблонам
+
+- **`tpl_test_message`** — только тестовая отправка из админки (`/users/test-message`, `/groups/test-message`).
+- **`tpl_dry_run`** — вне runtime-контракта (реестр/API/шаблоны очищены миграциями).
+- **`tpl_digest`** — удалён из продуктового контура.
+- **`sandbox_accepts_context`** в [`template_loader.py`](../src/bot/template_loader.py) — парсинг дефолтного файла с диска; согласование с override из БД может отличаться от прод-рендера.
+- Отправка Matrix — [`matrix_send.py`](../src/matrix_send.py).
+
+### Где вызывается `render_named_template`
+
+| Место | Шаблон | Контекст |
+|-------|--------|----------|
+| [`journal_handlers.journal_render_send_or_dlq`](../src/bot/journal_handlers.py) | `tpl_new_issue` / `tpl_task_change` / `tpl_reminder` | `build_issue_context` + `**extra` |
+| [`scheduler.retry_dlq_notifications`](../src/bot/scheduler.py) | из `payload.template_name` | `payload.jinja_context` (снимок из DLQ) |
+
+Предпросмотр в админке: [`notification_templates.py`](../src/admin/routes/notification_templates.py) — `SandboxedEnvironment.from_string(...).render(**ctx)`, не `render_named_template`. Контекст issue-синхронизирован с `build_issue_context` / `preview_issue_context_demo`.
+
+`render_named_template` возвращает `tuple[str, str | None]` (HTML и plain); `None` для plain — fallback вызывающего.
+
+### DLQ `needs_rerender`
+
+`jinja_context` — JSON-safe снимок на момент события (см. [JOURNAL_PIPELINE.md](JOURNAL_PIPELINE.md)); сериализация и sanitize — [`journal_handlers.jinja_context_json_safe`](../src/bot/journal_handlers.py).

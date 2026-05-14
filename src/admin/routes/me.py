@@ -4,24 +4,25 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from admin.admin_main_facade import AdminMainFacade
 from database.models import BotUser
 from database.session import get_session
 
 router = APIRouter(tags=["me"])
 
 
-def _admin() -> object:
+def _admin() -> AdminMainFacade:
     """Late import to avoid circular dependency with main.py."""
     import admin.main as _m
 
-    return _m
+    return cast(AdminMainFacade, _m)
 
 
 @router.get("/me/settings", response_class=HTMLResponse)
@@ -177,7 +178,7 @@ async def me_settings_post(
     elif status_preset == "new_only":
         bot_user.notify = ["new"]
     elif status_preset == "overdue_only":
-        bot_user.notify = ["overdue"]
+        bot_user.notify = ["issue_updated"]
     elif status_preset == "custom":
         bot_user.notify = admin._normalize_notify(status_values, status_allowed)
     else:

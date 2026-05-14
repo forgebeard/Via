@@ -1,0 +1,896 @@
+diff --git a/src/bot/journal_handlers.py b/src/bot/journal_handlers.py
+index 0bda0be..d76ecc3 100644
+--- a/src/bot/journal_handlers.py
++++ b/src/bot/journal_handlers.py
+@@ -1,4 +1,4 @@
+-"""Обработка одной записи журнала: policy-маршрутизация и DLQ."""
++"""Обработка одной записи журнала: групповой и персональный поток, DLQ, digest."""
+ 
+ from __future__ import annotations
+ 
+@@ -11,13 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from bot.config_state import CATALOGS
+ from bot.logic import _cfg_for_room, describe_journal, issue_matches_cfg, should_notify
+-from bot.notification_template_routing import EVENT_TO_TEMPLATE
+-from bot.routing import resolve_policy_target_rooms
++from bot.routing import get_matching_route, resolve_policy_target_rooms
+ from bot.sender import resolve_room
+-from bot.template_context import build_issue_context, is_valid_http_issue_url
++from bot.template_context import build_issue_context
+ from bot.template_loader import render_named_template
+-from bot.time_context import notify_context_for_room
+-from database.dedup_repo import mark_journal_notification_sent, should_send_journal_notification
++from config import ROUTING_ENGINE
++from database.digest_repo import insert_digest
+ from database.dlq_repo import enqueue_notification
+ from matrix_send import room_send_with_retry
+ from preferences import can_notify
+@@ -60,21 +59,20 @@ def assert_json_serializable_payload(payload: dict[str, Any]) -> None:
+     json.dumps(payload)
+ 
+ 
+-def _policy_dedup_key(
+-    issue: Any,
+-    *,
+-    room_id: str,
+-    notification_type: str,
++def _build_dedup_key(
++    issue: Any, journal: Any, event_type: str, changes: list[dict[str, str]] | None = None
+ ) -> str:
+     issue_id = int(getattr(issue, "id", 0) or 0)
+-    status_id = str(getattr(getattr(issue, "status", None), "id", "") or "")
+-    version_obj = getattr(issue, "fixed_version", None) or getattr(issue, "target_version", None)
+-    version_id = str(getattr(version_obj, "id", "") or "")
+-    priority_id = str(getattr(getattr(issue, "priority", None), "id", "") or "")
+-    return (
+-        f"issue:{issue_id}:room:{room_id.strip()}:type:{notification_type}:"
+-        f"status:{status_id}:version:{version_id}:priority:{priority_id}"
++    journal_id = int(getattr(journal, "id", 0) or 0)
++    if journal_id > 0:
++        return f"issue:{issue_id}:journal:{journal_id}"
++    updated_raw = str(getattr(issue, "updated_on", "") or "")
++    updated_sec = updated_raw.split(".")[0]
++    change_payload = "|".join(
++        f"{c.get('field')}:{c.get('old')}->{c.get('new')}" for c in (changes or [])
+     )
++    digest = hashlib.sha256(change_payload.encode("utf-8")).hexdigest()[:16]
++    return f"issue:{issue_id}:updated:{updated_sec}:event:{event_type}:h:{digest}"
+ 
+ 
+ def _txn_id_from_dedup_key(dedup_key: str) -> str:
+@@ -171,6 +169,74 @@ def user_cfg_by_redmine_id(users: list[dict[str, Any]], redmine_id: int) -> dict
+     return None
+ 
+ 
++async def personal_recipient_cfgs(
++    session: AsyncSession,
++    issue: Any,
++    journal: Any,
++    assignee_cfg: dict[str, Any],
++    users: list[dict[str, Any]],
++) -> list[dict[str, Any]]:
++    """Исполнитель, бывший исполнитель (если есть), наблюдатели из кэша; дедуп; без self-personal."""
++    from database.watcher_cache_repo import list_bot_user_ids_for_issue
++
++    try:
++        author_rid = int(getattr(getattr(journal, "user", None), "id", 0) or 0)
++    except Exception:
++        author_rid = 0
++
++    by_bot_id = {int(u["id"]): u for u in users if u.get("id") is not None}
++    out: list[dict[str, Any]] = []
++    seen_bot: set[int] = set()
++
++    def append_cfg(cfg: dict[str, Any]) -> None:
++        bid = int(cfg.get("id") or 0)
++        rid = int(cfg.get("redmine_id") or 0)
++        if not bid or not rid:
++            return
++        if rid == author_rid:
++            return
++        if bid in seen_bot:
++            return
++        seen_bot.add(bid)
++        out.append(cfg)
++
++    append_cfg(assignee_cfg)
++
++    try:
++        assignee_rid = int(assignee_cfg.get("redmine_id") or 0)
++    except Exception:
++        assignee_rid = 0
++
++    former_rid = former_assignee_redmine_id(journal)
++    if former_rid and former_rid != assignee_rid:
++        fc = user_cfg_by_redmine_id(users, former_rid)
++        if fc:
++            append_cfg(fc)
++
++    try:
++        iid = int(issue.id)
++    except Exception:
++        iid = 0
++    if iid:
++        for bot_uid in await list_bot_user_ids_for_issue(session, iid):
++            wcfg = by_bot_id.get(int(bot_uid))
++            if wcfg:
++                append_cfg(wcfg)
++
++    return out
++
++
++def journal_action_kind_for_routing(issue: Any) -> str:
++    """Одна запись журнала у полной задачи — трактуем как создание (policy created / new)."""
++    try:
++        journals = list(getattr(issue, "journals", None) or [])
++        if len(journals) == 1:
++            return "created"
++    except Exception:
++        pass
++    return "updated"
++
++
+ async def watcher_cfgs_for_routing(
+     session: AsyncSession,
+     issue: Any,
+@@ -300,24 +366,13 @@ async def journal_render_send_or_dlq(
+     issue_id: int,
+     notification_type: str,
+     dedup_key: str,
+-) -> bool:
++) -> None:
+     """Рендер Jinja → Matrix; при любой ошибке — DLQ, без raise (курсор журнала вперёд).
+ 
+     Ошибка до готового Matrix-тела: payload с ``needs_rerender`` и JSON-safe контекстом (A1).
+     Ошибка после рендера: payload = готовое тело Matrix (повтор без рендера).
+     """
+     content: dict[str, Any] | None = None
+-    if template_name in {"tpl_new_issue", "tpl_task_change"}:
+-        issue_url = str(jinja_context.get("issue_url") or "").strip()
+-        if not is_valid_http_issue_url(issue_url):
+-            logger.error(
+-                "journal_skip_invalid_issue_url issue_id=%s room=%s template=%s issue_url=%r",
+-                issue_id,
+-                (room_id or "")[:32],
+-                template_name,
+-                issue_url,
+-            )
+-            return False
+     try:
+         html, plain_tpl = await render_named_template(session, template_name, jinja_context)
+         matrix_plain = plain_tpl if plain_tpl is not None else plain_body
+@@ -331,7 +386,6 @@ async def journal_render_send_or_dlq(
+         await room_send_with_retry(
+             client, resolved, content, txn_id=_txn_id_from_dedup_key(dedup_key)
+         )
+-        return True
+     except Exception as e:
+         err = str(e)
+         if content is not None:
+@@ -379,7 +433,6 @@ async def journal_render_send_or_dlq(
+             err,
+             exc_info=True,
+         )
+-    return False
+ 
+ 
+ async def handle_journal_entry(
+@@ -393,7 +446,7 @@ async def handle_journal_entry(
+     groups: list[dict[str, Any]],
+     users: list[dict[str, Any]],
+ ) -> None:
+-    """Доставка уведомлений только по policy-маршрутам."""
++    """Групповая комната по маршруту + личные уведомления получателям (или digest при DND)."""
+     cats = CATALOGS
+     event_type = infer_event_type(journal)
+     extra = describe_journal(journal, skip_status=False, catalogs=cats) or ""
+@@ -407,11 +460,14 @@ async def handle_journal_entry(
+         extra_text=extra,
+     )
+ 
++    action_kind_route = journal_action_kind_for_routing(issue)
++    tpl_name = "tpl_new_issue" if action_kind_route == "created" else "tpl_task_change"
++
+     watcher_cfgs_r = await watcher_cfgs_for_routing(session, issue, users)
+     policy_rooms = resolve_policy_target_rooms(
+         issue,
+         routes_cfg,
+-        action_kind=event_type,
++        action_kind=action_kind_route,
+         users=users,
+         groups=groups,
+         actor_redmine_id=int(getattr(getattr(journal, "user", None), "id", 0) or 0),
+@@ -419,70 +475,103 @@ async def handle_journal_entry(
+         assignee_cfg=assignee_cfg,
+         watcher_cfgs=watcher_cfgs_r,
+     )
+-    if not policy_rooms.deliveries:
+-        return
+-
+-    candidates: list[dict[str, Any]] = [assignee_cfg, *users, *groups, *watcher_cfgs_r]
+-    room_to_cfgs: dict[str, list[dict[str, Any]]] = {}
+-    for cfg in candidates:
+-        room = str(cfg.get("room") or "").strip()
+-        if not room:
+-            continue
+-        room_to_cfgs.setdefault(room, []).append(cfg)
+-
+-    plain = f"#{issue.id} {base_ctx['subject']}: {event_type}"
+-    issue_priority = str(getattr(getattr(issue, "priority", None), "name", "") or "")
+-    for room_id, ntype in policy_rooms.deliveries:
+-        cfgs = room_to_cfgs.get(room_id, [])
+-        if not cfgs:
+-            continue
+-        allowed_now = False
+-        for cfg in cfgs:
+-            if not issue_matches_cfg(issue, cfg):
+-                continue
+-            if not should_notify(cfg, ntype):
+-                continue
+-            effective_cfg = _cfg_for_room(cfg, room_id)
+-            nctx = notify_context_for_room(cfg, room_id)
+-            if can_notify(effective_cfg, priority=issue_priority, context=nctx):
+-                allowed_now = True
+-                break
+-        if not allowed_now:
+-            logger.debug("journal_policy_skip_time_or_dnd issue=%s room=%s", issue.id, room_id[:24])
+-            continue
+-        if ntype in {"new", "issue_updated"}:
+-            should_send = await should_send_journal_notification(
+-                session,
+-                issue=issue,
+-                room_id=room_id,
+-                notification_type=ntype,
+-            )
+-            if not should_send:
+-                logger.debug(
+-                    "journal_policy_dedup_skip issue=%s room=%s type=%s",
+-                    issue.id,
+-                    room_id[:24],
+-                    ntype,
++    if ROUTING_ENGINE == "legacy":
++        matched = get_matching_route(issue, routes_cfg, assignee_cfg, groups=groups)
++        legacy_rooms = [matched.room_id] if matched and matched.room_id.strip() else []
++        if sorted(set(legacy_rooms)) != sorted(policy_rooms.room_ids):
++            nt0 = policy_rooms.deliveries[0][1] if policy_rooms.deliveries else "issue_updated"
++            logger.info(
++                json.dumps(
++                    {
++                        "event": "routing_shadow_diff",
++                        "notification_type": nt0,
++                        "issue_id": int(issue.id),
++                        "legacy_rooms": sorted(set(legacy_rooms)),
++                        "policy_v4_rooms": sorted(policy_rooms.room_ids),
++                    },
++                    ensure_ascii=False,
+                 )
+-                continue
+-
+-        template_name = EVENT_TO_TEMPLATE.get(ntype, "tpl_task_change")
+-        delivered = await journal_render_send_or_dlq(
+-            client,
+-            session,
+-            room_id=room_id,
+-            template_name=template_name,
+-            jinja_context=base_ctx,
+-            plain_body=plain,
+-            user_redmine_id=int(assignee_cfg.get("redmine_id") or 0),
+-            issue_id=int(issue.id),
+-            notification_type=ntype,
+-            dedup_key=_policy_dedup_key(issue, room_id=room_id, notification_type=ntype),
+-        )
+-        if delivered and ntype in {"new", "issue_updated"}:
+-            await mark_journal_notification_sent(
++            )
++        if matched and matched.room_id.strip():
++            skip_group = event_type == "assigned" and not matched.notify_on_assignment
++            if not skip_group:
++                gcfg = _cfg_for_room(assignee_cfg, matched.room_id)
++                if issue_matches_cfg(issue, gcfg) and should_notify(gcfg, "issue_updated"):
++                    plain = f"#{issue.id} {base_ctx['subject']}: {event_type}"
++                    dedup_key = _build_dedup_key(
++                        issue, journal, event_type, base_ctx.get("changes")
++                    )
++                    if can_notify(gcfg, priority=str(getattr(issue.priority, "name", "") or "")):
++                        await journal_render_send_or_dlq(
++                            client,
++                            session,
++                            room_id=matched.room_id,
++                            template_name=tpl_name,
++                            jinja_context=base_ctx,
++                            plain_body=plain,
++                            user_redmine_id=int(assignee_cfg.get("redmine_id") or 0),
++                            issue_id=int(issue.id),
++                            notification_type="issue_updated",
++                            dedup_key=dedup_key,
++                        )
++    else:
++        if not policy_rooms.deliveries:
++            return
++        plain = f"#{issue.id} {base_ctx['subject']}: {event_type}"
++        dedup_key = _build_dedup_key(issue, journal, event_type, base_ctx.get("changes"))
++        for room_id, ntype in policy_rooms.deliveries:
++            await journal_render_send_or_dlq(
++                client,
+                 session,
+-                issue=issue,
+                 room_id=room_id,
++                template_name=tpl_name,
++                jinja_context=base_ctx,
++                plain_body=plain,
++                user_redmine_id=int(assignee_cfg.get("redmine_id") or 0),
++                issue_id=int(issue.id),
+                 notification_type=ntype,
++                dedup_key=f"{dedup_key}:{room_id}:{ntype}",
+             )
++
++    if ROUTING_ENGINE == "legacy":
++        recipients = await personal_recipient_cfgs(session, issue, journal, assignee_cfg, users)
++        for rcfg in recipients:
++            room = (rcfg.get("room") or "").strip()
++            if not room or not issue_matches_cfg(issue, rcfg):
++                continue
++            pctx = dict(base_ctx)
++            plain_p = f"#{issue.id} {pctx['subject']}: {event_type}"
++            dedup_key = _build_dedup_key(issue, journal, event_type, pctx.get("changes"))
++            try:
++                if should_notify(rcfg, "issue_updated") and can_notify(
++                    rcfg,
++                    priority=str(getattr(issue.priority, "name", "") or ""),
++                ):
++                    await journal_render_send_or_dlq(
++                        client,
++                        session,
++                        room_id=room,
++                        template_name=tpl_name,
++                        jinja_context=pctx,
++                        plain_body=plain_p,
++                        user_redmine_id=int(rcfg.get("redmine_id") or 0),
++                        issue_id=int(issue.id),
++                        notification_type="issue_updated",
++                        dedup_key=dedup_key,
++                    )
++                else:
++                    await insert_digest(
++                        session,
++                        user_id=int(rcfg["id"]),
++                        issue_id=int(issue.id),
++                        issue_subject=str(issue.subject or "")[:255],
++                        event_type=event_type,
++                        journal_id=int(journal.id),
++                        journal_notes=getattr(journal, "notes", None),
++                        status_name=str(getattr(issue.status, "name", None) or ""),
++                        assigned_to=str(
++                            getattr(getattr(issue, "assigned_to", None), "name", "") or ""
++                        ),
++                    )
++            except Exception:
++                logger.debug("journal_personal_digest_failed", exc_info=True)
+diff --git a/src/bot/journal_pipeline.py b/src/bot/journal_pipeline.py
+index 1fb0b4e..de37bc2 100644
+--- a/src/bot/journal_pipeline.py
++++ b/src/bot/journal_pipeline.py
+@@ -214,25 +214,16 @@ async def phase_a_candidates(
+             continue
+         if iid and iid in watched_issue_ids:
+             in_scope.append(iss)
+-    if not contract_verbose:
+-        if required_count > 0:
+-            logger.warning(
+-                "journal_contract_check_summary tick=%s optional_issues=%s required_issues=%s optional_samples=%s required_samples=%s sample_limit=%s",
+-                _CONTRACT_TICK_NO,
+-                optional_count,
+-                required_count,
+-                optional_sample_issue_ids,
+-                required_sample_issue_ids,
+-                sample_limit,
+-            )
+-        elif optional_count > 0:
+-            logger.debug(
+-                "journal_contract_check_summary tick=%s optional_issues=%s optional_samples=%s sample_limit=%s",
+-                _CONTRACT_TICK_NO,
+-                optional_count,
+-                optional_sample_issue_ids,
+-                sample_limit,
+-            )
++    if not contract_verbose and (required_count or optional_count):
++        logger.info(
++            "journal_contract_check_summary tick=%s optional_issues=%s required_issues=%s optional_samples=%s required_samples=%s sample_limit=%s",
++            _CONTRACT_TICK_NO,
++            optional_count,
++            required_count,
++            optional_sample_issue_ids,
++            required_sample_issue_ids,
++            sample_limit,
++        )
+     return in_scope, max_on
+ 
+ 
+diff --git a/src/bot/journal_tick.py b/src/bot/journal_tick.py
+index 2092657..d378151 100644
+--- a/src/bot/journal_tick.py
++++ b/src/bot/journal_tick.py
+@@ -1,4 +1,4 @@
+-"""Один тик журнального движка v2: фаза A/B → handlers → DLQ."""
++"""Один тик журнального движка v2: digest → фаза A/B → handlers → DLQ."""
+ 
+ from __future__ import annotations
+ 
+@@ -10,8 +10,9 @@ from typing import Any
+ from sqlalchemy import select
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from bot.catalogs import BotCatalogs, load_catalogs
++from bot.catalogs import load_catalogs
+ from bot.config_state import GROUPS, ROUTING, USERS
++from bot.digest_service import drain_pending_digests
+ from bot.journal_handlers import handle_journal_entry
+ from bot.journal_pipeline import (
+     advance_cursor_after_journal,
+@@ -23,6 +24,7 @@ from bot.journal_pipeline import (
+     reload_issue_with_journals,
+     sync_watcher_cache_for_issue,
+ )
++from bot.reminder_service import process_reminders, update_reminder_timers
+ from bot.scheduler import retry_dlq_notifications
+ from database.models import BotUser
+ from database.session import get_session_factory
+@@ -63,27 +65,30 @@ async def run_journal_tick(
+     redmine: Any,
+     *,
+     now_tz: Callable[[], Any],
+-    catalogs: BotCatalogs | None = None,
+ ) -> None:
+-    """Точка входа планировщика для основного тика журнального движка."""
++    """Точка входа планировщика для основного тика назначенных задач и напоминаний."""
+     global _TICK_COUNTER
+     _TICK_COUNTER += 1
+ 
+     session_factory = get_session_factory()
+     dlq_batch = 10
+     async with session_factory() as session:
+-        if catalogs is None:
+-            catalogs = await load_catalogs(session)
++        catalogs = await load_catalogs(session)
+         from bot import config_state as _cs
+ 
+         _cs.CATALOGS = catalogs
+ 
+         max_issues = catalogs.cycle_int("MAX_ISSUES_PER_TICK", 50)
+         max_pages = catalogs.cycle_int("MAX_PAGES_PER_TICK", 3)
++        drain_max = catalogs.cycle_int("DRAIN_MAX_USERS_PER_TICK", 5)
+         n_refresh = catalogs.cycle_int("WATCHER_CACHE_REFRESH_EVERY_N_TICKS", 10)
+         dlq_batch = max(1, catalogs.cycle_int("DLQ_BATCH_SIZE", 10))
+ 
+         users = list(USERS)
++        ubid = _users_by_bot_id(users)
++        await drain_pending_digests(
++            client, session, users_by_bot_id=ubid, drain_max_users=drain_max
++        )
+ 
+         bot_ids = await load_bot_user_redmine_ids(session)
+         watched = await issue_ids_watched_by_bot_users(session)
+@@ -163,6 +168,29 @@ async def run_journal_tick(
+                 await advance_cursor_after_journal(session, int(full.id), int(aggregated.id))
+                 await session.commit()
+ 
++            try:
++                issue_for_timers = await reload_issue_with_journals(redmine, int(full.id))
++            except Exception as e:
++                logger.warning("journal_reload_timers issue #%s: %s", full.id, e)
++                issue_for_timers = full
++            await update_reminder_timers(
++                session,
++                issue_for_timers,
++                catalogs=catalogs,
++                now=now_tz(),
++            )
++            await session.commit()
++
++        await process_reminders(
++            client,
++            redmine,
++            session,
++            catalogs=catalogs,
++            users=users,
++            routes_cfg=routes_cfg,
++            groups=groups,
++            now_tz=now_tz,
++        )
+         await session.commit()
+ 
+     try:
+diff --git a/src/bot/routing.py b/src/bot/routing.py
+index 5672d4d..82dd554 100644
+--- a/src/bot/routing.py
++++ b/src/bot/routing.py
+@@ -8,13 +8,23 @@ from dataclasses import dataclass
+ from datetime import UTC, datetime
+ from typing import Any
+ 
+-from bot.logic import NOTIFICATION_TYPES, issue_matches_cfg, should_notify
++from bot.logic import issue_matches_cfg, should_notify
+ 
+ logger = logging.getLogger("redmine_bot")
+ 
+ _ALLOWED_RECIPIENT_MODES = frozenset({"match_rooms", "assignee", "watchers"})
+ 
+ 
++@dataclass(frozen=True)
++class MatchedRoute:
++    room_id: str
++    priority: int
++    sort_order: int
++    notify_on_assignment: bool
++    source_table: str
++    source_id: int | None
++
++
+ @dataclass(frozen=True)
+ class PolicyRoutingResult:
+     """(room_id, notification_type_key) пары; room_ids — для legacy-сравнений."""
+@@ -45,6 +55,14 @@ def _issue_axis_ids(issue: Any) -> tuple[int | None, int | None, int | None]:
+     return status_id, version_id, priority_id
+ 
+ 
++def _rule_matches_axis(rule_value: int | None, issue_value: int | None) -> bool:
++    if rule_value is None:
++        return True
++    if issue_value is None:
++        return False
++    return int(rule_value) == int(issue_value)
++
++
+ def _axis_matches(values: list[int], issue_value: int | None) -> bool:
+     if not values:
+         return True
+@@ -53,6 +71,14 @@ def _axis_matches(values: list[int], issue_value: int | None) -> bool:
+     return int(issue_value) in {int(v) for v in values}
+ 
+ 
++def _notify_token_for_action(action_kind: str) -> str:
++    """Сопоставление action_kind -> ключ подписки notify для обратной совместимости."""
++    kind = (action_kind or "").strip().lower()
++    if kind == "created":
++        return "new"
++    return "issue_updated"
++
++
+ def _normalize_recipient_modes(raw: Any) -> list[str]:
+     if raw is None:
+         return ["match_rooms"]
+@@ -68,18 +94,11 @@ def _normalize_recipient_modes(raw: Any) -> list[str]:
+     return out or ["match_rooms"]
+ 
+ 
+-def _notification_type_key_for_policy(p: dict[str, Any]) -> str:
++def _notification_type_key_for_policy(p: dict[str, Any], action: str) -> str:
+     key = str(p.get("notification_type_key") or "").strip()
+-    if not key:
+-        return "issue_updated"
+-    if key not in NOTIFICATION_TYPES:
+-        logger.debug(
+-            "routing: unknown notification_type_key %r in policy id=%s, using issue_updated",
+-            key,
+-            p.get("id"),
+-        )
+-        return "issue_updated"
+-    return key
++    if key in ("new", "issue_updated"):
++        return key
++    return _notify_token_for_action(action)
+ 
+ 
+ def _dedupe_deliveries(pairs: list[tuple[str, str]]) -> tuple[tuple[str, str], ...]:
+@@ -115,6 +134,9 @@ def resolve_policy_target_rooms(
+     policies = list(routes_config.get("routing_policies") or [])
+     matched_policies: list[dict[str, Any]] = []
+     for p in policies:
++        p_action = str(p.get("action_kind") or "").strip().lower()
++        if p_action != action:
++            continue
+         status_values = [_int_or_none(x) for x in (p.get("status_ids") or [])]
+         if not _axis_matches([int(x) for x in status_values if x is not None], status_id):
+             continue
+@@ -146,7 +168,7 @@ def resolve_policy_target_rooms(
+         pid = _int_or_none(p.get("id"))
+         if pid is not None:
+             matched_policy_ids.append(pid)
+-        notify_key = _notification_type_key_for_policy(p)
++        notify_key = _notification_type_key_for_policy(p, action)
+         modes = _normalize_recipient_modes(p.get("recipient_modes"))
+ 
+         if "match_rooms" in modes:
+@@ -155,10 +177,8 @@ def resolve_policy_target_rooms(
+                 if not room:
+                     continue
+                 recipient_rid = _int_or_none(cfg.get("redmine_id"))
+-                if (
+-                    action == "updated"
+-                    and actor_redmine_id
+-                    and recipient_rid == int(actor_redmine_id)
++                if action == "updated" and actor_redmine_id and recipient_rid == int(
++                    actor_redmine_id
+                 ):
+                     continue
+                 if not should_notify(cfg, notify_key):
+@@ -178,10 +198,8 @@ def resolve_policy_target_rooms(
+ 
+         if "assignee" in modes and assignee_cfg:
+             room = str(assignee_cfg.get("room") or "").strip()
+-            if (
+-                room
+-                and issue_matches_cfg(issue, assignee_cfg)
+-                and should_notify(assignee_cfg, notify_key)
++            if room and issue_matches_cfg(issue, assignee_cfg) and should_notify(
++                assignee_cfg, notify_key
+             ):
+                 ar = _int_or_none(assignee_cfg.get("redmine_id"))
+                 if not (action == "updated" and actor_redmine_id and ar == int(actor_redmine_id)):
+@@ -223,9 +241,65 @@ def resolve_policy_target_rooms(
+             "target_rooms": [d[0] for d in deduped],
+             "ts": datetime.now(UTC).isoformat(),
+         }
+-        logger.debug(json.dumps(payload_match, ensure_ascii=False))
++        logger.info(json.dumps(payload_match, ensure_ascii=False))
+     return PolicyRoutingResult(
+         deliveries=deduped,
+         matched_policy_ids=tuple(matched_policy_ids),
+         action_kind=action,
+     )
++
++
++def get_matching_route(
++    issue: Any,
++    routes_config: dict[str, Any] | None,
++    assignee_cfg: dict[str, Any],
++    *,
++    groups: list[dict[str, Any]] | None = None,
++) -> MatchedRoute | None:
++    """Возвращает лучший маршрут только из notification_routing_rules."""
++    routes_config = routes_config or {}
++    status_id, version_id, priority_id = _issue_axis_ids(issue)
++    rules = list(routes_config.get("routing_rules") or [])
++    candidates: list[tuple[tuple[int, int, int], MatchedRoute]] = []
++    for spec in rules:
++        room_id = (spec.get("target_room_id") or "").strip()
++        if not room_id:
++            continue
++        if not _rule_matches_axis(_int_or_none(spec.get("status_id")), status_id):
++            continue
++        if not _rule_matches_axis(_int_or_none(spec.get("version_id")), version_id):
++            continue
++        if not _rule_matches_axis(_int_or_none(spec.get("priority_id")), priority_id):
++            continue
++        rid = _int_or_none(spec.get("id"))
++        priority = _int_or_none(spec.get("priority")) or 100
++        sort_order = _int_or_none(spec.get("sort_order")) or 0
++        tiebreak_id = rid if rid is not None else 0
++        candidates.append(
++            (
++                (priority, sort_order, tiebreak_id),
++                MatchedRoute(
++                    room_id=room_id,
++                    priority=priority,
++                    sort_order=sort_order,
++                    notify_on_assignment=True,
++                    source_table="notification_routing_rules",
++                    source_id=rid,
++                ),
++            )
++        )
++
++    if not candidates:
++        payload = {
++            "event": "routing_no_match",
++            "issue_id": _int_or_none(getattr(issue, "id", None)),
++            "status_id": status_id,
++            "version_id": version_id,
++            "priority_id": priority_id,
++            "matched_rules_count": 0,
++            "ts": datetime.now(UTC).isoformat(),
++        }
++        logger.warning(json.dumps(payload, ensure_ascii=False))
++        return None
++    candidates.sort(key=lambda x: x[0])
++    return candidates[0][1]
+diff --git a/src/database/load_config.py b/src/database/load_config.py
+index ae6c297..57c8a50 100644
+--- a/src/database/load_config.py
++++ b/src/database/load_config.py
+@@ -1,5 +1,6 @@
+ """
+-Загрузка runtime-конфига из Postgres для policy-based маршрутизации.
++Загрузка USERS / STATUS_ROOM_MAP / VERSION_ROOM_MAP из Postgres
++в формате, совместимом с bot.py и .env JSON.
+ 
+ См. двойные проекции маршрутов (мапы vs routes_config): docs/RUNTIME_ROUTING_CONFIG.md
+ """
+@@ -17,19 +18,53 @@ from .models import (
+     BotUser,
+     CycleSettings,
+     GroupVersionRoute,
++    NotificationRoutingRule,
+     NotificationType,
+     RoutingPolicy,
+     RoutingPolicyPriority,
+     RoutingPolicyStatus,
+     RoutingPolicyVersion,
++    StatusRoomRoute,
+     SupportGroup,
+     UserVersionRoute,
++    VersionRoomRoute,
+ )
+ from .session import get_session_factory
+ 
+ logger = logging.getLogger("redmine_bot")
+ 
+ 
++def _routes_and_flat_map(
++    rows: list[Any],
++    *,
++    key_field: str,
++    source_name: str,
++) -> tuple[dict[str, str], list[dict[str, Any]]]:
++    """
++    Строит одновременно плоскую map-проекцию и list-проекцию маршрутов.
++
++    Это единая точка сборки для глобальных status/version route-таблиц.
++    """
++    flat_map: dict[str, str] = {}
++    routes: list[dict[str, Any]] = []
++    for row in rows:
++        key = str(getattr(row, key_field))
++        room_id = str(getattr(row, "room_id"))
++        flat_map[key] = room_id
++        routes.append(
++            {
++                key_field: key,
++                "room_id": room_id,
++                "priority": int(getattr(row, "priority")),
++                "sort_order": int(getattr(row, "sort_order")),
++                "notify_on_assignment": bool(getattr(row, "notify_on_assignment")),
++                "route_source": source_name,
++                "route_id": int(getattr(row, "id")),
++            }
++        )
++    return flat_map, routes
++
++
+ def user_orm_to_cfg(
+     row: BotUser,
+     groups_by_id: dict[int, SupportGroup],
+@@ -109,14 +144,15 @@ async def fetch_runtime_config(
+     """
+     Возвращает (USERS, STATUS_ROOM_MAP, VERSION_ROOM_MAP, GROUPS, routes_config).
+ 
+-    STATUS_ROOM_MAP / VERSION_ROOM_MAP возвращаются пустыми для обратной совместимости.
++    ``routes_config`` — метаданные маршрутов для ``bot.routing``:
++    ``status_routes``, ``version_routes_global`` (списки словарей).
+     """
+     if session is None:
+         factory = get_session_factory()
+         async with factory() as s:
+             return await fetch_runtime_config(s)
+ 
+-    r_groups = await session.execute(select(SupportGroup).order_by(SupportGroup.id))
++    r_groups = await session.execute(select(SupportGroup))
+     groups = list(r_groups.scalars().all())
+     groups_by_id = {g.id: g for g in groups}
+ 
+@@ -168,15 +204,66 @@ async def fetch_runtime_config(
+     ]
+     groups_cfg = [group_orm_to_cfg(g) for g in groups]
+ 
+-    status_map: dict[str, str] = {}
+-    version_map: dict[str, str] = {}
++    r_st = await session.execute(
++        select(StatusRoomRoute).order_by(
++            StatusRoomRoute.priority,
++            StatusRoomRoute.sort_order,
++            StatusRoomRoute.id,
++        )
++    )
++    status_rows = list(r_st.scalars().all())
++    status_map, status_routes = _routes_and_flat_map(
++        status_rows,
++        key_field="status_key",
++        source_name="status_room_route",
++    )
++
++    r_ver = await session.execute(
++        select(VersionRoomRoute).order_by(
++            VersionRoomRoute.priority,
++            VersionRoomRoute.sort_order,
++            VersionRoomRoute.id,
++        )
++    )
++    version_rows = list(r_ver.scalars().all())
++    version_map, version_routes_global = _routes_and_flat_map(
++        version_rows,
++        key_field="version_key",
++        source_name="version_room_route",
++    )
+ 
+     routes_config: dict[str, Any] = {
+-        "status_routes": [],
+-        "version_routes_global": [],
++        "status_routes": status_routes,
++        "version_routes_global": version_routes_global,
++        "routing_rules": [],
+         "routing_policies": [],
+     }
+ 
++    r_rules = await session.execute(
++        select(NotificationRoutingRule)
++        .where(NotificationRoutingRule.enabled.is_(True))
++        .order_by(
++            NotificationRoutingRule.priority,
++            NotificationRoutingRule.sort_order,
++            NotificationRoutingRule.id,
++        )
++    )
++    rules_rows = list(r_rules.scalars().all())
++    routes_config["routing_rules"] = [
++        {
++            "id": int(row.id),
++            "enabled": bool(row.enabled),
++            "priority": int(row.priority),
++            "sort_order": int(row.sort_order),
++            "target_room_id": str(row.target_room_id),
++            "status_id": int(row.status_id) if row.status_id is not None else None,
++            "version_id": int(row.version_id) if row.version_id is not None else None,
++            "priority_id": int(row.priority_id) if row.priority_id is not None else None,
++            "source_table": "notification_routing_rules",
++        }
++        for row in rules_rows
++    ]
++
+     policies = list(
+         (
+             await session.execute(
+@@ -190,9 +277,7 @@ async def fetch_runtime_config(
+     nt_ids = {int(p.notification_type_id) for p in policies}
+     id_to_nt_key: dict[int, str] = {}
+     if nt_ids:
+-        r_nt = await session.execute(
+-            select(NotificationType).where(NotificationType.id.in_(nt_ids))
+-        )
++        r_nt = await session.execute(select(NotificationType).where(NotificationType.id.in_(nt_ids)))
+         for nt in r_nt.scalars().all():
+             id_to_nt_key[int(nt.id)] = str(nt.key or "")
+     status_map_by_policy: dict[int, list[int]] = defaultdict(list)
+@@ -225,7 +310,9 @@ async def fetch_runtime_config(
+             "name": str(p.name or ""),
+             "enabled": bool(p.enabled),
+             "action_kind": str(getattr(p, "action_kind", "") or "updated"),
+-            "notification_type_key": id_to_nt_key.get(int(p.notification_type_id), "issue_updated"),
++            "notification_type_key": id_to_nt_key.get(
++                int(p.notification_type_id), "issue_updated"
++            ),
+             "recipient_modes": list(p.recipient_modes)
+             if isinstance(getattr(p, "recipient_modes", None), list)
+             else ["match_rooms"],
+@@ -245,15 +332,18 @@ async def row_counts(session: AsyncSession | None = None) -> tuple[int, int, int
+         async with factory() as s:
+             return await row_counts(s)
+     nu = await session.scalar(select(func.count()).select_from(BotUser))
+-    ns = 0
+-    nv = 0
++    ns = await session.scalar(select(func.count()).select_from(StatusRoomRoute))
++    nv = await session.scalar(select(func.count()).select_from(VersionRoomRoute))
+     return int(nu or 0), int(ns or 0), int(nv or 0)
+ 
+ 
++# src/database/load_config.py — добавить в конец файла:
++
++
+ async def fetch_cycle_settings(session: AsyncSession | None = None) -> dict[str, str]:
+     """
+     Загружает настройки цикла из таблицы cycle_settings.
+-    Возвращает {key: value} — например {"CHECK_INTERVAL": "90"}.
++    Возвращает {key: value} — например {"CHECK_INTERVAL": "90", "REMINDER_AFTER": "3600"}.
+     """
+     if session is None:
+         factory = get_session_factory()

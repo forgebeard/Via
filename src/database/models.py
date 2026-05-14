@@ -1,7 +1,7 @@
 """ORM-модели конфигурации и state бота (Postgres).
 
 Config:
-  - BotUser, StatusRoomRoute, VersionRoomRoute
+  - BotUser, SupportGroup, routing_policies (+ оси), справочники
 
 State:
   - BotUserLease: координация обработки пользователя несколькими инстансами
@@ -57,108 +57,6 @@ class BotUser(Base):
     dnd: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
-class StatusRoomRoute(Base):
-    __tablename__ = "status_room_routes"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    status_key: Mapped[str] = mapped_column(String(512), unique=True, nullable=False, index=True)
-    room_id: Mapped[str] = mapped_column(Text, nullable=False)
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    notify_on_assignment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-
-
-class VersionRoomRoute(Base):
-    __tablename__ = "version_room_routes"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    version_key: Mapped[str] = mapped_column(String(512), unique=True, nullable=False, index=True)
-    room_id: Mapped[str] = mapped_column(Text, nullable=False)
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    notify_on_assignment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-
-
-class GroupVersionRoute(Base):
-    """Версия Redmine (подстрока в названии версии задачи) → Matrix-комната для группы."""
-
-    __tablename__ = "group_version_routes"
-    __table_args__ = (
-        UniqueConstraint("group_id", "version_key", name="uq_group_version_routes_group_version"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    group_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("support_groups.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    version_key: Mapped[str] = mapped_column(String(512), nullable=False)
-    room_id: Mapped[str] = mapped_column(Text, nullable=False)
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    notify_on_assignment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-
-
-class UserVersionRoute(Base):
-    """Версия Redmine → Matrix-комната для пользователя бота (личные доп. маршруты)."""
-
-    __tablename__ = "user_version_routes"
-    __table_args__ = (
-        UniqueConstraint("bot_user_id", "version_key", name="uq_user_version_routes_user_version"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    bot_user_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("bot_users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    version_key: Mapped[str] = mapped_column(String(512), nullable=False)
-    room_id: Mapped[str] = mapped_column(Text, nullable=False)
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    notify_on_assignment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-
-
-class NotificationRoutingRule(Base):
-    """Rules-only маршрутизация: условия -> целевая Matrix-комната."""
-
-    __tablename__ = "notification_routing_rules"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100, index=True)
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
-    target_room_id: Mapped[str] = mapped_column(Text, nullable=False)
-    status_id: Mapped[int | None] = mapped_column(
-        Integer,
-        ForeignKey("redmine_statuses.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    version_id: Mapped[int | None] = mapped_column(
-        Integer,
-        ForeignKey("redmine_versions.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    priority_id: Mapped[int | None] = mapped_column(
-        Integer,
-        ForeignKey("redmine_priorities.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
-    )
-
-
 class RoutingPolicy(Base):
     """Policy-based routing v4: action + issue-axes conditions."""
 
@@ -176,7 +74,6 @@ class RoutingPolicy(Base):
         nullable=False,
         index=True,
     )
-    target_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="both")
     recipient_modes: Mapped[list] = mapped_column(
         JSONB,
         nullable=False,
@@ -243,46 +140,6 @@ class RoutingPolicyVersion(Base):
     version_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("redmine_versions.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-
-
-class RoutingPolicyTargetUser(Base):
-    __tablename__ = "routing_policy_target_users"
-    __table_args__ = (
-        UniqueConstraint("policy_id", "user_id", name="uq_routing_policy_target_user"),
-    )
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    policy_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("routing_policies.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    user_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("bot_users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-
-
-class RoutingPolicyTargetGroup(Base):
-    __tablename__ = "routing_policy_target_groups"
-    __table_args__ = (
-        UniqueConstraint("policy_id", "group_id", name="uq_routing_policy_target_group"),
-    )
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    policy_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("routing_policies.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    group_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("support_groups.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -381,20 +238,9 @@ class BotIssueState(Base):
     last_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     sent_notified_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # journals: последний journal_id (legacy; глобальный курсор — bot_issue_journal_cursor)
-    last_journal_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
     status_changed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # Исторические поля таймеров оставлены для обратной совместимости схемы.
-    group_reminder_due_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    personal_reminder_due_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    reminder_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_reminder_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_overdue_notified_at: Mapped[str | None] = mapped_column(
         DateTime(timezone=True), nullable=True

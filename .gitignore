@@ -9,8 +9,10 @@ venv/
 
 # Логи
 admin_audit.log
+**/admin_audit.log
 bot.log
 bot.log.*
+data/*.log
 data/bot.log
 data/bot.log.*
 
@@ -28,6 +30,7 @@ htmlcov/
 # IDE
 .idea/
 .vscode/
+**/.obsidian/
 *.swp
 *.swo
 
@@ -37,3 +40,4 @@ Thumbs.db
 .qwen
 
 .cursorrules
+.cursor

@@ -17,7 +17,7 @@ _ALLOWED_RECIPIENT_MODES = frozenset({"match_rooms", "assignee", "watchers"})
 
 @dataclass(frozen=True)
 class PolicyRoutingResult:
-    """(room_id, notification_type_key) пары; room_ids — для legacy-сравнений."""
+    """(room_id, notification_type_key) пары; room_ids — уникальные комнаты доставки."""
 
     deliveries: tuple[tuple[str, str], ...]
     matched_policy_ids: tuple[int, ...]

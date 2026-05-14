@@ -47,7 +47,7 @@ def _mock_context_for_preview(name: str) -> dict[str, Any]:
     return ctx
 
 
-_BLOCK_EDITOR_REMOVED = "Block editor API удалён; см. ADR_unified_notification_templates."
+_BLOCK_EDITOR_REMOVED = "Block editor API удалён; см. docs/TEMPLATES_UNIFIED_HISTORY.md."
 
 
 @router.get("/api/bot/notification-templates/block-registry", response_class=JSONResponse)

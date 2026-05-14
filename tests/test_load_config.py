@@ -74,13 +74,13 @@ class TestUserOrmToCfg:
         user = _make_user(group_id=1)
         group = _make_group(
             id=1,
-            notify=["new", "status_change"],
+            notify=["new", "issue_updated"],
             work_hours="09:00-18:00",
             work_days=[0, 1, 2, 3, 4],
             dnd=True,
         )
         result = lc.user_orm_to_cfg(user, {1: group})
-        assert result["group_delivery"]["notify"] == ["new", "status_change"]
+        assert result["group_delivery"]["notify"] == ["new", "issue_updated"]
         assert result["group_delivery"]["work_hours"] == "09:00-18:00"
         assert result["group_delivery"]["work_days"] == [0, 1, 2, 3, 4]
         assert result["group_delivery"]["dnd"] is True
@@ -108,28 +108,6 @@ class TestUserOrmToCfg:
         result = lc.user_orm_to_cfg(user, {})
         assert result["_redmine_key_cipher"] == b"encrypted"
         assert result["_redmine_key_nonce"] == b"nonce123"
-
-    def test_version_routes_from_user(self):
-        user = _make_user(id=42)
-        uv = {42: [{"key": "1.0", "room": "!v1:server"}]}
-        result = lc.user_orm_to_cfg(user, {}, uv_by_user=uv)
-        assert result["version_routes"] == [{"key": "1.0", "room": "!v1:server"}]
-
-    def test_version_routes_from_group(self):
-        user = _make_user(id=42, group_id=1)
-        gv = {1: [{"key": "2.0", "room": "!g2:server"}]}
-        result = lc.user_orm_to_cfg(user, {}, gv_by_group=gv)
-        assert result["version_routes"] == [{"key": "2.0", "room": "!g2:server"}]
-
-    def test_version_routes_merged(self):
-        user = _make_user(id=42, group_id=1)
-        uv = {42: [{"key": "1.0", "room": "!u1:server"}]}
-        gv = {1: [{"key": "2.0", "room": "!g2:server"}]}
-        result = lc.user_orm_to_cfg(user, {}, gv_by_group=gv, uv_by_user=uv)
-        # Сначала user, потом group
-        assert len(result["version_routes"]) == 2
-        assert result["version_routes"][0]["key"] == "1.0"
-        assert result["version_routes"][1]["key"] == "2.0"
 
     def test_no_group_no_group_fields(self):
         user = _make_user()

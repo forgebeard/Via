@@ -190,18 +190,18 @@ class TestShouldNotify:
     def test_all_means_everything(self):
         cfg = {"notify": ["all"]}
         assert bot.should_notify(cfg, "new") is True
-        assert bot.should_notify(cfg, "overdue") is True
+        assert bot.should_notify(cfg, "issue_updated") is True
         assert bot.should_notify(cfg, "anything_random") is True
 
     def test_specific_types_included(self):
-        cfg = {"notify": ["new", "info"]}
+        cfg = {"notify": ["new", "issue_updated"]}
         assert bot.should_notify(cfg, "new") is True
-        assert bot.should_notify(cfg, "info") is True
+        assert bot.should_notify(cfg, "issue_updated") is True
 
     def test_specific_types_excluded(self):
-        cfg = {"notify": ["new", "info"]}
-        assert bot.should_notify(cfg, "overdue") is False
-        assert bot.should_notify(cfg, "status_change") is False
+        cfg = {"notify": ["new", "issue_updated"]}
+        assert bot.should_notify(cfg, "reminder") is False
+        assert bot.should_notify(cfg, "daily_report") is False
 
     def test_empty_notify_defaults_to_all(self):
         cfg = {}
@@ -749,7 +749,7 @@ class TestSendMatrixMessage:
             mock_matrix_client,
             overdue_issue,
             "!room:server",
-            "overdue",
+            "issue_updated",
             session=matrix_message_session,
         )
         call_args = mock_matrix_client.room_send.call_args
@@ -762,12 +762,12 @@ class TestSendMatrixMessage:
     async def test_status_change_uses_v5_lines(
         self, mock_matrix_client, simple_issue, matrix_message_session
     ):
-        """status_change рендерится в v5-полях и plain fallback с `| `."""
+        """issue_updated рендерится в v5-полях и plain fallback с `| `."""
         await bot.send_matrix_message(
             mock_matrix_client,
             simple_issue,
             "!room:server",
-            "status_change",
+            "issue_updated",
             extra_text="Статус: <strong>Новая</strong> → <strong>В работе</strong>",
             session=matrix_message_session,
         )
@@ -913,11 +913,9 @@ class TestNotificationTypes:
         "ntype",
         [
             "new",
-            "info",
-            "overdue",
-            "status_change",
+            "reminder",
             "issue_updated",
-            "reopened",
+            "daily_report",
         ],
     )
     def test_all_types_have_emoji_and_title(self, ntype):

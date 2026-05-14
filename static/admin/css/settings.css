@@ -779,37 +779,43 @@ fieldset.settings-fieldset > legend {
   margin: 0;
 }
 
-#tab-rules .routing-rules__name-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  font-weight: 600;
-}
-
 #tab-rules .routing-rules__name-field input {
   width: 100%;
   max-width: 36rem;
 }
 
-#tab-rules .routing-rules__sentence {
+#tab-rules .routing-rules__constructor {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.35rem 0.5rem;
+  flex-direction: column;
+  gap: 0.5rem;
   line-height: 1.45;
   font-size: 0.95rem;
 }
 
-#tab-rules .routing-rules__sentence-part,
-#tab-rules .routing-rules__axis-word {
+#tab-rules .routing-rules__lead {
+  margin: 0 0 0.15rem;
   color: var(--muted);
   font-weight: 600;
 }
 
-#tab-rules .routing-rules__sentence-sep {
+#tab-rules .routing-rules__constructor-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  min-width: 0;
+}
+
+#tab-rules .routing-rules__constructor-row--notify .routing-rules__sentence-part,
+#tab-rules .routing-rules__constructor-row--recipient .routing-rules__sentence-part {
+  flex: 0 0 auto;
+}
+
+#tab-rules .routing-rules__axis-label,
+#tab-rules .routing-rules__sentence-part {
   color: var(--muted);
-  font-weight: 400;
-  margin: 0 0.1rem;
+  font-weight: 600;
+  flex: 0 0 auto;
 }
 
 #tab-rules .routing-rules__clause-group {
@@ -830,8 +836,29 @@ fieldset.settings-fieldset > legend {
 
 #tab-rules .routing-rules__slot {
   display: inline-flex;
-  align-items: center;
-  gap: 0.15rem;
+  align-items: stretch;
+  min-height: 2rem;
+  max-width: 100%;
+  border: 1px solid var(--service-bubble-border, rgba(255, 255, 255, 0.1));
+  border-radius: var(--service-bubble-radius, 10px);
+  background: var(--service-bubble-surface, rgba(255, 255, 255, 0.03));
+  overflow: hidden;
+}
+
+#tab-rules .routing-rules__slot--notify {
+  flex: 0 1 auto;
+  min-width: min(11rem, 100%);
+  max-width: min(26rem, 100%);
+}
+
+#tab-rules .routing-rules__slot--notify .routing-rules__dd {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+}
+
+#tab-rules .routing-rules__slot--notify .routing-rules__dd-trigger {
+  border-right: none;
 }
 
 #tab-rules .routing-rules__axis-select {
@@ -874,9 +901,32 @@ fieldset.settings-fieldset > legend {
 #tab-rules .routing-rules__add-slot,
 #tab-rules .routing-rules__rm {
   flex-shrink: 0;
-  padding: 0.25rem 0.45rem;
+  padding: 0.25rem 0.55rem;
   min-height: auto;
   line-height: 1.2;
+}
+
+#tab-rules .routing-rules__add-slot {
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: linear-gradient(135deg, var(--accent-500), var(--accent-600));
+  color: #fff;
+  font-weight: 700;
+}
+
+#tab-rules .routing-rules__add-slot:hover {
+  filter: brightness(1.06);
+}
+
+#tab-rules .routing-rules__add-slot:focus-visible {
+  outline: 2px solid var(--cyan, #22d3ee);
+  outline-offset: 2px;
 }
 
 #tab-rules .routing-rules__card-actions {
@@ -901,8 +951,10 @@ fieldset.settings-fieldset > legend {
 
 #tab-rules .routing-rules__dd {
   position: relative;
-  display: inline-flex;
-  align-items: center;
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
   max-width: 100%;
 }
 
@@ -922,33 +974,38 @@ fieldset.settings-fieldset > legend {
 }
 
 #tab-rules .routing-rules__dd-trigger {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 0.4rem;
   min-width: 6.5rem;
-  max-width: min(26rem, 100%);
+  max-width: 100%;
+  width: 100%;
   padding: 0.35rem 0.6rem;
   font: inherit;
   font-size: 0.875rem;
   line-height: 1.25;
   color: inherit;
-  background: var(--service-bubble-surface, rgba(255, 255, 255, 0.04));
-  border: 1px solid var(--service-bubble-border, rgba(255, 255, 255, 0.1));
-  border-radius: var(--service-bubble-radius, 10px);
+  background: transparent;
+  border: 0;
+  border-right: 1px solid var(--service-bubble-border, rgba(255, 255, 255, 0.1));
+  border-radius: 0;
   cursor: pointer;
   text-align: left;
   white-space: nowrap;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  transition: background-color 0.15s ease;
 }
 
 #tab-rules .routing-rules__dd-trigger:hover {
-  border-color: var(--cyan, #22d3ee);
+  background: color-mix(in srgb, var(--service-bubble-surface, rgba(255, 255, 255, 0.04)) 65%, transparent);
 }
 
 #tab-rules .routing-rules__dd.is-open .routing-rules__dd-trigger {
-  border-color: var(--cyan, #22d3ee);
-  outline: 2px solid color-mix(in srgb, var(--cyan, #22d3ee) 35%, transparent);
-  outline-offset: 1px;
+  background: color-mix(in srgb, var(--cyan, #22d3ee) 9%, transparent);
+}
+
+#tab-rules .routing-rules__dd-trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--cyan, #22d3ee) 45%, transparent);
+  outline-offset: -2px;
 }
 
 #tab-rules .routing-rules__dd-label {
@@ -963,6 +1020,29 @@ fieldset.settings-fieldset > legend {
   color: var(--muted);
   font-size: 0.75rem;
   transition: transform 0.15s ease;
+}
+
+#tab-rules .routing-rules__rm {
+  border: 0;
+  border-radius: 0;
+  border-left: 1px solid rgba(248, 113, 113, 0.35);
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  background: rgba(248, 113, 113, 0.2);
+  color: #fecaca;
+}
+
+#tab-rules .routing-rules__rm:hover {
+  background: rgba(248, 113, 113, 0.35);
+  color: #fff;
+}
+
+#tab-rules .routing-rules__rm:focus-visible {
+  outline: 2px solid var(--cyan, #22d3ee);
+  outline-offset: -2px;
 }
 
 #tab-rules .routing-rules__dd.is-open .routing-rules__dd-chevron {

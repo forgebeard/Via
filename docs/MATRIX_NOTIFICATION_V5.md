@@ -33,7 +33,7 @@ Rendered by `tpl_task_change`:
   - assignee
 - final link: `Открыть задачу`
 
-Plain fallback (`body`) for `issue_updated` / `status_change` is generated in code with `| ` prefix per line.
+Plain fallback (`body`) for `issue_updated` is generated in code with `| ` prefix per line.
 
 ## Aggregation and dedup
 

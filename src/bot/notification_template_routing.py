@@ -7,12 +7,9 @@ from bot.logic import NOTIFICATION_TYPES
 # Ключ notification_type → имя шаблона в template_loader / notification_templates.
 EVENT_TO_TEMPLATE: dict[str, str] = {
     "new": "tpl_new_issue",
-    "reopened": "tpl_new_issue",
-    "info": "tpl_task_change",
     "reminder": "tpl_reminder",
-    "overdue": "tpl_task_change",
     "issue_updated": "tpl_task_change",
-    "status_change": "tpl_task_change",
+    "daily_report": "tpl_task_change",
 }
 
 

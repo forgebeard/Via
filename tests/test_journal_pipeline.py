@@ -57,9 +57,17 @@ async def test_contract_check_first_tick_logs_summary_for_optional(caplog, monke
     async def _fake_run_in_thread(fn):
         return fn()
 
+    async def _narrow(_session):
+        return "narrow"
+
+    async def _no_projects(_session):
+        return []
+
     monkeypatch.setattr(jp, "_cycle_str", _fake_cycle_str)
     monkeypatch.setattr(jp, "_contract_audit_settings", _fake_contract_settings)
     monkeypatch.setattr(jp, "run_in_thread", _fake_run_in_thread)
+    monkeypatch.setattr(jp, "journal_scope_mode", _narrow)
+    monkeypatch.setattr(jp, "journal_project_ids", _no_projects)
     lg = _attach_caplog(caplog)
 
     redmine = _Redmine([_issue(1), _issue(2), _issue(3)])
@@ -94,9 +102,17 @@ async def test_contract_check_required_stays_visible(caplog, monkeypatch):
     async def _fake_run_in_thread(fn):
         return fn()
 
+    async def _narrow(_session):
+        return "narrow"
+
+    async def _no_projects(_session):
+        return []
+
     monkeypatch.setattr(jp, "_cycle_str", _fake_cycle_str)
     monkeypatch.setattr(jp, "_contract_audit_settings", _fake_contract_settings)
     monkeypatch.setattr(jp, "run_in_thread", _fake_run_in_thread)
+    monkeypatch.setattr(jp, "journal_scope_mode", _narrow)
+    monkeypatch.setattr(jp, "journal_project_ids", _no_projects)
     lg = _attach_caplog(caplog)
 
     redmine = _Redmine([_issue(7, missing_required=True)])
@@ -115,6 +131,7 @@ async def test_contract_check_required_stays_visible(caplog, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_contract_check_verbose_keeps_detailed_info(caplog, monkeypatch):
+    caplog.set_level(logging.INFO, logger="redmine_bot")
     jp._CONTRACT_LOGGED_ISSUES.clear()
     jp._CONTRACT_TICK_NO = 0
 
@@ -127,9 +144,17 @@ async def test_contract_check_verbose_keeps_detailed_info(caplog, monkeypatch):
     async def _fake_run_in_thread(fn):
         return fn()
 
+    async def _narrow(_session):
+        return "narrow"
+
+    async def _no_projects(_session):
+        return []
+
     monkeypatch.setattr(jp, "_cycle_str", _fake_cycle_str)
     monkeypatch.setattr(jp, "_contract_audit_settings", _fake_contract_settings)
     monkeypatch.setattr(jp, "run_in_thread", _fake_run_in_thread)
+    monkeypatch.setattr(jp, "journal_scope_mode", _narrow)
+    monkeypatch.setattr(jp, "journal_project_ids", _no_projects)
     lg = _attach_caplog(caplog)
 
     redmine = _Redmine([_issue(11)])
@@ -144,3 +169,44 @@ async def test_contract_check_verbose_keeps_detailed_info(caplog, monkeypatch):
     lg.removeHandler(caplog.handler)
 
     assert "journal_contract_check issue_id=11" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_phase_a_scope_all_includes_without_bot_assignee(monkeypatch):
+    """Режим all: задача в scope без исполнителя из bot_users и без watcher cache."""
+    jp._CONTRACT_LOGGED_ISSUES.clear()
+    jp._CONTRACT_TICK_NO = 0
+
+    async def _fake_cycle_str(_session, _key, default=""):
+        return default
+
+    async def _fake_contract_settings(_session):
+        return False, 10
+
+    async def _fake_run_in_thread(fn):
+        return fn()
+
+    async def _scope_all(_session):
+        return "all"
+
+    async def _proj_empty(_session):
+        return []
+
+    monkeypatch.setattr(jp, "_cycle_str", _fake_cycle_str)
+    monkeypatch.setattr(jp, "_contract_audit_settings", _fake_contract_settings)
+    monkeypatch.setattr(jp, "run_in_thread", _fake_run_in_thread)
+    monkeypatch.setattr(jp, "journal_scope_mode", _scope_all)
+    monkeypatch.setattr(jp, "journal_project_ids", _proj_empty)
+
+    issue = _issue(99)
+    redmine = _Redmine([issue])
+    in_scope, _ = await jp.phase_a_candidates(
+        redmine,
+        session=AsyncMock(),
+        bot_user_redmine_ids=set(),
+        watched_issue_ids=set(),
+        max_issues=100,
+        max_pages=1,
+    )
+    assert len(in_scope) == 1
+    assert int(in_scope[0].id) == 99

@@ -709,62 +709,6 @@ class TestGroupsCRUD:
         r = client.get("/groups")
         assert name not in r.text
 
-    # ── Status/Version routes ────────────────────────────────────────────
-
-    def test_add_status_route_to_group(self, client: TestClient):
-        """Добавление status route к группе."""
-        token = _get_csrf(client)
-        name = f"pytest-status-route-{uuid4().hex[:8]}"
-        room = _unique_room("grp-status")
-
-        resp = client.post(
-            "/groups",
-            data={
-                "name": name,
-                "room_id": room,
-                "status_keys": "",
-                "version_keys": "",
-                "csrf_token": token,
-            },
-            follow_redirects=False,
-        )
-        assert resp.status_code == 303
-        gid = parse_qs(urlparse(resp.headers["location"]).query)["highlight_group_id"][0]
-
-        resp2 = client.post(
-            f"/groups/{gid}/status-routes/add",
-            data={"csrf_token": token},
-            follow_redirects=False,
-        )
-        assert resp2.status_code in (200, 303, 400, 422)
-
-    def test_add_version_route_to_group(self, client: TestClient):
-        """Добавление version route к группе."""
-        token = _get_csrf(client)
-        name = f"pytest-ver-route-{uuid4().hex[:8]}"
-        room = _unique_room("grp-ver")
-
-        resp = client.post(
-            "/groups",
-            data={
-                "name": name,
-                "room_id": room,
-                "status_keys": "",
-                "version_keys": "",
-                "csrf_token": token,
-            },
-            follow_redirects=False,
-        )
-        assert resp.status_code == 303
-        gid = parse_qs(urlparse(resp.headers["location"]).query)["highlight_group_id"][0]
-
-        resp2 = client.post(
-            f"/groups/{gid}/version-routes/add",
-            data={"csrf_token": token},
-            follow_redirects=False,
-        )
-        assert resp2.status_code in (200, 303, 400, 422)
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Settings — onboarding, catalogs

@@ -1,5 +1,4 @@
-```markdown
-# 📘 Руководство по развёртыванию Via (RHEL/AlmaLinux/Rocky)
+# Руководство по развёртыванию Via (RHEL/AlmaLinux/Rocky)
 
 > Для настройки после развёртывания см. [ADMINISTRATOR_GUIDE.md](ADMINISTRATOR_GUIDE.md).
 > Для обзора проекта см. [README.md](../README.md).
@@ -101,4 +100,3 @@ docker compose down -v           # Полная очистка (данные Б�
 - Регулярно обновляйте систему и Docker-образы.
 - Храните `.env` в защищённом месте.
 - Для production используйте Docker secrets вместо `APP_MASTER_KEY` в `.env` (см. [secrets-storage.md](secrets-storage.md)).
-```

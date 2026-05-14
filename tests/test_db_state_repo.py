@@ -126,7 +126,6 @@ async def test_upsert_and_load_state():
     sent = {iid: {"notified_at": sent_at.isoformat(), "status": "Новая"}}
     reminders = {iid: {"last_reminder": reminder_at.isoformat()}}
     overdue = {iid: {"last_notified": overdue_at.isoformat()}}
-    journals = {iid: {"last_journal_id": 42}}
 
     async with factory() as session:
         await upsert_user_issue_state(
@@ -136,7 +135,7 @@ async def test_upsert_and_load_state():
             sent=sent,
             reminders=reminders,
             overdue=overdue,
-            journals=journals,
+            journals={},
         )
         await session.commit()
 
@@ -145,7 +144,7 @@ async def test_upsert_and_load_state():
     assert loaded_sent[iid]["status"] == "Новая"
     assert "last_reminder" in loaded_rem[iid]
     assert "last_notified" in loaded_over[iid]
-    assert loaded_jrn[iid]["last_journal_id"] == 42
+    assert loaded_jrn == {}
 
 
 @pytest.mark.asyncio

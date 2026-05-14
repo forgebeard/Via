@@ -345,7 +345,6 @@ async def onboarding_rules_create(
         enabled=True,
         action_kind=action_kind_norm,
         notification_type_id=nt_id,
-        target_kind="both",
         recipient_modes=modes,
     )
     session.add(row)
@@ -415,7 +414,6 @@ async def onboarding_rules_update(
     row.enabled = True
     row.action_kind = action_kind_norm
     row.notification_type_id = nt_id
-    row.target_kind = "both"
     row.recipient_modes = modes
     await _replace_policy_links(
         session,

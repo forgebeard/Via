@@ -368,7 +368,7 @@ async def main() -> None:
     try:
         from database.load_config import fetch_runtime_config
 
-        u, _, _, g, routes_cfg = await fetch_runtime_config()
+        u, g, routes_cfg = await fetch_runtime_config()
     except Exception as e:
         logger.error("❌ Не удалось загрузить конфиг из БД: %s", e, exc_info=True)
         return
@@ -530,6 +530,7 @@ async def main() -> None:
 
     # ── Импорт функций для scheduler ──
     from bot.command_worker import process_backend_commands
+    from bot.db_retention import JOB_DB_RETENTION, run_db_retention_pass
     from bot.scheduler import (
         check_all_users,
         cleanup_state_files,
@@ -601,6 +602,14 @@ async def main() -> None:
             "now_tz": now_tz,
             "redmine_client_for_user": _redmine_client_for_user,
         },
+    )
+
+    scheduler.add_job(
+        run_db_retention_pass,
+        CronTrigger(hour=3, minute=12, timezone=BOT_TZ),
+        id=JOB_DB_RETENTION,
+        max_instances=1,
+        coalesce=True,
     )
 
     scheduler.add_job(

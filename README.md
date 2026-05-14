@@ -1,4 +1,3 @@
-```markdown
 # Via — Redmine → Matrix Notification Bot
 
 Бот автоматически отслеживает изменения в задачах Redmine и отправляет уведомления в Matrix.
@@ -25,7 +24,7 @@ chmod +x deploy.sh && ./deploy.sh
 
 > ⚠️ Сохраните `.env` — в нём credentials для восстановления системы.
 
-Подробности: [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md), [docs/ADMINISTRATOR_GUIDE.md](docs/ADMINISTRATOR_GUIDE.md), модель «панель — БД — бот»: [docs/ARCHITECTURE_ADMIN_DB_BOT.md](docs/ARCHITECTURE_ADMIN_DB_BOT.md), расширенный day zero: [docs/DAY_ZERO_EXTENDED.md](docs/DAY_ZERO_EXTENDED.md).
+Подробности: [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md), [docs/ADMINISTRATOR_GUIDE.md](docs/ADMINISTRATOR_GUIDE.md), модель «панель — БД — бот»: [docs/ADMIN_DB_BOT_AUDIT.md](docs/ADMIN_DB_BOT_AUDIT.md), расширенный day zero: [docs/DAY_ZERO_EXTENDED.md](docs/DAY_ZERO_EXTENDED.md).
 
 ## Что умеет бот
 
@@ -193,13 +192,13 @@ Block-editor endpoints удалены из runtime API. Контракт уда�
 `/api/bot/notification-templates/compile-blocks`, `/{name}/decompose`,
 `/{name}/decompose-body`, `/block-registry`.
 
-Rules-only routing v1: legacy route endpoints удалены (`410 Gone`):
+Rules-only routing v1: прежние URL маршрутизации не обслуживаются (`404 Not Found`):
 `/routes/status`, `/routes/version`, `/settings/routes/version`.
 Настройка маршрутизации выполняется через `onboarding#rules`.
 
 ## Перезапуск бота после изменений в панели
 
-Бот при старте читает из БД секреты, пользователей, группы, маршруты и `cycle_settings`. Включён **hot reload** (`BOT_HOT_RELOAD=1`, по умолчанию): конфигурация из панели подтягивается периодически без рестарта. Если hot reload отключён или менялись только секреты в `.env` / ключевые интеграции, после правок **перезапустите бота**:
+Бот при старте читает из БД секреты, пользователей, группы, маршруты и `cycle_settings`. Ключи **`JOURNAL_SCOPE_MODE`** и **`JOURNAL_PROJECT_IDS`** задают охват журнального опроса Redmine; после миграций `alembic upgrade head` они создаются автоматически (`JOURNAL_SCOPE_MODE=all`, `JOURNAL_PROJECT_IDS=[]`). Если строк в БД нет, код использует fallback `narrow` (только задачи с исполнителем из `bot_users` или из watcher cache); см. [docs/CYCLE_SETTINGS_KEYS.md](docs/CYCLE_SETTINGS_KEYS.md). Включён **hot reload** (`BOT_HOT_RELOAD=1`, по умолчанию): конфигурация из панели подтягивается периодически без рестарта. Если hot reload отключён или менялись только секреты в `.env` / ключевые интеграции, после правок **перезапустите бота**:
 
 ```bash
 docker compose restart bot
@@ -216,11 +215,10 @@ docker compose restart bot
 | [docs/ADMINISTRATOR_GUIDE.md](docs/ADMINISTRATOR_GUIDE.md)                                           | Панель администратора, первый вход, troubleshooting |
 | [docs/AUDIT_LOGGING.md](docs/AUDIT_LOGGING.md)                                                       | Логирование и аудит действий в панели               |
 | [docs/MATRIX_NOTIFICATION_V5.md](docs/MATRIX_NOTIFICATION_V5.md)                                     | Формат карточки v5, дедупликация, txn_id, retry     |
-| [docs/LOGGING_DUPLICATION_DIAGNOSIS_2026-04-21.md](docs/LOGGING_DUPLICATION_DIAGNOSIS_2026-04-21.md) | Диагностика и контроль дублей логов                 |
 | [docs/secrets-storage.md](docs/secrets-storage.md)                                                   | Хранение секретов и шифрование                      |
 | [docs/rollback-runbook.md](docs/rollback-runbook.md)                                                 | Аварийный откат                                     |
 | [docs/ui-smoke-checklist.md](docs/ui-smoke-checklist.md)                                             | Smoke-чеклист UI                                    |
-| [docs/RULES_ONLY_ROUTING_RUNBOOK.md](docs/RULES_ONLY_ROUTING_RUNBOOK.md)                             | Cutover rules-only маршрутизации                    |
+| [docs/ROUTING_POLICIES.md](docs/ROUTING_POLICIES.md)                                                 | Политики маршрутизации (rules-only) и runbook        |
 
 
 Конфигурация через `.env` — см. [.env.example](.env.example).
@@ -228,4 +226,3 @@ docker compose restart bot
 ## Лицензия
 
 MIT
-```

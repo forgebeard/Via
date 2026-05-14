@@ -35,14 +35,14 @@ else:
 # КОНСТАНТЫ
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Legacy status names (used by scheduler/main/config compatibility layer)
+# Отображаемые имена статусов Redmine (также реэкспорт в config)
 STATUS_NEW = "Новая"
 STATUS_INFO_PROVIDED = "Информация предоставлена"
 STATUS_REOPENED = "Открыта повторно"
 STATUS_RV = "Передано в работу.РВ"
 STATUSES_TRANSFERRED = {STATUS_RV}
 
-# Compatibility exports for config/sender legacy usage.
+# Словарь ключ → подпись статуса (реэкспорт в config)
 STATUS_NAMES = {
     "new": STATUS_NEW,
     "info_provided": STATUS_INFO_PROVIDED,
@@ -53,12 +53,9 @@ PRIORITY_NAMES: dict[str, str] = {}
 PRIORITY_EMERGENCY = "Аварийный"
 NOTIFICATION_TYPES = {
     "new": ("", "Новая задача"),
-    "reopened": ("", "Задача открыта повторно"),
-    "info": ("", "Информация предоставлена"),
     "reminder": ("", "Напоминание"),
-    "overdue": ("", "Просроченная задача"),
     "issue_updated": ("", "Задача обновлена"),
-    "status_change": ("", "Смена статуса"),
+    "daily_report": ("", "Утренний отчёт"),
 }
 
 FIELD_NAMES: dict[str, str | None] = {
@@ -240,8 +237,7 @@ def issue_matches_cfg(issue: _IssueLike, user_cfg: dict[str, Any]) -> bool:
     raw_notify = user_cfg.get("notify", ["all"])
     notify_norm = {str(v).strip().lower() for v in (raw_notify or []) if str(v).strip()}
     known_types = {k.lower() for k in NOTIFICATION_TYPES}
-    # Legacy mode: notify list contains notification kinds, not statuses.
-    # In this case skip status attribute matching.
+    # Режим «фильтр по статусам»: в notify перечислены id/имена статусов, а не виды уведомлений.
     status_match = True
     if notify_norm and "all" not in notify_norm and any(v not in known_types for v in notify_norm):
         status_match = _matches_filter(raw_notify, status_candidates)

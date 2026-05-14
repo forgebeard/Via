@@ -1,7 +1,7 @@
 """
 Загрузка runtime-конфига из Postgres для policy-based маршрутизации.
 
-См. двойные проекции маршрутов (мапы vs routes_config): docs/RUNTIME_ROUTING_CONFIG.md
+См. docs/ROUTING_POLICIES.md
 """
 
 from __future__ import annotations
@@ -10,20 +10,18 @@ import logging
 from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
     BotUser,
     CycleSettings,
-    GroupVersionRoute,
     NotificationType,
     RoutingPolicy,
     RoutingPolicyPriority,
     RoutingPolicyStatus,
     RoutingPolicyVersion,
     SupportGroup,
-    UserVersionRoute,
 )
 from .session import get_session_factory
 
@@ -33,11 +31,7 @@ logger = logging.getLogger("redmine_bot")
 def user_orm_to_cfg(
     row: BotUser,
     groups_by_id: dict[int, SupportGroup],
-    gv_by_group: dict[int, list[dict[str, str]]] | None = None,
-    uv_by_user: dict[int, list[dict[str, str]]] | None = None,
 ) -> dict[str, Any]:
-    gv_by_group = gv_by_group or {}
-    uv_by_user = uv_by_user or {}
     d: dict[str, Any] = {
         "id": row.id,
         "redmine_id": row.redmine_id,
@@ -74,14 +68,8 @@ def user_orm_to_cfg(
     ciph = getattr(row, "redmine_api_key_ciphertext", None)
     nonce = getattr(row, "redmine_api_key_nonce", None)
     if ciph and nonce:
-        # Только для выбора Redmine-клиента в bot.py; не логировать эти ключи.
         d["_redmine_key_cipher"] = ciph
         d["_redmine_key_nonce"] = nonce
-    vr: list[dict[str, str]] = []
-    vr.extend(uv_by_user.get(row.id, []))
-    if row.group_id is not None:
-        vr.extend(gv_by_group.get(row.group_id, []))
-    d["version_routes"] = vr
     return d
 
 
@@ -105,11 +93,12 @@ def group_orm_to_cfg(row: SupportGroup) -> dict[str, Any]:
 
 async def fetch_runtime_config(
     session: AsyncSession | None = None,
-) -> tuple[list, dict, dict, list, dict[str, Any]]:
+) -> tuple[list, list, dict[str, Any]]:
     """
-    Возвращает (USERS, STATUS_ROOM_MAP, VERSION_ROOM_MAP, GROUPS, routes_config).
+    Возвращает (USERS, GROUPS, routes_config).
 
-    STATUS_ROOM_MAP / VERSION_ROOM_MAP возвращаются пустыми для обратной совместимости.
+    Legacy-плоские мапы статус/версия→комната убраны: маршрутизация только через
+    ``routes_config["routing_policies"]``.
     """
     if session is None:
         factory = get_session_factory()
@@ -120,56 +109,9 @@ async def fetch_runtime_config(
     groups = list(r_groups.scalars().all())
     groups_by_id = {g.id: g for g in groups}
 
-    gv_by_group: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    r_gv = await session.execute(
-        select(GroupVersionRoute).order_by(
-            GroupVersionRoute.priority,
-            GroupVersionRoute.sort_order,
-            GroupVersionRoute.id,
-        )
-    )
-    for gr in r_gv.scalars().all():
-        gv_by_group[gr.group_id].append(
-            {
-                "key": gr.version_key,
-                "room": gr.room_id,
-                "priority": int(gr.priority),
-                "sort_order": int(gr.sort_order),
-                "notify_on_assignment": bool(gr.notify_on_assignment),
-                "route_source": "group_version_route",
-                "route_id": gr.id,
-            }
-        )
-
-    uv_by_user: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    r_uv = await session.execute(
-        select(UserVersionRoute).order_by(
-            UserVersionRoute.priority,
-            UserVersionRoute.sort_order,
-            UserVersionRoute.id,
-        )
-    )
-    for ur in r_uv.scalars().all():
-        uv_by_user[ur.bot_user_id].append(
-            {
-                "key": ur.version_key,
-                "room": ur.room_id,
-                "priority": int(ur.priority),
-                "sort_order": int(ur.sort_order),
-                "notify_on_assignment": bool(ur.notify_on_assignment),
-                "route_source": "user_version_route",
-                "route_id": ur.id,
-            }
-        )
-
     r_users = await session.execute(select(BotUser).order_by(BotUser.redmine_id))
-    users = [
-        user_orm_to_cfg(u, groups_by_id, gv_by_group, uv_by_user) for u in r_users.scalars().all()
-    ]
+    users = [user_orm_to_cfg(u, groups_by_id) for u in r_users.scalars().all()]
     groups_cfg = [group_orm_to_cfg(g) for g in groups]
-
-    status_map: dict[str, str] = {}
-    version_map: dict[str, str] = {}
 
     routes_config: dict[str, Any] = {
         "status_routes": [],
@@ -236,18 +178,7 @@ async def fetch_runtime_config(
         for p in policies
     ]
 
-    return users, status_map, version_map, groups_cfg, routes_config
-
-
-async def row_counts(session: AsyncSession | None = None) -> tuple[int, int, int]:
-    if session is None:
-        factory = get_session_factory()
-        async with factory() as s:
-            return await row_counts(s)
-    nu = await session.scalar(select(func.count()).select_from(BotUser))
-    ns = 0
-    nv = 0
-    return int(nu or 0), int(ns or 0), int(nv or 0)
+    return users, groups_cfg, routes_config
 
 
 async def fetch_cycle_settings(session: AsyncSession | None = None) -> dict[str, str]:

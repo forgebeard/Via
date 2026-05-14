@@ -342,20 +342,25 @@ async def _tpl_build_matrix_message_content(
     from bot.template_context import build_issue_context, is_valid_http_issue_url
     from bot.template_loader import render_named_template
 
-    tpl_name = EVENT_TO_TEMPLATE[notification_type]
-    emoji, title = NOTIFICATION_TYPES.get(notification_type, ("", "Обратите внимание"))
+    tpl_name = EVENT_TO_TEMPLATE.get(notification_type, "tpl_task_change")
+    meta = NOTIFICATION_TYPES.get(notification_type, ("", "Обратите внимание"))
+    emoji, title = meta
     catalogs = CATALOGS
 
     extra_merged = (extra_text or "").strip()
-    if notification_type == "overdue" and issue.due_date:
+    if notification_type == "issue_updated" and issue.due_date:
         from utils import today_tz
 
-        days = (today_tz() - issue.due_date).days
-        ov_line = f"просрочено на {plural_days(days)}"
-        if ov_line not in extra_merged:
-            extra_merged = ov_line + (f"<br/>{extra_merged}" if extra_merged else "")
+        try:
+            if issue.due_date < today_tz():
+                days = (today_tz() - issue.due_date).days
+                ov_line = f"просрочено на {plural_days(days)}"
+                if ov_line not in extra_merged:
+                    extra_merged = ov_line + (f"<br/>{extra_merged}" if extra_merged else "")
+        except TypeError:
+            pass
 
-    event_label = NOTIFICATION_TYPES[notification_type][1]
+    event_label = meta[1]
     ctx = build_issue_context(
         issue,
         catalogs,
@@ -373,7 +378,7 @@ async def _tpl_build_matrix_message_content(
             )
 
     html_out, plain_opt = await render_named_template(session, tpl_name, ctx)
-    if notification_type in {"issue_updated", "status_change"}:
+    if notification_type == "issue_updated":
         plain_body = _v5_plain_issue_update(ctx)
     else:
         plain_body = (plain_opt or "").strip() or _strip_html_to_plain(html_out)

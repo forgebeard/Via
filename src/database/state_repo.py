@@ -1,9 +1,11 @@
 """
 PostgreSQL storage для state бота и lease-координация между несколькими инстансами.
 
-`bot_issue_state` хранит дедупликацию/таймеры уведомлений (sent/reminders/overdue/journals),
+`bot_issue_state` хранит дедупликацию/таймеры уведомлений (sent/reminders/overdue),
 а `bot_user_leases` не даёт нескольким инстансам бота одновременно обрабатывать одного
 пользователя в рамках одного цикла.
+
+Курсор журнала по задаче — только ``bot_issue_journal_cursor`` (см. ``journal_cursor_repo``).
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ def _parse_iso(dt: str) -> datetime:
 def build_state_dicts_from_rows(rows: list[BotIssueState]) -> tuple[dict, dict, dict, dict]:
     """
     Преобразует строки `BotIssueState` в 4 словаря той же формы, что у JSON.
+    Блок ``journals`` всегда пустой: позиция журнала хранится в ``bot_issue_journal_cursor``.
     """
     sent: dict[str, dict] = {}
     reminders: dict[str, dict] = {}
@@ -47,8 +50,6 @@ def build_state_dicts_from_rows(rows: list[BotIssueState]) -> tuple[dict, dict, 
             reminders[iid] = {"last_reminder": _iso(r.last_reminder_at)}
         if r.last_overdue_notified_at is not None:
             overdue[iid] = {"last_notified": _iso(r.last_overdue_notified_at)}
-        if r.last_journal_id is not None:
-            journals[iid] = {"last_journal_id": r.last_journal_id}
 
     return sent, reminders, overdue, journals
 
@@ -91,6 +92,8 @@ async def load_user_issue_state(
 ) -> tuple[dict, dict, dict, dict]:
     """
     Загружает state для пользователя и возвращает (sent, reminders, overdue, journals).
+
+    ``journals`` — всегда ``{}``; для журнала используйте ``journal_cursor_repo``.
     """
     res = await session.execute(
         select(BotIssueState).where(BotIssueState.user_redmine_id == user_redmine_id)
@@ -104,20 +107,20 @@ def _fields_for_issue(
     sent: dict,
     reminders: dict,
     overdue: dict,
-    journals: dict,
+    _journals: dict,
 ) -> dict:
     """
-    Собирает поля BotIssueState для одного issue_id из 4 dict-структур.
+    Собирает поля BotIssueState для одного issue_id из dict-структур.
+
+    Параметр ``_journals`` оставлен для совместимости вызовов; не используется.
     """
+    del _journals
+
     last_status = None
     sent_notified_at = None
     if iid in sent:
         last_status = sent[iid].get("status")
         sent_notified_at = _parse_iso(sent[iid].get("notified_at"))
-
-    last_journal_id = None
-    if iid in journals:
-        last_journal_id = journals[iid].get("last_journal_id")
 
     last_reminder_at = None
     if iid in reminders:
@@ -130,7 +133,6 @@ def _fields_for_issue(
     return {
         "last_status": last_status,
         "sent_notified_at": sent_notified_at,
-        "last_journal_id": last_journal_id,
         "last_reminder_at": last_reminder_at,
         "last_overdue_notified_at": last_overdue_notified_at,
     }
@@ -149,14 +151,16 @@ async def upsert_user_issue_state(
     Upsert изменённых issue state строк.
 
     `issue_ids` — набор issue_id строк, которые изменились в этом цикле.
+    ``journals`` в сигнатуре игнорируется — см. ``journal_cursor_repo``.
     """
+    del journals
     ids = sorted({str(i) for i in issue_ids if i is not None})
     if not ids:
         return
 
     values = []
     for iid in ids:
-        f = _fields_for_issue(iid, sent, reminders, overdue, journals)
+        f = _fields_for_issue(iid, sent, reminders, overdue, {})
         values.append(
             {
                 "user_redmine_id": user_redmine_id,
@@ -171,7 +175,6 @@ async def upsert_user_issue_state(
         set_={
             "last_status": stmt.excluded.last_status,
             "sent_notified_at": stmt.excluded.sent_notified_at,
-            "last_journal_id": stmt.excluded.last_journal_id,
             "last_reminder_at": stmt.excluded.last_reminder_at,
             "last_overdue_notified_at": stmt.excluded.last_overdue_notified_at,
             "updated_at": func.now(),

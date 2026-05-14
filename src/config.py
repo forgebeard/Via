@@ -10,9 +10,7 @@ load_dotenv() вызывается здесь — это единственны�
 import json
 import logging
 import os
-import warnings
 from pathlib import Path
-from typing import Any
 
 from dotenv import load_dotenv
 
@@ -247,25 +245,6 @@ def _parse_json_env(var_name: str, default: str = "{}") -> dict | list:
     except (json.JSONDecodeError, TypeError) as e:
         logger.error(f"❌ Ошибка парсинга {var_name}: {e}")
         return json.loads(default)
-
-
-def __getattr__(name: str):
-    """
-    Legacy shim для старых импортов маршрутов из config.
-
-    Реальные runtime-маршруты живут в bot.main / bot.config_state и приходят из БД.
-    """
-    legacy_defaults: dict[str, list[Any] | dict[str, str]] = {
-        "USERS": [],
-    }
-    if name in legacy_defaults:
-        warnings.warn(
-            f"config.{name} deprecated: use bot.main/bot.config_state runtime values from database",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return legacy_defaults[name]
-    raise AttributeError(name)
 
 
 # ═══════════════════════════════════════════════════════════════

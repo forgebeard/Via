@@ -135,30 +135,23 @@ async def run_journal_tick(
             assignee = _assignee_cfg(full, users)
             aggregated = aggregate_journals_first_old_last_new(new_js)
             if aggregated is not None:
-                if assignee is not None:
-                    try:
-                        await handle_journal_entry(
-                            client,
-                            session,
-                            issue=full,
-                            journal=aggregated,
-                            assignee_cfg=assignee,
-                            routes_cfg=routes_cfg,
-                            groups=groups,
-                            users=users,
-                        )
-                    except Exception:
-                        logger.error(
-                            "journal_handle_failed #%s j=%s",
-                            full.id,
-                            getattr(aggregated, "id", "?"),
-                            exc_info=True,
-                        )
-                else:
-                    logger.info(
-                        "journal_skip_no_assignee issue_id=%s journal_id=%s",
+                try:
+                    await handle_journal_entry(
+                        client,
+                        session,
+                        issue=full,
+                        journal=aggregated,
+                        assignee_cfg=assignee,
+                        routes_cfg=routes_cfg,
+                        groups=groups,
+                        users=users,
+                    )
+                except Exception:
+                    logger.error(
+                        "journal_handle_failed #%s j=%s",
                         full.id,
                         getattr(aggregated, "id", "?"),
+                        exc_info=True,
                     )
                 await advance_cursor_after_journal(session, int(full.id), int(aggregated.id))
                 await session.commit()

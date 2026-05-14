@@ -27,7 +27,8 @@ _USER_CFG_FOR_SEND = {
 def test_event_to_template_covers_notification_types() -> None:
     assert_event_map_covers_notification_types()
     assert EVENT_TO_TEMPLATE["new"] == "tpl_new_issue"
-    assert EVENT_TO_TEMPLATE["status_change"] == "tpl_task_change"
+    assert EVENT_TO_TEMPLATE["daily_report"] == "tpl_task_change"
+    assert EVENT_TO_TEMPLATE["reminder"] == "tpl_reminder"
 
 
 @pytest.mark.asyncio
@@ -98,19 +99,37 @@ async def test_build_matrix_tpl_event_map_parametrized(simple_issue, event_type:
 
 @pytest.mark.asyncio
 async def test_send_safe_dlq_uses_tpl_payload(simple_issue) -> None:
-    """При падении Matrix send_safe кладёт в DLQ payload из build_matrix_message_content (tpl + session)."""
+    """При падении Matrix send_safe кладёт в DLQ payload из build_matrix_message_content (tpl + session).
+
+    Для ``issue_updated`` поле ``body`` — v5 plaintext (не второй текст из tpl), HTML — из шаблона.
+    """
     import bot.config_state as config_state
     from bot import sender
+    from bot.logic import NOTIFICATION_TYPES
+    from bot.template_context import build_issue_context
 
-    config_state.CATALOGS = BotCatalogs(
+    catalogs = BotCatalogs(
         status_id_to_name={1: "Новая"},
         priority_id_to_name={2: "Normal"},
     )
+    config_state.CATALOGS = catalogs
     mock_session = AsyncMock()
     enqueued: list[dict] = []
 
+    meta = NOTIFICATION_TYPES["issue_updated"]
+    emoji, title = meta
+    ctx_dlq_plain = build_issue_context(
+        simple_issue,
+        catalogs,
+        emoji=emoji,
+        title=title,
+        event_type=meta[1],
+        extra_text="err ctx",
+    )
+    expected_plain_body = sender._v5_plain_issue_update(ctx_dlq_plain)
+
     async def _fake_render(session, name, context, *, root=None):
-        assert name == EVENT_TO_TEMPLATE["info"]
+        assert name == EVENT_TO_TEMPLATE["issue_updated"]
         return "<p>dlq-body</p>", "plain dlq"
 
     async def _capture_enqueue(session, **kwargs):
@@ -129,18 +148,18 @@ async def test_send_safe_dlq_uses_tpl_payload(simple_issue) -> None:
             simple_issue,
             _USER_CFG_FOR_SEND,
             "!room:server",
-            "info",
+            "issue_updated",
             extra_text="err ctx",
             db_session=mock_session,
         )
 
     assert len(enqueued) == 1
     row = enqueued[0]
-    assert row["notification_type"] == "info"
+    assert row["notification_type"] == "issue_updated"
     assert row["issue_id"] == simple_issue.id
     assert row["room_id"] == "!room:server"
     assert row["user_redmine_id"] == 1
     assert "matrix unavailable" in row["error"]
     assert row["payload"]["formatted_body"] == "<p>dlq-body</p>"
-    assert row["payload"]["body"] == "plain dlq"
+    assert row["payload"]["body"] == expected_plain_body
     assert client.room_send.call_count == matrix_send.MAX_RETRIES

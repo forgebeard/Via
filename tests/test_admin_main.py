@@ -38,22 +38,22 @@ def test_events_page_echoes_date_from_query(client: TestClient):
     assert 'name="date_from" value="2024-01-02"' in r.text
 
 
-def test_routes_status_legacy_get_returns_410_for_admin(client: TestClient):
+def test_routes_status_legacy_url_not_found_for_admin(client: TestClient):
     db_url = os.getenv("DATABASE_URL", "")
     if not str(db_url).startswith("postgresql://"):
         pytest.skip("Тест требует Postgres (DATABASE_URL)")
     _setup_and_login_admin(client)
     r = client.get("/routes/status", follow_redirects=False)
-    assert r.status_code == 410
+    assert r.status_code == 404
 
 
-def test_routes_version_legacy_get_returns_410_for_admin(client: TestClient):
+def test_routes_version_legacy_url_not_found_for_admin(client: TestClient):
     db_url = os.getenv("DATABASE_URL", "")
     if not str(db_url).startswith("postgresql://"):
         pytest.skip("Тест требует Postgres (DATABASE_URL)")
     _setup_and_login_admin(client)
     r = client.get("/routes/version", follow_redirects=False)
-    assert r.status_code == 410
+    assert r.status_code == 404
 
 
 def test_routing_rules_page_for_admin(client: TestClient):
@@ -95,7 +95,7 @@ def test_dashboard_has_no_routing_rules_ui_blocks(client: TestClient):
     assert "Последние routing_no_match" not in r.text
 
 
-def test_routes_version_legacy_post_returns_410(client: TestClient):
+def test_routes_version_legacy_post_not_found(client: TestClient):
     db_url = os.getenv("DATABASE_URL", "")
     if not str(db_url).startswith("postgresql://"):
         pytest.skip("Тест требует Postgres (DATABASE_URL)")
@@ -106,7 +106,7 @@ def test_routes_version_legacy_post_returns_410(client: TestClient):
         data={"version_key": "x", "room_id": "!room:server", "csrf_token": token or ""},
         follow_redirects=False,
     )
-    assert r.status_code == 410
+    assert r.status_code == 404
 
 
 def test_routing_rules_create_rejects_inactive_fk(client: TestClient):
@@ -387,7 +387,7 @@ def test_admin_csp_value_env(monkeypatch):
 
 
 def test_status_presets_helpers():
-    allowed = ["new", "issue_updated", "overdue"]
+    allowed = ["new", "issue_updated", "reminder"]
     assert admin_main._normalize_notify([]) == ["all"]
     assert admin_main._normalize_notify(["new", "issue_updated"], allowed) == [
         "new",
@@ -397,7 +397,7 @@ def test_status_presets_helpers():
     assert admin_main._normalize_notify(["ghost"], allowed) == ["all"]
     assert admin_main._status_preset(["all"]) == "default"
     assert admin_main._status_preset(["new"]) == "custom"
-    assert admin_main._status_preset(["overdue"]) == "custom"
+    assert admin_main._status_preset(["reminder"]) == "custom"
     assert admin_main._status_preset(["new", "issue_updated"]) == "custom"
 
 
@@ -872,106 +872,6 @@ def test_full_flow_group_user_assignment_update_and_delete(client: TestClient):
     )
     assert delete_group.status_code == 303
     assert delete_group.headers.get("location") == "/groups"
-
-
-def test_user_and_group_version_routes_add_and_delete(client: TestClient):
-    db_url = os.getenv("DATABASE_URL", "")
-    if not db_url or not db_url.startswith("postgresql://"):
-        pytest.skip("Тест требует Postgres (DATABASE_URL)")
-    _setup_and_login_admin(client)
-    token = client.cookies.get("admin_csrf")
-    suffix = uuid4().hex[:8]
-
-    create_group = client.post(
-        "/groups",
-        data={
-            "name": f"pytest-vroutes-group-{suffix}",
-            "room_id": f"!pytest-vroutes-group-{suffix}:server",
-            "timezone_name": "Europe/Moscow",
-            "status_preset": "all",
-            "version_preset": "all",
-            "csrf_token": token,
-        },
-        follow_redirects=False,
-    )
-    gid = int(
-        parse_qs(urlparse(create_group.headers.get("location", "")).query)["highlight_group_id"][0]
-    )
-
-    create_user = client.post(
-        "/users",
-        data={
-            "redmine_id": str(930000 + (abs(hash(uuid4().hex)) % 9999)),
-            "display_name": f"pytest-vroutes-user-{suffix}",
-            "group_id": str(gid),
-            "room": f"!pytest-vroutes-user-{suffix}:server",
-            "status_preset": "all",
-            "version_preset": "all",
-            "csrf_token": token,
-        },
-        follow_redirects=False,
-    )
-    uid = int(
-        parse_qs(urlparse(create_user.headers.get("location", "")).query)["highlight_user_id"][0]
-    )
-
-    user_key = f"v-user-{suffix}"
-    group_key = f"v-group-{suffix}"
-    add_ur = client.post(
-        f"/users/{uid}/version-routes/add",
-        data={"version_key": user_key, "csrf_token": token},
-        follow_redirects=False,
-    )
-    assert add_ur.status_code == 303
-    assert "version_msg=added" in (add_ur.headers.get("location") or "")
-
-    add_gr = client.post(
-        f"/groups/{gid}/version-routes/add",
-        data={"version_key": group_key, "csrf_token": token},
-        follow_redirects=False,
-    )
-    assert add_gr.status_code == 303
-    assert "version_msg=added" in (add_gr.headers.get("location") or "")
-
-    from database.models import GroupVersionRoute, UserVersionRoute
-    from database.session import get_session_factory
-
-    async def _route_ids() -> tuple[int, int]:
-        factory = get_session_factory()
-        async with factory() as session:
-            ur = await session.execute(
-                select(UserVersionRoute.id).where(
-                    UserVersionRoute.bot_user_id == uid,
-                    UserVersionRoute.version_key == user_key,
-                )
-            )
-            gr = await session.execute(
-                select(GroupVersionRoute.id).where(
-                    GroupVersionRoute.group_id == gid,
-                    GroupVersionRoute.version_key == group_key,
-                )
-            )
-            user_row_id = ur.scalar_one()
-            group_row_id = gr.scalar_one()
-            return user_row_id, group_row_id
-
-    user_row_id, group_row_id = asyncio.run(_route_ids())
-
-    del_ur = client.post(
-        f"/users/{uid}/version-routes/{user_row_id}/delete",
-        data={"csrf_token": token},
-        follow_redirects=False,
-    )
-    assert del_ur.status_code == 303
-    assert "version_msg=deleted" in (del_ur.headers.get("location") or "")
-
-    del_gr = client.post(
-        f"/groups/{gid}/version-routes/{group_row_id}/delete",
-        data={"csrf_token": token},
-        follow_redirects=False,
-    )
-    assert del_gr.status_code == 303
-    assert "version_msg=deleted" in (del_gr.headers.get("location") or "")
 
 
 def test_ops_restart_accepts_and_redirects(client: TestClient, monkeypatch):

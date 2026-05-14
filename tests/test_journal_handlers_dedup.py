@@ -46,6 +46,7 @@ async def test_handle_journal_entry_skips_when_dedup_blocks() -> None:
                 action_kind="updated",
             ),
         ),
+        patch("bot.journal_handlers.can_notify", return_value=True),
         patch(
             "bot.journal_handlers.should_send_journal_notification",
             new=AsyncMock(return_value=False),
@@ -82,6 +83,7 @@ async def test_handle_journal_entry_marks_sent_after_delivery() -> None:
                 action_kind="created",
             ),
         ),
+        patch("bot.journal_handlers.can_notify", return_value=True),
         patch(
             "bot.journal_handlers.should_send_journal_notification",
             new=AsyncMock(return_value=True),

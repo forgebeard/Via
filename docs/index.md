@@ -1,42 +1,47 @@
 # Документация Via
 
-## Current
+Исторические снимки и устаревшие ТЗ удалены из репозитория; при необходимости ищите в **истории git** по удалённым путям `docs/archive/`.
+
+## Для операторов
 
 | Документ | Описание |
 |----------|----------|
-| [README.md](../README.md) | Обзор проекта, быстрый старт, структура |
-| [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) | Развёртывание на сервере (RHEL/AlmaLinux/Rocky) |
-| [ADMINISTRATOR_GUIDE.md](ADMINISTRATOR_GUIDE.md) | Панель администратора, первый вход, troubleshooting |
-| [notification_template_variables.md](notification_template_variables.md) | Поля Jinja по шаблонам уведомлений Matrix |
-| [MATRIX_NOTIFICATION_V5.md](MATRIX_NOTIFICATION_V5.md) | Актуальный контракт Matrix-уведомлений v5 |
-| [AUDIT_LOGGING.md](AUDIT_LOGGING.md) | Логирование и аудит действий в панели |
-| [secrets-storage.md](secrets-storage.md) | Хранение секретов и шифрование |
+| [README.md](../README.md) | Обзор проекта, быстрый старт |
+| [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) | Развёртывание (RHEL/Alma/Rocky), Docker |
+| [ADMINISTRATOR_GUIDE.md](ADMINISTRATOR_GUIDE.md) | Панель, первый вход, troubleshooting |
+| [DAY_ZERO_EXTENDED.md](DAY_ZERO_EXTENDED.md) | Сценарии: кнопка в UI → таблицы БД → бот |
 | [rollback-runbook.md](rollback-runbook.md) | Аварийный откат |
-| [ui-smoke-checklist.md](ui-smoke-checklist.md) | Smoke-чеклист UI перед merge |
+| [AUDIT_LOGGING.md](AUDIT_LOGGING.md) | Логи и аудит панели |
+| [secrets-storage.md](secrets-storage.md) | Секреты, `APP_MASTER_KEY`, имена в `app_secrets` |
 
-## Design / Audit
+## Для разработчиков
 
 | Документ | Описание |
 |----------|----------|
-| [ARCHITECTURE_ADMIN_DB_BOT.md](ARCHITECTURE_ADMIN_DB_BOT.md) | Архитектурный обзор admin/bot/db |
-| [JOURNAL_ENGINE_AND_SENDER.md](JOURNAL_ENGINE_AND_SENDER.md) | Технические детали журналов и sender |
-| [RUNTIME_ROUTING_CONFIG.md](RUNTIME_ROUTING_CONFIG.md) | Источники правды: маршруты комнат в runtime (БД → maps vs routes_config) |
-| [RULES_ONLY_ROUTING_RUNBOOK.md](RULES_ONLY_ROUTING_RUNBOOK.md) | Cutover/runbook rules-only маршрутизации + pre-deploy gate |
-| [CYCLE_SETTINGS_KEYS.md](CYCLE_SETTINGS_KEYS.md) | Поддерживаемые и deprecated ключи `cycle_settings` |
-| [TZ_BOT_V2_IMPLEMENTATION.md](TZ_BOT_V2_IMPLEMENTATION.md) | Реализационные заметки по журналному движку (исторический контекст и текущие ключи) |
-| [NOTIFY_TEMPLATE_MIGRATION.md](NOTIFY_TEMPLATE_MIGRATION.md) | История миграции старых NOTIFY_TEMPLATE ключей на tpl-контур |
-| [template_context_audit.md](template_context_audit.md) | Контракт контекста Jinja-шаблонов |
-| [ADR_unified_notification_templates.md](ADR_unified_notification_templates.md) | ADR по унификации шаблонов уведомлений |
-| [AUDIT_notification_links_2026-04-21.md](AUDIT_notification_links_2026-04-21.md) | Аудит маршрутизации/ссылок (снимок) |
-| [LOGGING_DUPLICATION_DIAGNOSIS_2026-04-21.md](LOGGING_DUPLICATION_DIAGNOSIS_2026-04-21.md) | Диагностика и устранение дублирования логов |
-| [RUFF_BACKLOG.md](RUFF_BACKLOG.md) | Backlog исторических ruff-замечаний и порядок зачистки |
+| [ADMIN_DB_BOT_AUDIT.md](ADMIN_DB_BOT_AUDIT.md) | Матрица UI → Postgres → бот; удаление данных; env |
+| [JOURNAL_PIPELINE.md](JOURNAL_PIPELINE.md) | Планировщик, `run_journal_tick`, фазы A/B, DLQ |
+| [ROUTING_POLICIES.md](ROUTING_POLICIES.md) | Rules-only: `fetch_runtime_config`, политики, runbook, связь с ретеншном |
+| [notification_template_variables.md](notification_template_variables.md) | Поля Jinja `tpl_*`, точки вызова рендера |
+| [MATRIX_NOTIFICATION_V5.md](MATRIX_NOTIFICATION_V5.md) | Контракт карточки v5, dedup, txn_id |
+| [TEMPLATES_UNIFIED_HISTORY.md](TEMPLATES_UNIFIED_HISTORY.md) | История перехода на единый контур шаблонов |
+| [CYCLE_SETTINGS_KEYS.md](CYCLE_SETTINGS_KEYS.md) | Ключи `cycle_settings` |
+| [RUFF_BACKLOG.md](RUFF_BACKLOG.md) | Кратко про остаточный долг ruff |
+| [ui-smoke-checklist.md](ui-smoke-checklist.md) | Ручной smoke UI перед merge |
 
-## Historical / Obsolete
+## Служебное
 
-| Документ | Статус |
-|----------|--------|
-| [TZ_notifications_admin_ui_matrix_preview.md](TZ_notifications_admin_ui_matrix_preview.md) | Obsolete: переходный период code/block editor |
-| [TZ_notifications_ui_round2.md](TZ_notifications_ui_round2.md) | Obsolete: исторический раунд block-editor UX |
-| [diagnostics/preview_loading_bug.md](diagnostics/preview_loading_bug.md) | Obsolete: инцидент миграции preview |
+| Путь | Описание |
+|------|----------|
+| [sql/redmine_catalog_unused_in_policies.sql](sql/redmine_catalog_unused_in_policies.sql) | Диагностический SQL (Postgres) |
+
+## Перед продом (верификация)
+
+Команды из корня репозитория (см. [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)):
+
+1. `alembic upgrade head`
+2. `python -m ruff check src/` и `python -m ruff format --check src/` (автофиксы: `ruff check src/ --fix`, `ruff format src/` — см. [RUFF_BACKLOG.md](RUFF_BACKLOG.md))
+3. `python -m pytest tests/ -q --tb=short --ignore=tests/e2e`
+4. Опционально: `python -m pip_audit -r requirements.txt`
+5. В индексе git не должно быть артефактов: `git ls-files | rg '\.log$|\.coverage|\.pytest_cache'` — пусто; см. [`.gitignore`](../.gitignore)
 
 Конфигурация: [.env.example](../.env.example).
