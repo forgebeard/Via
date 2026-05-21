@@ -93,8 +93,6 @@ async def run_journal_tick(
         candidates, max_on = await phase_a_candidates(
             redmine,
             session,
-            bot_user_redmine_ids=bot_ids,
-            watched_issue_ids=watched,
             max_issues=max_issues,
             max_pages=max_pages,
         )

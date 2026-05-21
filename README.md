@@ -198,7 +198,7 @@ Rules-only routing v1: прежние URL маршрутизации не обс
 
 ## Перезапуск бота после изменений в панели
 
-Бот при старте читает из БД секреты, пользователей, группы, маршруты и `cycle_settings`. Ключи **`JOURNAL_SCOPE_MODE`** и **`JOURNAL_PROJECT_IDS`** задают охват журнального опроса Redmine; после миграций `alembic upgrade head` они создаются автоматически (`JOURNAL_SCOPE_MODE=all`, `JOURNAL_PROJECT_IDS=[]`). Если строк в БД нет, код использует fallback `narrow` (только задачи с исполнителем из `bot_users` или из watcher cache); см. [docs/CYCLE_SETTINGS_KEYS.md](docs/CYCLE_SETTINGS_KEYS.md). Включён **hot reload** (`BOT_HOT_RELOAD=1`, по умолчанию): конфигурация из панели подтягивается периодически без рестарта. Если hot reload отключён или менялись только секреты в `.env` / ключевые интеграции, после правок **перезапустите бота**:
+Бот при старте читает из БД секреты, пользователей, группы, маршруты и `cycle_settings`. Ключи **`JOURNAL_SCOPE_MODE`** и **`JOURNAL_PROJECT_IDS`** задают границы журнального опроса Redmine (`all`, глобально; `projects` — только перечисленные проекты; значение `narrow` сохранено как синоним `all`). После миграций `alembic upgrade head` они создаются автоматически (`JOURNAL_SCOPE_MODE=all`, `JOURNAL_PROJECT_IDS=[]`). Если строк в БД нет, fallback такой же, как для `all`; см. [docs/CYCLE_SETTINGS_KEYS.md](docs/CYCLE_SETTINGS_KEYS.md). Включён **hot reload** (`BOT_HOT_RELOAD=1`, по умолчанию): конфигурация из панели подтягивается периодически без рестарта. Если hot reload отключён или менялись только секреты в `.env` / ключевые интеграции, после правок **перезапустите бота**:
 
 ```bash
 docker compose restart bot

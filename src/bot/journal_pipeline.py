@@ -68,14 +68,16 @@ async def _contract_audit_settings(session: AsyncSession) -> tuple[bool, int]:
 
 async def journal_scope_mode(session: AsyncSession) -> str:
     """
-    Режим охвата Phase A: ``narrow`` (только исполнитель из bot_users или watcher cache),
-    ``all`` (все задачи из поллинга с валидным required-contract), ``projects`` (как ``all``,
-    но сбор по списку ``JOURNAL_PROJECT_IDS``).
+    Режим границ запроса Redmine на Phase A.
+
+    ``all`` — глобальный опрос; ``projects`` — только проекты из ``JOURNAL_PROJECT_IDS``;
+    ``narrow`` — устаревшее имя, то же поведение intake, что и ``all`` (единый contract-check).
+    Невалидное значение трактуется как ``all``.
     """
-    raw = (await _cycle_str(session, "JOURNAL_SCOPE_MODE", "narrow")).strip().lower()
+    raw = (await _cycle_str(session, "JOURNAL_SCOPE_MODE", "all")).strip().lower()
     if raw in ("narrow", "all", "projects"):
         return raw
-    return "narrow"
+    return "all"
 
 
 async def journal_project_ids(session: AsyncSession) -> list[int]:
@@ -159,17 +161,15 @@ async def phase_a_candidates(
     redmine: Any,
     session: AsyncSession,
     *,
-    bot_user_redmine_ids: set[int],
-    watched_issue_ids: set[int],
     max_issues: int,
     max_pages: int,
 ) -> tuple[list[Any], datetime | None]:
     """
     Один проход по Redmine ``updated_on >= LAST_ISSUES_POLL_AT`` без assigned_to/status_id.
 
-    Режим ``JOURNAL_SCOPE_MODE`` (см. ``journal_scope_mode``): ``narrow`` — только задачи,
-    назначенные на ``bot_users`` или из watcher cache; ``all`` / ``projects`` — все задачи из
-    выборки без этого фильтра, но с обязательным contract-check (без «дырявых» required-полей).
+    В ``in_scope`` попадают задачи из выборки (см. ``journal_scope_mode`` / ``journal_project_ids``),
+    проходящие required-contract (без «дырявых» обязательных полей). Исполнитель и watcher cache
+    не фильтруют Phase A — маршрутизация по ним downstream в ``resolve_policy_target_rooms``.
 
     Возвращает (кандидаты в scope, max_updated_on по **всем** строкам ответа для водяного знака).
     """
@@ -268,19 +268,7 @@ async def phase_a_candidates(
                                 ", ".join(optional_problems),
                             )
             _CONTRACT_LOGGED_ISSUES.add(iid)
-        broad = scope_mode in ("all", "projects")
-        if broad:
-            if not _required_contract_problems(iss):
-                in_scope.append(iss)
-            continue
-        try:
-            aid = getattr(getattr(iss, "assigned_to", None), "id", None)
-        except Exception:
-            aid = None
-        if aid is not None and int(aid) in bot_user_redmine_ids:
-            in_scope.append(iss)
-            continue
-        if iid and iid in watched_issue_ids:
+        if not _required_contract_problems(iss):
             in_scope.append(iss)
     if not contract_verbose:
         if required_count > 0:

@@ -17,7 +17,7 @@ Legacy per-user polling (`check_user_issues` / `processor`) в репозито�
 ## `run_journal_tick`: порядок шагов
 
 1. Каталоги и лимиты из `cycle_settings`: `MAX_ISSUES_PER_TICK`, `MAX_PAGES_PER_TICK`, `WATCHER_CACHE_REFRESH_EVERY_N_TICKS`, `DLQ_BATCH_SIZE`.
-2. **Фаза A** — [`phase_a_candidates`](../src/bot/journal_pipeline.py): выборка кандидатов задач; [`persist_watermark`](../src/bot/journal_pipeline.py) по `LAST_ISSUES_POLL_AT` / максимуму `updated_on` среди полученных страниц.
+2. **Фаза A** — [`phase_a_candidates`](../src/bot/journal_pipeline.py): опрос Redmine по водяному знаку и режиму `JOURNAL_SCOPE_MODE` / `JOURNAL_PROJECT_IDS`; в дальнейшую обработку попадают задачи с валидным required-contract (исполнитель и watcher cache **не** фильтруют Phase A — они используются ниже в политиках маршрутизации); [`persist_watermark`](../src/bot/journal_pipeline.py) по `LAST_ISSUES_POLL_AT` / максимуму `updated_on` среди полученных страниц.
 3. **Периодический refresh кэша наблюдателей** (если `WATCHER_CACHE_REFRESH_EVERY_N_TICKS > 0` и номер тика кратен N): догрузка задач из множества наблюдаемых id, [`sync_watcher_cache_for_issue`](../src/bot/journal_pipeline.py), удаление устаревших строк кэша по порогу `max(24ч, 2 * N * CHECK_INTERVAL)`.
 4. **По каждому кандидату**: [`reload_issue_with_journals`](../src/bot/journal_pipeline.py) → синхронизация watcher cache → новые журналы → [`handle_journal_entry`](../src/bot/journal_handlers.py) (маршрутизация, шаблоны `tpl_*`, при необходимости DLQ) → [`advance_cursor_after_journal`](../src/bot/journal_pipeline.py) и `commit`. Исполнитель для маршрутизации может отсутствовать (`assignee_cfg` optional).
 5. После выхода из основной DB-сессии — **`retry_dlq_notifications`** с лимитом из `DLQ_BATCH_SIZE`.

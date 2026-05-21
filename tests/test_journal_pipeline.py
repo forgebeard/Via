@@ -74,14 +74,13 @@ async def test_contract_check_first_tick_logs_summary_for_optional(caplog, monke
     in_scope, _ = await jp.phase_a_candidates(
         redmine,
         session=AsyncMock(),
-        bot_user_redmine_ids=set(),
-        watched_issue_ids=set(),
         max_issues=100,
         max_pages=1,
     )
     lg.removeHandler(caplog.handler)
 
-    assert in_scope == []
+    assert len(in_scope) == 3
+    assert {int(x.id) for x in in_scope} == {1, 2, 3}
     text = caplog.text
     assert "journal_contract_check_summary" in text
     assert "optional_issues=3" in text
@@ -119,8 +118,6 @@ async def test_contract_check_required_stays_visible(caplog, monkeypatch):
     await jp.phase_a_candidates(
         redmine,
         session=AsyncMock(),
-        bot_user_redmine_ids=set(),
-        watched_issue_ids=set(),
         max_issues=100,
         max_pages=1,
     )
@@ -161,8 +158,6 @@ async def test_contract_check_verbose_keeps_detailed_info(caplog, monkeypatch):
     await jp.phase_a_candidates(
         redmine,
         session=AsyncMock(),
-        bot_user_redmine_ids=set(),
-        watched_issue_ids=set(),
         max_issues=100,
         max_pages=1,
     )
@@ -172,8 +167,9 @@ async def test_contract_check_verbose_keeps_detailed_info(caplog, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_phase_a_scope_all_includes_without_bot_assignee(monkeypatch):
-    """Режим all: задача в scope без исполнителя из bot_users и без watcher cache."""
+@pytest.mark.parametrize("scope_value", ["all", "narrow"])
+async def test_phase_a_scope_includes_without_bot_assignee(scope_value, monkeypatch):
+    """ narrow и all: задача в scope без исполнителя из bot_users и без watcher cache."""
     jp._CONTRACT_LOGGED_ISSUES.clear()
     jp._CONTRACT_TICK_NO = 0
 
@@ -186,8 +182,8 @@ async def test_phase_a_scope_all_includes_without_bot_assignee(monkeypatch):
     async def _fake_run_in_thread(fn):
         return fn()
 
-    async def _scope_all(_session):
-        return "all"
+    async def _scope(_session):
+        return scope_value
 
     async def _proj_empty(_session):
         return []
@@ -195,7 +191,7 @@ async def test_phase_a_scope_all_includes_without_bot_assignee(monkeypatch):
     monkeypatch.setattr(jp, "_cycle_str", _fake_cycle_str)
     monkeypatch.setattr(jp, "_contract_audit_settings", _fake_contract_settings)
     monkeypatch.setattr(jp, "run_in_thread", _fake_run_in_thread)
-    monkeypatch.setattr(jp, "journal_scope_mode", _scope_all)
+    monkeypatch.setattr(jp, "journal_scope_mode", _scope)
     monkeypatch.setattr(jp, "journal_project_ids", _proj_empty)
 
     issue = _issue(99)
@@ -203,8 +199,6 @@ async def test_phase_a_scope_all_includes_without_bot_assignee(monkeypatch):
     in_scope, _ = await jp.phase_a_candidates(
         redmine,
         session=AsyncMock(),
-        bot_user_redmine_ids=set(),
-        watched_issue_ids=set(),
         max_issues=100,
         max_pages=1,
     )

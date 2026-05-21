@@ -15,7 +15,7 @@
 | `WATCHER_CACHE_REFRESH_EVERY_N_TICKS` | `bot/journal_tick.py` | Частота refresh watcher cache |
 | `DLQ_BATCH_SIZE` | `bot/journal_tick.py` | Batch size DLQ retry |
 
-| `JOURNAL_SCOPE_MODE` | [`journal_pipeline.py`](../src/bot/journal_pipeline.py) | Охват Phase A: `narrow` (как раньше: исполнитель ∈ `bot_users` или watcher cache), `all` или `projects` (все задачи из поллинга с валидным required-contract). |
+| `JOURNAL_SCOPE_MODE` | [`journal_pipeline.py`](../src/bot/journal_pipeline.py) | Границы запроса Phase A к Redmine: `all` — глобальный опрос; `projects` — объединение опросов по `JOURNAL_PROJECT_IDS`; `narrow` — устаревшее имя, то же intake что у `all` (единый required-contract). Невалидное значение → `all`. Фильтр по исполнителю бота / watcher cache на Phase A не применяется. |
 | `JOURNAL_PROJECT_IDS` | [`journal_pipeline.py`](../src/bot/journal_pipeline.py) | JSON-массив Redmine `project_id` для режима `projects`; при пустом списке при `JOURNAL_SCOPE_MODE=projects` выполняется тот же глобальный опрос, что и для `all`. |
 
 ## Deprecated / неиспользуемые ключи
