@@ -6,6 +6,7 @@ data/.app_master_key
 
 # Виртуальное окружение
 venv/
+.venv/
 
 # Логи
 admin_audit.log
